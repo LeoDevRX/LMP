@@ -33,7 +33,7 @@ jobs:
 
       - name: Download Electron
         run: |
-          curl -fsSL -o electron.zip "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-win32-x64.zip"
+          curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o electron.zip "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-win32-x64.zip"
           mkdir -p build/LMP
           unzip -q electron.zip -d build/LMP
 
