@@ -4,7 +4,7 @@
 
 <h1 align="center">LMP — Leo's Material Painter</h1>
 
-<p align="center">Owned by H9_zy</p>
+<p align="center">Owned by <a href="https://github.com/LeoDevRX">LeoDevRX</a></p>
 
 LMP is a personal and free alternative to paid material painting programs like Substance Painter. You open a 3D model, paint materials on it with layers, masks and smart materials, and export the textures for Roblox, Unreal, Unity or Blender. The controls are kept familiar, so if you have used Substance before most things work the same way.
 

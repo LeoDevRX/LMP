@@ -70,13 +70,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           V="${{ steps.ver.outputs.v }}"
-          NOTES="LMP (Leo's Material Painter) v$V for Windows 10/11, 64-bit. Owned by H9_zy.
+          NOTES="LMP (Leo's Material Painter) v$V for Windows 10/11, 64-bit. Owned by LeoDevRX.
 
           **New install:** download LMP-v$V.zip, extract it anywhere (for example D:\\LMP) and open LMP.exe. Nothing needs installing.
 
           **Already have LMP:** download the small LMP-v$V-update.zip, extract it into the folder that holds your LMP folder and replace files when Windows asks."
+          # A rebuild of the same version replaces its release (and tag) so it points at this commit.
           if gh release view "v$V" >/dev/null 2>&1; then
-            gh release upload "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" --clobber
-          else
-            gh release create "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" --title "LMP v$V" --notes "$NOTES" --latest
+            gh release delete "v$V" --cleanup-tag --yes
           fi
+          gh release create "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" --target "$GITHUB_SHA" --title "LMP v$V" --notes "$NOTES" --latest
