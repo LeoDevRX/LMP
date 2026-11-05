@@ -64,6 +64,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.02', steps: ['Bug fixes: opening a Substance Painter project (.spp) or another file that isn\'t a LocalPaint project now says what it is and what to do, instead of a confusing error.'] },
       { h: 'New in v1.01', steps: ['LMP is now called LocalPaint (LP for short), with a new logo. Your .lmp projects, settings and presets carry over.', 'Bug fixes.'] },
       { h: 'In v1.00', steps: [
         'Paint colour, roughness, metal, height and glow in one stroke, with brushes, layers, folders and masks.',

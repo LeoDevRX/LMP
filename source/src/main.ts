@@ -1078,8 +1078,7 @@ class App {
       if (this.projectPath) setTimeout(() => native?.recentAdd?.(path, this.projectName(), this.snapshotThumb()), 800);
       toast(`Opened ${path.split(/[\\/]/).pop()}`);
     } catch (e: any) {
-      console.error(e);
-      toast(e?.message ?? 'Could not open project', true);
+      this.projectOpenFailed(e);
     }
   }
 
@@ -1124,14 +1123,19 @@ class App {
     this.buildAll();
   }
 
+  private projectOpenFailed(e: any) {
+    if (e?.name === 'NotProjectError') { void this.modal({ title: e.title, text: e.message, icon: 'warn', buttons: [['OK', 'ok', 'primary']] }); return; }
+    console.error(e);
+    toast(e?.message ?? 'Could not open project', true);
+  }
+
   async openProjectFile(file: File) {
     if (!(await this.confirmUnsaved('Open this project anyway?'))) return;
     try {
       await this.openProjectText(await file.text());
       toast(`Opened ${file.name}`);
     } catch (e: any) {
-      console.error(e);
-      toast(e?.message ?? 'Could not open project', true);
+      this.projectOpenFailed(e);
     }
   }
 
