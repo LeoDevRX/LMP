@@ -84,8 +84,6 @@ jobs:
             echo "## What's new"
             echo
             if [ -f "notes/v$V.md" ]; then cat "notes/v$V.md"; fi
-            echo
-            echo "Owned by LeoDevRX."
           } > release-notes.md
           cat release-notes.md
           if gh release view "v$V" >/dev/null 2>&1; then
