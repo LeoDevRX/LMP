@@ -61,7 +61,10 @@ jobs:
           cp -r presets "$L/presets"
           # The scanned-materials catalog, so the shelf shows them even before LocalPaint goes online.
           curl -sfL -o "$L/presets/materials-catalog.json" "https://github.com/$GITHUB_REPOSITORY/releases/download/materials/materials-catalog.json" || echo "no materials catalog yet"
-          cp -r source "$L/source"
+          # Include the reproducible source, without local build tools or output.
+          git archive HEAD source | tar -x -C "$L"
+          test ! -d "$L/source/node_modules"
+          test ! -d "$L/source/dist"
 
       - name: Set the LocalPaint icon and file info (owned by LeoDevRX)
         run: |
