@@ -77,9 +77,9 @@ jobs:
             echo
             echo "**[Download LMP-v$V.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/v$V/LMP-v$V.zip)** is the whole program (Windows 10/11, 64-bit). Extract it anywhere, for example D:\\LMP, and open LMP.exe. Nothing needs installing."
             echo
-            echo "Already using LMP 1.02 or newer? You don't need to download anything. LMP tells you about this update and installs it when you click Update now."
+            echo "Already using LMP? You don't need to download anything. LMP tells you about this update when it starts and installs it when you click Update now."
             echo
-            echo "LMP-v$V-update.zip is only for updating LMP 1.01 or older by hand: extract it into the folder that holds your LMP folder."
+            echo "LMP-v$V-update.zip is for updating by hand: extract it into the folder that holds your LMP folder and replace the files."
             echo
             echo "## What's new"
             echo
