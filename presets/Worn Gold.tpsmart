@@ -1,0 +1,131 @@
+{
+  "format": "texpaint-smart",
+  "version": 1,
+  "name": "Worn Gold",
+  "layers": [
+    {
+      "kind": "fill",
+      "name": "Gold",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          1.0,
+          0.84,
+          0.55
+        ],
+        "rough": 0.3,
+        "metal": 1,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {}
+    },
+    {
+      "kind": "fill",
+      "name": "Tarnish",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.34,
+          0.25,
+          0.12
+        ],
+        "rough": 0.7,
+        "metal": 0.6,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "dirt",
+          "amount": 0.45,
+          "contrast": 0.45,
+          "noise": 0.4,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 9
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Polished edges",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          1.0,
+          0.93,
+          0.72
+        ],
+        "rough": 0.12,
+        "metal": 1,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "edge",
+          "amount": 0.35,
+          "contrast": 0.8,
+          "noise": 0.3,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 21
+        }
+      }
+    }
+  ]
+}

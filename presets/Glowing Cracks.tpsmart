@@ -1,0 +1,85 @@
+{
+  "format": "texpaint-smart",
+  "version": 1,
+  "name": "Glowing Cracks",
+  "layers": [
+    {
+      "kind": "fill",
+      "name": "Dark stone",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.12,
+          0.11,
+          0.11
+        ],
+        "rough": 0.85,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {}
+    },
+    {
+      "kind": "fill",
+      "name": "Magma",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.25,
+          0.05,
+          0.01
+        ],
+        "rough": 0.7,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          1.0,
+          0.35,
+          0.05
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": true,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "dirt",
+          "amount": 0.32,
+          "contrast": 0.85,
+          "noise": 0.4,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 61
+        }
+      }
+    }
+  ]
+}

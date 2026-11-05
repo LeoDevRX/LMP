@@ -1,0 +1,4721 @@
+import './style.css';
+import * as THREE from 'three';
+import { GPU } from './engine/gpu';
+import { Viewport, ViewMode, ViewSource, Hit, Region, ToneMap } from './engine/Viewport';
+import { UVView } from './engine/UVView';
+import {
+  TextureSet, Brush, CHANNELS, CH_LABEL, Ch, ChannelValues, Layer, FillLayer, FillImage,
+  PaintTarget, BlendMode, BLEND_LABEL, GroupLayer, BakeKey, IdSource, ID_SOURCE_LABEL, DEFAULT_XF, DEFAULT_ADJ, FillAdjust,
+} from './engine/TextureSet';
+import { BrushPreset, BrushSettings, BUILTIN_TIPS, STARTER_BRUSHES, builtinTip, builtinTipThumb, imageTip, tipTexture, tipPreview } from './brushes';
+import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings } from './engine/Masks';
+import { PATTERNS, PATTERN_LABEL, PatternType } from './engine/Procedural';
+import { MeshParts, PartMode, PART_LABEL, Part } from './engine/MeshParts';
+import { MaterialPreset, PresetShelf, ShelfItem , isDesktopApp, openNativePresets , splitMapName } from './engine/Presets';
+import { imageTexture } from './engine/images';
+import { ThumbRenderer } from './engine/Thumbs';
+import { SmartPreview } from './engine/SmartPreview';
+import { findUVOverlaps, overlapTexture, overlapMesh, UVOverlap } from './engine/UVOverlap';
+import { BUILTINS, BuiltinId, LoadedModel, MODEL_EXTS, builtinModel, parseModel, demoHighPoly } from './engine/ModelLoader';
+import { PRESETS, exportMaps, saveFiles, downloadBlob, pixelsToPng } from './engine/Exporter';
+import {
+  parseProject, restoreLayers, restoreLayer, serializeLayer, serializeProject, toB64, fromB64, makeSmartMaterial, applySmartMaterial, restoreMeshMaps,
+} from './engine/Project';
+import { STARTER } from './starter';
+import { libraryMaterials } from './materialLib';
+import { VERSION } from './version';
+import { Settings, loadSettings, saveSettings, weakComputer } from './settings';
+import { GUIDES, CATS, Guide, GuideShow, searchGuides, guideById, fmt as guideFmt } from './guide';
+import { loadThumbs, saveThumb, flush as flushThumbs } from './thumbCache';
+import iconSmall from './assets/lmp-32.png?inline';
+import iconBig from './assets/lmp-256.png?inline';
+import { Designer } from './designer/DesignerUI';
+import { GraphRunner, GraphJSON, OUTPUT_CHANNELS, presetGraphs } from './designer/Graph';
+import { readSbsar, translateSbs, translateSpsm, Translation, SpNode } from './engine/SubstanceReader';
+import { el, slider, select, hexToRgb, rgbToHex, toast, pickFile, ICON2 as I } from './ui';
+
+const RESOLUTIONS = [512, 1024, 2048, 4096];
+const RES_LABEL = (r: number) => (r >= 1024 ? `${r / 1024}K` : `${r}`) + ` (${r} × ${r})`;
+const VIEWS: { v: ViewMode; label: string }[] = [
+  { v: 'material', label: 'Material' },
+  { v: 'color', label: CH_LABEL.color },
+  { v: 'rough', label: CH_LABEL.rough },
+  { v: 'metal', label: CH_LABEL.metal },
+  { v: 'height', label: CH_LABEL.height },
+  { v: 'emit', label: CH_LABEL.emit },
+  { v: 'normal', label: CH_LABEL.normal },
+  { v: 'ao', label: 'Ambient occlusion' },
+  { v: 'curv', label: 'Curvature' },
+  { v: 'mask', label: 'Layer mask' },
+  { v: 'bnormal', label: 'Baked normal' },
+  { v: 'bheight', label: 'Baked height' },
+  { v: 'rays', label: 'Ray check' },
+  { v: 'id', label: 'ID map' },
+  { v: 'wsn', label: 'World space normal' },
+  { v: 'pos', label: 'Position' },
+  { v: 'thick', label: 'Thickness' },
+];
+const BAKE_QUALITY = [
+  { value: 32, label: 'Draft (32 directions)' }, { value: 64, label: 'Normal (64)' },
+  { value: 96, label: 'High (96)' }, { value: 160, label: 'Very high (160)' },
+];
+type Tool = 'paint' | 'erase' | 'picker' | 'fill' | 'path';
+type DropMode = 'whole' | PartMode;
+type Mode = 'paint' | 'bake' | 'design';
+type Layout = 'split' | '3d' | '2d';
+type BakeItem = 'common' | BakeKey;
+const BAKE_ITEMS: [BakeKey, string][] = [
+  ['normal', 'Normal'], ['wsn', 'World space normal'], ['id', 'ID'], ['ao', 'Ambient occlusion'],
+  ['curv', 'Curvature'], ['pos', 'Position'], ['thick', 'Thickness'], ['height', 'Height'],
+];
+const BAKE_VIEW: Record<BakeItem, ViewMode> = {
+  common: 'rays', normal: 'bnormal', wsn: 'wsn', id: 'id', ao: 'ao', curv: 'curv', pos: 'pos', thick: 'thick', height: 'bheight',
+};
+type ShelfFilter = 'all' | 'model' | 'smart' | 'material' | 'textures' | 'brush' | 'unsupported' | 'mask' | 'env' | 'graph';
+
+/** Dock: a titled panel like the ones in Substance (title bar + body). */
+function dock(title: string | HTMLElement, body: HTMLElement, cls = '') {
+  return el('section', { class: 'dock ' + cls }, el('div', { class: 'dock-head' }, title), body);
+}
+/** Collapsible group inside a dock. */
+function group(title: string, ...children: (Node | null | false | undefined)[]) {
+  return el('div', { class: 'group' }, el('h4', {}, title), ...children);
+}
+function icon(svg: string, title: string, onclick: () => void, cls = '') {
+  const b = el('button', { class: 'ib ' + cls, title, onclick });
+  b.innerHTML = svg;
+  return b;
+}
+
+class App {
+  vp: Viewport;
+  gpu: GPU;
+  ts!: TextureSet;
+  model!: LoadedModel;
+  private _modified = false;
+  get modified() { return this._modified; }
+  set modified(v: boolean) { if (v !== this._modified) { this._modified = v; this.updateTitle?.(); } }
+  exportPreset = 'roblox';
+  paintTarget: PaintTarget = 'content';
+  tool: Tool = 'paint';
+  mode: Mode = 'paint';
+  layout3: Layout = 'split';
+  view3: ViewMode = 'material';
+  view2: ViewMode = 'material';
+
+  brush: Brush = {
+    radius: 0.06, hardness: 0.5, flow: 1, spacing: 0.12, erase: false,
+    tip: 'round', angle: 0, angleJitter: 0, followStroke: false, sizeJitter: 0, scatter: 0,
+    channels: { color: true, rough: true, metal: true, height: false, emit: false, normal: false },
+    values: { color: [0.61, 0.36, 1], rough: 0.4, metal: 0, height: 0.75, emit: [0.2, 0.9, 1] },
+  };
+  shelf = new PresetShelf();
+  thumbs = new ThumbRenderer();
+  /** Runs smart materials for real on a preview shape (made on first use). */
+  private smartPrev: SmartPreview | null = null;
+  private get smartPreview() {
+    if (!this.smartPrev) { this.smartPrev = new SmartPreview(this.gpu, this.settings.lowPerf ? 128 : 256); this.smartPrev.graphBaker = (g) => this.bakeGraph(g); }
+    return this.smartPrev;
+  }
+  private smartThumb(key: string, sm: any): Promise<string> {
+    return this.smartPreview.maps(sm).then((px) => this.thumbs.previewMaps(key, this.smartPreview.geometry, px));
+  }
+  private shelfFilter: ShelfFilter = 'all';
+  private shelfSearch = '';
+
+  uv = new UVView();
+  split = 0.5;
+  private container!: HTMLElement;
+  private uvOverlay = el('div', { id: 'uv-overlay' });
+  private designEl = el('div', { id: 'designer' });
+  private designer!: Designer;
+  /** Fill layer the Designer's graph is linked to. */
+  private designLinked = -1;
+  private graphRunner!: GraphRunner;
+  private uvSplitter = el('div', { id: 'uv-split', title: 'Drag to resize' });
+  private sel3 = el('div', { class: 'pane-sel' });
+  private sel2 = el('div', { class: 'pane-sel' });
+  private flyout = el('div', { id: 'flyout' });
+  private uvStroke: { uv: THREE.Vector2 } | null = null;
+  private uvPan: { x: number; y: number } | null = null;
+  private uvHover: THREE.Vector2 | null = null;
+  private layerRowEls = new Map<number, { kind: HTMLElement; op: HTMLInputElement }>();
+
+  private stroke: { hit: Hit; x: number; y: number } | null = null;
+  private hover: { x: number; y: number } | null = null;
+  /** Brush sliders exist in the tool bar and in Properties; keep them in sync. */
+  private brushSync = new Map<string, { el: HTMLElement; set: (v: number) => void }[]>();
+  private brushPreview: HTMLCanvasElement | null = null;
+  private matPreview: HTMLImageElement | null = null;
+  private renaming = -1;
+  private bakeProgress = -1;
+  high: LoadedModel | null = null;
+  private useHigh = true;
+  private showCage = true;
+  private showHigh = false;
+  private bakeItem: BakeItem = 'common';
+  private layersTab: 'layers' | 'settings' = 'layers';
+  private mapThumbs = new Map<string, string>();
+  private framedOnce = false;
+  parts!: MeshParts;
+  fillMode: PartMode = 'island';
+  dropMode: DropMode = 'whole';
+  private dragItem: ShelfItem | null = null;
+  private dragLayer = -1;
+  /** Layers being dragged together (multi-selection). */
+  private dragLayers: number[] = [];
+  /** Ctrl / Shift-click multi-selection in the Layers panel (always holds the active layer). */
+  private sel = new Set<number>();
+  private rowOrder: number[] = [];
+  /** Ctrl-click multi-selection on the assets shelf. */
+  private shelfPick = new Set<ShelfItem>();
+  private dragMany: ShelfItem[] | null = null;
+  private pickBar: HTMLElement | null = null;
+  /** Brush tips by id (the texture set is rebuilt per model, so they're re-registered from here). */
+  private tipCanvases = new Map<string, HTMLCanvasElement>();
+  private tipUrls = new Map<string, string>();
+  private refreshQueued = false;
+  private tipPng = new Map<string, string>();
+  /** Polygon fill box selection in progress. */
+  private box: { pane: '3d' | '2d'; x0: number; y0: number; x1: number; y1: number; moved: boolean; parts: Part[]; queued: boolean } | null = null;
+  private boxEl = el('div', { id: 'box-sel' });
+  /** Ctrl + drag brush adjust (right button: size / hardness, left button: rotation / flow). */
+  private adjust: { x: number; y: number; mode: 'size' | 'angle'; r0: number; h0: number; f0: number; a0: number } | null = null;
+  private adjustEl = el('div', { id: 'brush-adjust' });
+  /** ID color selection mask waiting for a click on the model (layer id), or -1. */
+  private idPick = -1;
+  private uvHoverKey = '';
+  private uvHoverPart: Part | null = null;
+  private uvSelKey = '';
+  private lastEnd3: THREE.Vector3 | null = null;
+  private lastEnd2: THREE.Vector2 | null = null;
+  /** Path (vector) tool: points clicked so far, in the 3D or the 2D view. */
+  /** Path tool: points with optional bezier handles (h = outgoing handle; the incoming one mirrors it). */
+  path: { pane: '3d' | '2d'; p3: { p: THREE.Vector3; n: THREE.Vector3; h: THREE.Vector3 | null }[]; p2: { p: THREE.Vector2; h: THREE.Vector2 | null }[] } = { pane: '3d', p3: [], p2: [] };
+  /** Selected path point, and what's being dragged. */
+  private pathSel = -1;
+  private pathDrag: { kind: 'point' | 'hout' | 'hin' | 'new'; idx: number; x: number; y: number; moved: boolean } | null = null;
+  /** The path is painted live (the brush follows it) and finished with Enter. */
+  pathLive = true;
+  private pathLiveOn = false;
+  private pathQueued = false;
+  pathSmooth = true;
+  private ctxMenu = el('div', { id: 'ctx-menu', class: 'menu-items' });
+
+  constructor() {
+    // App icon: tab / window icon, the logo in the menu bar and on the loading screen.
+    { const v = document.getElementById('brand-ver'); if (v) v.textContent = 'v' + VERSION; }
+    { const v = document.getElementById('splash-ver'); if (v) v.textContent = `v${VERSION} · owned by H9_zy`; }
+    const fav = document.createElement('link'); fav.rel = 'icon'; fav.href = iconSmall; document.head.append(fav);
+    document.querySelectorAll<HTMLElement>('.logo').forEach((e) => (e.style.backgroundImage = `url(${iconSmall})`));
+    document.querySelectorAll<HTMLElement>('.splash-logo').forEach((e) => (e.style.backgroundImage = `url(${iconBig})`));
+    const container = document.getElementById('viewport')!;
+    this.container = container;
+    this.vp = new Viewport(container);
+    this.gpu = new GPU(this.vp.renderer);
+    container.append(this.uvOverlay, this.uvSplitter, this.sel3, this.sel2, this.flyout, this.boxEl, this.adjustEl, this.designEl, this.bakeLabel);
+    this.graphRunner = new GraphRunner(this.vp.renderer);
+    this.designer = new Designer(this.designEl, {
+      renderer: this.vp.renderer,
+      applyGraph: (g, runner, mode) => this.applyGraph(g, runner, mode),
+      linkedName: () => this.linkedGraphLayer()?.name ?? null,
+      saveJSON: (f, d) => this.shelf.saveJSON(f, d),
+      rebuildSide: () => { if (this.mode === 'design') { this.buildShelf(); this.buildProperties(); } },
+    });
+    document.body.append(this.ctxMenu, this.pickPreview);
+    window.addEventListener('click', () => this.ctxMenu.classList.remove('open'));
+    new ResizeObserver(() => { this.layout(); this.poke(); }).observe(container);
+    for (const ev of ['pointermove', 'pointerdown', 'pointerup', 'wheel', 'keydown', 'keyup', 'dragover', 'drop', 'input', 'change', 'click'])
+      window.addEventListener(ev, () => this.poke(), { capture: true, passive: true });
+    this.vp.controls.addEventListener('change', () => this.poke());
+    this.initCollapsible();
+    this.buildMenus();
+    this.buildToolstrip();
+    this.buildSidestrip();
+    this.bindInput(container);
+    this.bindUVInput();
+    this.setModel(builtinModel('box'), this.newFileSize());
+    this.buildAll();
+    this.layout();
+    this.loop();
+    this.loadStarter();
+    (window as any).texpaintNative?.onOpenPath?.(async (p: string) => { if (await this.confirmUnsaved('Open this project anyway?')) this.openProjectFromPath(p); });
+    (window as any).texpaintNative?.onCloseRequest?.(() => { (window as any).texpaintNative.ackClose(); this.onCloseRequest(); });
+    this.updateTitle();
+  }
+
+  // ================================================================ model / project
+
+  setModel(model: LoadedModel, resolution?: number, skipBake = false) {
+    this.projectPath = '';
+    this.shelfOpen?.clear();
+    const bake = this.ts?.bakeSettings;
+    const hs = this.ts?.heightStrength;
+    const highSettings = this.ts?.highSettings;
+    const maps = this.ts?.bakeMaps;
+    this.ts?.dispose();
+    this.model = model;
+    const res = resolution ?? this.ts?.size ?? 1024;
+    this.ts = new TextureSet(this.gpu, model.geometries, res);
+    this.ts.graphBaker = (g) => this.bakeGraph(g);
+    this.ts.onBakeStage = (k, st) => this.onBakeStage(k, st);
+    if (bake) this.ts.bakeSettings = { ...bake };
+    if (hs !== undefined) this.ts.heightStrength = hs;
+    if (highSettings) this.ts.highSettings = { ...highSettings };
+    if (maps) this.ts.bakeMaps = { ...maps };
+    this.high = null;
+    this.mapThumbs.clear();
+    // Many engine changes can happen in one go (e.g. translating a smart material): rebuild the UI once per frame.
+    this.ts.onChange = () => {
+      if (this.refreshQueued) return;
+      this.refreshQueued = true;
+      requestAnimationFrame(() => { this.refreshQueued = false; this.refresh(); });
+    };
+    this.vp.setModel(model.geometries);
+    this.uv.setModel(model.geometries);
+    this.checkUVOverlaps(model);
+    this.parts = new MeshParts(model.geometries);
+    this.clearPath();
+    this.lastEnd3 = null; this.lastEnd2 = null;
+    this.uv.frame();
+    this.bindTextures();
+    this.modified = false;
+    this.paintTarget = 'content';
+    for (const w of model.warnings) toast(w, true);
+    if (this.container.isConnected && document.getElementById('right')!.childElementCount) this.buildAll();
+    if (!skipBake && this.container.isConnected) toast('Mesh maps (AO, curvature, ID…) aren\'t baked yet. Open the Baking tab (top right) and click Bake when you\'re ready.');
+    this.updateBakeStatus();
+  }
+
+  // ---------------------------------------------------------------- UV overlaps
+
+  uvOverlap: UVOverlap | null = null;
+  showOverlap = false;
+  /** Find overlapping UVs (right after loading, without holding up the load) and mark them dark in 2D and on the model. */
+  private checkUVOverlaps(model: LoadedModel) {
+    this.uvOverlap = null;
+    this.uv.setOverlap(null);
+    this.vp.setOverlap(null, false);
+    setTimeout(() => {
+      if (this.model !== model) return;
+      let o: UVOverlap;
+      try { o = findUVOverlaps(model.geometries, this.settings.lowPerf ? 256 : 512); } catch (e) { console.warn('uv overlap', e); return; }
+      this.uvOverlap = o;
+      if (o.tris) {
+        this.uv.setOverlap(overlapTexture(o));
+        this.vp.setOverlap(overlapMesh(model.geometries, o), this.showOverlap);
+        this.uv.setOverlapVisible(this.showOverlap);
+        if (model.source.kind !== 'builtin') toast(`This model has ${o.areas} overlapping UV area${o.areas === 1 ? '' : 's'} (${o.tris} triangles). Painting there also paints the other spot. Press O to see them as dark spots, then fix them in Blender.`, true);
+      }
+      if (this.mode === 'paint' || this.mode === 'bake') this.buildToolbar();
+      this.poke();
+    }, 50);
+  }
+  toggleOverlap(on = !this.showOverlap) {
+    this.showOverlap = on;
+    this.uv.setOverlapVisible(on);
+    this.vp.setOverlapVisible(on);
+    const o = this.uvOverlap;
+    if (on) toast(!o ? 'Still checking the UVs…' : o.tris ? `UV overlaps: ${o.areas} area${o.areas === 1 ? '' : 's'}, ${o.tris} triangles (dark spots on the model and in the 2D view)` : 'No overlapping UVs on this model');
+    this.buildToolbar();
+    this.poke();
+  }
+
+  newDefaultLayers() {
+    this.ts.addFillLayer('Base material', {
+      color: [0.62, 0.62, 0.62], rough: 0.45, metal: 0, height: 0.5,
+    }, { color: true, rough: true, metal: true, height: true }, false);
+    this.ts.addPaintLayer('Layer 1');
+    this.ts.clearHistory();
+    this.sel.clear();
+  }
+
+  async openModelFile(file: File) {
+    if (!(await this.confirmUnsaved('Load a new model anyway?'))) return;
+    try {
+      toast(`Loading ${file.name}…`);
+      const m = await parseModel(file.name, await file.arrayBuffer());
+      this.setModel(m, this.newFileSize());
+      this.newDefaultLayers();
+      toast(`Loaded ${file.name}`);
+    } catch (e: any) {
+      console.error(e);
+      toast(e?.message ?? 'Could not load model', true);
+    }
+  }
+
+  async loadBuiltin(id: BuiltinId) {
+    if (!(await this.confirmUnsaved('Start a new file anyway?'))) return;
+    this.setModel(builtinModel(id), this.newFileSize());
+    this.newDefaultLayers();
+  }
+
+  /** Texture size for new files (Settings; low performance mode keeps it at 1024 or below). */
+  newFileSize() {
+    const s = this.settings.defaultSize || 1024;
+    return this.settings.lowPerf ? Math.min(s, 1024) : s;
+  }
+
+  private projectSettings() {
+    return {
+      brush: this.brush, brushTipPng: this.brush.tip ? this.tipPng.get(this.brush.tip) : undefined, exportPreset: this.exportPreset,
+      heightStrength: this.ts.heightStrength, bake: this.ts.bakeSettings, high: this.ts.highSettings,
+    };
+  }
+
+  /**
+   * LMP's own dialog (instead of the plain Windows / browser box).
+   * Buttons: [label, value, style]; resolves with the clicked value ('cancel' for Esc / clicking outside).
+   */
+  modal(o: { title: string; text: string; icon?: 'warn' | 'info' | 'question'; buttons: [string, string, ('primary' | 'danger' | '')?][]; content?: HTMLElement; wide?: boolean }): Promise<string> {
+    return new Promise((resolve) => {
+      document.querySelectorAll('.lmp-modal-wrap').forEach((x) => x.remove());
+      const done = (v: string) => { wrap.classList.add('closing'); setTimeout(() => wrap.remove(), 140); window.removeEventListener('keydown', onKey, true); resolve(v); };
+      const btns = o.buttons.map(([label, value, style]) => el('button', { class: 'lmp-btn ' + (style ?? ''), onclick: () => done(value) }, label));
+      const icon = el('div', { class: 'lmp-modal-icon ' + (o.icon ?? 'question') }, o.icon === 'warn' ? '!' : o.icon === 'info' ? 'i' : '?');
+      const box = el('div', { class: 'lmp-modal' + (o.wide ? ' wide' : ''), role: 'dialog' },
+        el('div', { class: 'lmp-modal-head' }, el('span', { class: 'lmp-modal-logo' }), el('span', {}, 'LMP')),
+        el('div', { class: 'lmp-modal-body' }, icon, el('div', { class: 'grow' }, el('h3', {}, o.title), el('p', {}, o.text))),
+        o.content ? el('div', { class: 'lmp-modal-content' }, o.content) : null,
+        el('div', { class: 'lmp-modal-foot' }, ...btns));
+      const wrap = el('div', { class: 'lmp-modal-wrap' }, box);
+      (box.querySelector('.lmp-modal-logo') as HTMLElement).style.backgroundImage = `url(${iconSmall})`;
+      wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) done('cancel'); });
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done('cancel'); }
+        if (e.key === 'Enter' && !(e.target as HTMLElement)?.closest?.('select')) { e.preventDefault(); e.stopPropagation(); (btns.find((b) => b.classList.contains('primary')) ?? btns[0]).click(); }
+      };
+      window.addEventListener('keydown', onKey, true);
+      document.body.append(wrap);
+      (btns.find((b) => b.classList.contains('primary')) ?? btns[0])?.focus();
+    });
+  }
+
+  /** Unsaved work: offer Save / Don't save / Cancel. Returns true when it's OK to go on. */
+  async confirmUnsaved(action: string): Promise<boolean> {
+    if (!this.modified) return true;
+    const r = await this.modal({
+      title: `Save changes to “${this.projectName()}.lmp”?`,
+      text: `You have unsaved changes. ${action}`, icon: 'warn',
+      buttons: [['Save', 'save', 'primary'], ["Don't save", 'discard', 'danger'], ['Cancel', 'cancel']],
+    });
+    if (r === 'cancel') return false;
+    if (r === 'save') { await this.saveProject(false); return !this.modified; }
+    return true;
+  }
+
+  /** The window is closing (desktop app): ask about unsaved work in LMP's own dialog. */
+  private async onCloseRequest() {
+    const native = (window as any).texpaintNative;
+    if (!this.modified) { native.quit(); return; }
+    const r = await this.modal({
+      title: 'Quit LMP?',
+      text: `“${this.projectName()}.lmp” has unsaved changes. Save them before quitting?`, icon: 'warn',
+      buttons: [['Save now', 'save', 'primary'], ['Quit without saving', 'discard', 'danger'], ['Cancel', 'cancel']],
+    });
+    if (r === 'save') { await this.saveProject(false); if (!this.modified) native.quit(); }
+    else if (r === 'discard') native.quit();
+  }
+
+  settings: Settings = loadSettings();
+  private get native(): any { return (window as any).texpaintNative; }
+
+  // ================================================================ autosave & recovery
+
+  private lastAutosave = Date.now();
+  private autosaving = false;
+  private startAutosave() {
+    setInterval(() => this.autosaveTick(), 15000);
+  }
+  private async autosaveTick(force = false) {
+    const st = this.settings;
+    if (!this.native?.autosaveWrite || this.autosaving) return;
+    if (!force && (!st.autosave || !this.modified || Date.now() - this.lastAutosave < st.autosaveMinutes * 60000)) return;
+    if (this.ts.painting || this.ts.baking || this.pathLiveOn) return;
+    this.autosaving = true;
+    try {
+      const blob = await serializeProject(this.ts, this.model.name || this.projectName(), this.model.source, this.projectSettings());
+      await this.native.autosaveWrite(this.projectName(), await blob.arrayBuffer(), this.snapshotThumb(), this.projectPath, st.autosaveKeep);
+      this.lastAutosave = Date.now();
+      this.flashStatus('Autosaved ✓');
+    } catch (e) { console.warn('autosave', e); }
+    finally { this.autosaving = false; }
+  }
+  /** A small picture of the 3D view (recent files and autosaves). */
+  snapshotThumb(): string {
+    try {
+      this.vp.render();
+      const src = this.vp.canvas, r = this.vp.region;
+      const cv = document.createElement('canvas');
+      cv.width = 200; cv.height = 125;
+      const g = cv.getContext('2d')!;
+      g.fillStyle = '#1b1a20'; g.fillRect(0, 0, 200, 125);
+      const dpr = src.width / Math.max(1, src.clientWidth);
+      const w = r.w * dpr, h = r.h * dpr, k = Math.min(200 / w, 125 / h) * 1.15;
+      g.drawImage(src, r.x * dpr, r.y * dpr, w, h, (200 - w * k) / 2, (125 - h * k) / 2, w * k, h * k);
+      return cv.toDataURL('image/jpeg', 0.8);
+    } catch { return ''; }
+  }
+  private flashStatus(text: string) {
+    const e = document.getElementById('status-bake');
+    if (!e || this.bakeProgress >= 0) return;
+    e.textContent = text; e.classList.add('flash');
+    setTimeout(() => { if (e.textContent === text) { e.textContent = ''; e.classList.remove('flash'); } }, 2500);
+  }
+
+
+  // ================================================================ Guide (F1)
+
+  private guidePanel: HTMLElement | null = null;
+  private guideQuery = '';
+  private guideStack: string[] = [];
+
+  /** Open the Guide panel (optionally on one guide). F1 toggles it. */
+  openGuide(id?: string) {
+    let p = this.guidePanel;
+    if (!p) {
+      p = this.guidePanel = el('aside', { id: 'guide' });
+      p.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (this.guideStack.length) this.guideBack(); else this.closeGuide(); }
+        if (e.key === 'F1') { e.preventDefault(); e.stopPropagation(); this.closeGuide(); }
+      });
+      document.body.append(p);
+    }
+    this.guideStack = id ? [id] : [];
+    this.renderGuide();
+    requestAnimationFrame(() => p!.classList.add('open'));
+    document.getElementById('guide-btn')?.classList.add('on');
+    if (!id) setTimeout(() => (p!.querySelector('input') as HTMLInputElement | null)?.focus(), 60);
+  }
+  closeGuide() {
+    this.guidePanel?.classList.remove('open');
+    document.getElementById('guide-btn')?.classList.remove('on');
+    document.querySelectorAll('.guide-hl').forEach((x) => x.classList.remove('guide-hl'));
+  }
+  private get guideOpen() { return !!this.guidePanel?.classList.contains('open'); }
+  private toggleGuide() { if (this.guideOpen) this.closeGuide(); else this.openGuide(); }
+  private guideBack() { this.guideStack.pop(); this.renderGuide(); }
+  private guideGo(id: string) { this.guideStack.push(id); this.renderGuide(); }
+
+  private renderGuide() {
+    const p = this.guidePanel!;
+    p.innerHTML = '';
+    const input = el('input', { type: 'search', placeholder: 'Search, e.g. how do I paint along a path', value: this.guideQuery, spellcheck: false }) as HTMLInputElement;
+    const body = el('div', { class: 'guide-body' });
+    const head = el('div', { class: 'guide-head' },
+      el('div', { class: 'guide-title' }, el('span', { class: 'guide-ico' }, '?'), el('b', {}, 'Guide'), el('span', { class: 'grow' }),
+        el('button', { class: 'guide-x', title: 'Close (Esc / F1)', onclick: () => this.closeGuide() }, '×')),
+      el('div', { class: 'guide-search' }, input));
+    p.append(head, body);
+    const show = () => {
+      body.innerHTML = '';
+      body.scrollTop = 0;
+      const id = this.guideStack[this.guideStack.length - 1];
+      const g = id ? guideById(id) : undefined;
+      if (g) this.renderGuidePage(body, g);
+      else if (this.guideQuery.trim()) this.renderGuideResults(body, this.guideQuery);
+      else this.renderGuideHome(body);
+    };
+    input.addEventListener('input', () => { this.guideQuery = input.value; this.guideStack = []; show(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { const top = searchGuides(input.value, 1)[0]; if (top) this.guideGo(top.g.id); }
+      if (e.key === 'Escape' && input.value && !this.guideStack.length) { e.preventDefault(); e.stopPropagation(); input.value = ''; this.guideQuery = ''; show(); }
+    });
+    show();
+  }
+
+  private guideRow(g: Guide, sub = true) {
+    return el('button', { class: 'guide-row', onclick: () => this.guideGo(g.id) }, el('b', {}, g.title), sub ? el('span', {}, g.sum) : null);
+  }
+
+  private renderGuideHome(body: HTMLElement) {
+    const start = el('div', { class: 'guide-start' });
+    for (const id of ['getting-started', 'whats-new']) {
+      const g = guideById(id)!;
+      start.append(el('button', { class: 'guide-card' + (id === 'getting-started' ? ' main' : ''), onclick: () => this.guideGo(id) }, el('b', {}, g.title), el('span', {}, g.sum)));
+    }
+    body.append(start);
+    body.append(el('div', { class: 'guide-try' }, 'Try: ',
+      ...['make my brush smooth', 'go back after Ctrl+Z', 'rusty metal', 'export for Roblox', 'it’s laggy'].map((t) =>
+        el('button', { class: 'chip', onclick: () => { this.guideQuery = t; this.renderGuide(); } }, t))));
+    for (const c of CATS) {
+      if (c === 'Start here') continue;
+      const list = GUIDES.filter((g) => g.cat === c);
+      if (!list.length) continue;
+      body.append(el('h4', {}, c), ...list.map((g) => this.guideRow(g, false)));
+    }
+    body.append(el('h4', {}, 'About'), this.guideRow(guideById('about')!, true));
+    body.append(el('div', { class: 'guide-credit' }, `LMP v${VERSION} · owned by H9_zy`));
+  }
+
+  private renderGuideResults(body: HTMLElement, q: string) {
+    const hits = searchGuides(q);
+    if (!hits.length) {
+      body.append(el('p', { class: 'note' }, 'Nothing found for that. Try different words, or pick one of these:'),
+        ...['getting-started', 'paint-basics', 'layers', 'smart-materials', 'export'].map((id) => this.guideRow(guideById(id)!)));
+      return;
+    }
+    body.append(el('div', { class: 'guide-label' }, 'Results'));
+    hits.forEach((h, i) => {
+      const r = this.guideRow(h.g);
+      if (i === 0) {
+        const acts = (h.g.show ?? []).slice(0, 2).map((s) => el('button', { class: 'lmp-btn primary small', onclick: () => this.guideShow(s) }, 'Show me: ' + s.label));
+        body.append(el('div', { class: 'guide-best' }, r, acts.length ? el('div', { class: 'guide-acts' }, ...acts) : null));
+      } else body.append(r);
+    });
+  }
+
+  private renderGuidePage(body: HTMLElement, g: Guide) {
+    const back = el('button', { class: 'guide-back', onclick: () => this.guideBack() }, this.guideStack.length > 1 ? '← Back' : this.guideQuery.trim() ? '← Results' : '← All guides');
+    body.append(back, el('div', { class: 'guide-cat' }, g.cat), el('h2', {}, g.title), el('p', { class: 'guide-sum' }, g.sum));
+    if (g.show?.length) body.append(el('div', { class: 'guide-acts' }, ...g.show.map((s) => el('button', { class: 'lmp-btn primary small', onclick: () => this.guideShow(s) }, 'Show me: ' + s.label))));
+    for (const b of g.body) {
+      if (b.h) body.append(el('h4', {}, b.h));
+      if (b.p) { const e = el('p', {}); e.innerHTML = guideFmt(b.p); body.append(e); }
+      if (b.steps) {
+        const ol = el('ol', { class: 'guide-steps' });
+        for (const t of b.steps) { const li = el('li', {}); li.innerHTML = guideFmt(t); ol.append(li); }
+        body.append(ol);
+      }
+      if (b.table) body.append(el('table', { class: 'guide-table' }, ...b.table.map(([a, k]) => el('tr', {}, el('td', {}, a), el('td', {}, el('span', { class: 'kbd' }, k))))));
+      if (b.tips) for (const t of b.tips) { const e = el('div', { class: 'guide-tip' }); e.innerHTML = '<b>Tip:</b> ' + guideFmt(t); body.append(e); }
+    }
+    const rel = (g.related ?? []).map(guideById).filter(Boolean) as Guide[];
+    if (rel.length) body.append(el('h4', {}, 'Related'), ...rel.map((r) => this.guideRow(r)));
+    if (g.id === 'about' || g.id === 'getting-started') body.append(el('div', { class: 'guide-credit' }, `LMP v${VERSION} · owned by H9_zy`));
+  }
+
+  /** "Show me": do the thing (switch tool, open a panel…) and point at it. */
+  private guideShow(s: GuideShow) {
+    const a = s.act ?? '';
+    const paint = () => { if (this.mode !== 'paint') this.setMode('paint'); };
+    if (a.startsWith('tool:')) { paint(); this.setTool(a.slice(5) as Tool); }
+    else if (a.startsWith('mode:')) this.setMode(a.slice(5) as Mode);
+    else if (a.startsWith('layout:')) this.setLayout(a.slice(7) as any);
+    else if (a.startsWith('shelf:')) { paint(); this.historyOpen = false; this.shelfOpen.add(a.slice(6)); this.shelfFilter = 'all'; this.buildShelf(); this.buildToolstrip(); }
+    else if (a === 'history') { paint(); this.toggleHistory(true); }
+    else if (a === 'props') { paint(); if (this.tool !== 'paint' && this.tool !== 'erase') this.setTool('paint'); this.buildProperties(); }
+    else if (a === 'settings') this.openSettings();
+    else if (a === 'open') { if (this.native) this.openWindow('recent'); else this.openProjectDialog(); }
+    else if (a === 'autosaves') this.openWindow('autosave');
+    else if (a === 'export') this.openExport();
+    else if (a === 'import') this.importDialog();
+    else if (a === 'display') { if (!this.flyout.classList.contains('open')) this.toggleFlyout(); }
+    else if (a === 'shortcuts') this.showShortcuts();
+    else if (a === 'overlap') { if (!this.showOverlap) this.toggleOverlap(true); }
+    if (s.hl) setTimeout(() => this.guideHighlight(s.hl!, s.text), 120);
+  }
+  private guideHighlight(sel: string, text?: string) {
+    document.querySelectorAll('.guide-hl').forEach((x) => x.classList.remove('guide-hl'));
+    const all = [...document.querySelectorAll<HTMLElement>(sel)].filter((e) => e.offsetParent !== null || e.id === 'shelf' || e.id === 'right');
+    const target = text ? all.find((e) => e.textContent?.includes(text)) ?? all[0] : all[0];
+    if (!target) { toast('That part isn\'t on screen right now', true); return; }
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    target.classList.add('guide-hl');
+    setTimeout(() => target.classList.remove('guide-hl'), 3200);
+  }
+
+  // ================================================================ start / open window
+
+  /** LMP's own Open window: new file, recent projects, autosaves, browse. */
+  async openWindow(tab: 'recent' | 'autosave' = 'recent', crashed = false) {
+    const native = this.native;
+    document.querySelectorAll('.lmp-start-wrap').forEach((x) => x.remove());
+    const [recent, autos] = native ? await Promise.all([native.recentList(), native.autosaveList()]) : [[], []];
+    const close = () => { wrap.classList.add('closing'); setTimeout(() => wrap.remove(), 140); window.removeEventListener('keydown', onKey, true); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+    const when = (t: number) => { const d = new Date(t); const s = this.ago(t); return Date.now() - t < 86400000 ? s : d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
+    const card = (thumb: string, title: string, sub: string, onclick: () => void, extra?: HTMLElement) =>
+      el('button', { class: 'start-card', onclick }, el('div', { class: 'start-thumb', style: thumb ? { backgroundImage: `url(${thumb})` } : {} }),
+        el('div', { class: 'start-meta' }, el('b', {}, title), el('span', {}, sub)), extra ?? null);
+    const openAuto = async (a: { path: string; name: string }) => {
+      close();
+      if (!(await this.confirmUnsaved('Restore this autosave anyway?'))) return;
+      await this.openProjectFromPath(a.path);
+      this.projectPath = ''; // restored copies never overwrite the original until you save
+      this.modified = true;
+      this.updateTitle();
+      toast(`Restored “${a.name}” from an autosave — Save to keep it`);
+    };
+    const pane = el('div', { class: 'start-pane' });
+    const tabs = el('div', { class: 'start-tabs' });
+    const show = (t: 'recent' | 'autosave') => {
+      tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+      pane.innerHTML = '';
+      if (t === 'recent') {
+        if (!recent.length) pane.append(el('p', { class: 'note' }, 'No recent projects yet. Saved .lmp files show up here.'));
+        for (const r of recent) pane.append(card(r.thumb, r.name, `${r.path} · ${when(r.time)}`, async () => {
+          close(); if (await this.confirmUnsaved('Open this project anyway?')) this.openProjectFromPath(r.path);
+        }));
+      } else {
+        if (crashed && autos[0]) pane.append(el('div', { class: 'start-crash' }, el('b', {}, 'LMP didn\'t close properly last time.'),
+          el('span', {}, ` The newest autosave is “${autos[0].name}” from ${when(autos[0].time)}.`),
+          el('button', { class: 'lmp-btn primary', onclick: () => openAuto(autos[0]) }, 'Restore it')));
+        if (!autos.length) pane.append(el('p', { class: 'note' }, 'No autosaves yet. LMP saves a backup every few minutes while you work (Settings).'));
+        for (const a of autos) pane.append(card(a.thumb, a.name, `Autosave · ${when(a.time)}`, () => openAuto(a)));
+        if (native) pane.append(el('button', { class: 'link', onclick: () => native.autosaveFolder() }, 'Open the autosave folder'));
+      }
+    };
+    for (const [t, label] of [['recent', `Recent (${recent.length})`], ['autosave', `Autosaves (${autos.length})`]] as const) {
+      const b = el('button', { onclick: () => show(t) }, label); b.dataset.t = t; tabs.append(b);
+    }
+    tabs.append(el('span', { class: 'grow' }), el('button', { class: 'lmp-btn', onclick: async () => {
+      close();
+      if (native?.openProject) { if (!(await this.confirmUnsaved('Open another project anyway?'))) return; const r = await native.openProject(); if (r) await this.openProjectFromPath(r.path, r.data); }
+      else { const f = await pickFile('.lmp,.tpaint'); if (f) this.openProjectFile(f); }
+    } }, 'Browse…'));
+    const models = el('div', { class: 'start-models' });
+    for (const b of BUILTINS) {
+      const it = this.shelf.items.find((x) => x.kind === 'model' && x.model === b.id);
+      const th = it ? this.thumbCache.get(this.thumbKey(it)) ?? '' : '';
+      models.append(card(th, b.label, 'New file', () => { close(); this.loadBuiltin(b.id); }));
+    }
+    models.append(card('', 'Open model…', 'FBX · OBJ · GLB', async () => { close(); const f = await pickFile('.glb,.gltf,.fbx,.obj'); if (f) this.openModelFile(f); }));
+    const startBox = el('input', { type: 'checkbox', checked: this.settings.startScreen }) as HTMLInputElement;
+    startBox.addEventListener('change', () => { this.settings.startScreen = startBox.checked; saveSettings(this.settings); });
+    const logo = el('div', { class: 'start-logo' });
+    logo.style.backgroundImage = `url(${iconBig})`;
+    const box = el('div', { class: 'lmp-modal start' },
+      el('div', { class: 'lmp-modal-head' }, el('span', { class: 'lmp-modal-logo', style: { backgroundImage: `url(${iconSmall})` } }), el('span', {}, 'LMP'), el('span', { class: 'grow' }),
+        el('button', { class: 'start-x', title: 'Close (Esc)', onclick: close }, '×')),
+      el('div', { class: 'start-body' },
+        el('div', { class: 'start-left' }, logo, el('h2', {}, "Leo's Material Painter"), el('div', { class: 'start-ver' }, `v${VERSION} · owned by H9_zy`),
+          el('h4', {}, 'New file'), models,
+          el('button', { class: 'lmp-btn guide-btn', onclick: () => { close(); this.openGuide('getting-started'); } }, 'Getting started')),
+        el('div', { class: 'start-right' }, tabs, pane)),
+      el('div', { class: 'start-foot' }, el('label', { class: 'check-row' }, startBox, ' Show this when LMP starts')));
+    const wrap = el('div', { class: 'lmp-modal-wrap lmp-start-wrap' }, box);
+    wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) close(); });
+    window.addEventListener('keydown', onKey, true);
+    document.body.append(wrap);
+    show(crashed ? 'autosave' : tab);
+  }
+
+  // ================================================================ settings window
+
+  applySettings() {
+    const st = this.settings;
+    this.ts.historyLimit = st.lowPerf ? Math.min(st.historyLimit, 15) : st.historyLimit;
+    const pr = st.pixelRatio || (st.lowPerf ? 1 : Math.min(window.devicePixelRatio, 2));
+    if (st.lowPerf) this.ts.bakeSettings = { ...this.ts.bakeSettings, aoRays: Math.min(this.ts.bakeSettings.aoRays ?? 64, 32), curvRays: Math.min(this.ts.bakeSettings.curvRays ?? 32, 16) };
+    this.vp.renderer.setPixelRatio(pr);
+    this.layout();
+  }
+
+  openSettings() {
+    const st = { ...this.settings };
+    const num = (label: string, key: 'autosaveMinutes' | 'autosaveKeep' | 'historyLimit', min: number, max: number, unit = '') =>
+      slider(label, { min, max, step: 1, value: st[key], fmt: (v) => `${v}${unit}`, onInput: (v) => { st[key] = v; } }).el;
+    const check = (label: string, key: 'autosave' | 'lowPerf' | 'startScreen', note?: string) => {
+      const c = el('input', { type: 'checkbox', checked: st[key] }) as HTMLInputElement;
+      c.addEventListener('change', () => { st[key] = c.checked; });
+      return el('label', { class: 'check-row', title: note ?? '' }, c, ' ' + label);
+    };
+    const content = el('div', { class: 'settings-box' },
+      el('h4', {}, 'Autosave'), check('Autosave while I work', 'autosave'), num('Every', 'autosaveMinutes', 1, 30, ' min'), num('Keep', 'autosaveKeep', 1, 20, ' copies'),
+      el('h4', {}, 'New files'),
+      el('div', { class: 'row' }, el('label', {}, 'Texture size'), select<number>([512, 1024, 2048, 4096].map((v) => ({ value: v, label: `${v} × ${v}` })), st.defaultSize, (v) => { st.defaultSize = v; })),
+      check('Show the start screen when LMP opens', 'startScreen'),
+      el('h4', {}, 'Performance'),
+      check('Low performance mode (weaker devices)', 'lowPerf', 'Sharper-but-slower things are turned down: render scale 1, smaller previews, lighter bakes, fewer undo steps'),
+      el('div', { class: 'row' }, el('label', {}, 'Render scale'), select<number>([{ value: 0, label: 'Automatic' }, { value: 1, label: '1× (fastest)' }, { value: 1.5, label: '1.5×' }, { value: 2, label: '2× (sharpest)' }], st.pixelRatio, (v) => { st.pixelRatio = v; })),
+      num('Undo history', 'historyLimit', 5, 100, ' steps'),
+      el('p', { class: 'note' }, 'More undo steps use more memory, especially at 4K.'),
+    );
+    this.modal({ title: 'Settings', text: '', icon: 'info', wide: true, content, buttons: [['Save', 'ok', 'primary'], ['Cancel', 'cancel']] }).then((r) => {
+      if (r !== 'ok') return;
+      this.settings = st; saveSettings(st); this.applySettings(); toast('Settings saved');
+    });
+  }
+
+  /** On a weak computer, offer low performance mode before loading everything. */
+  private async checkPerformance() {
+    if (this.settings.perfAsked) return;
+    const w = weakComputer(this.vp.renderer.getContext());
+    if (!w.weak) return;
+    const r = await this.modal({
+      title: 'Your device may be too weak to run LMP smoothly',
+      text: `LMP found ${w.why.join(', ')}. Would you like to run it in low performance mode? You can change this later in File → Settings.`,
+      icon: 'warn', buttons: [['Use low performance mode', 'low', 'primary'], ['Run normally', 'normal']],
+    });
+    this.settings.lowPerf = r === 'low';
+    this.settings.perfAsked = true;
+    saveSettings(this.settings);
+  }
+
+  /** Where the open project lives (desktop app), so Save overwrites it and Save as asks again. */
+  projectPath = '';
+  private projectName() { return this.projectPath ? this.projectPath.split(/[\\/]/).pop()!.replace(/\.(lmp|tpaint)$/i, '') : (this.model?.name || 'Untitled'); }
+  updateTitle() {
+    document.title = `${this.modified ? '• ' : ''}${this.projectName()}.lmp — LMP — Leo's Material Painter`;
+  }
+
+  /** Save the project as a .lmp file (Ctrl+S); `saveAs` always asks where (Ctrl+Shift+S). */
+  async saveProject(saveAs = false) {
+    const name = this.projectName();
+    const native = (window as any).texpaintNative;
+    try {
+      const blob = await serializeProject(this.ts, this.model.name || name, this.model.source, this.projectSettings());
+      if (native?.saveProject) {
+        const p = await native.saveProject(name, await blob.arrayBuffer(), this.projectPath || null, saveAs);
+        if (!p) return;
+        this.projectPath = p;
+        native.recentAdd?.(p, p.split(/[\\/]/).pop()!.replace(/\.lmp$/i, ''), this.snapshotThumb());
+        this.modified = false;
+        this.updateTitle();
+        toast(`Saved ${p.split(/[\\/]/).pop()}`);
+        return;
+      }
+      const fileName = `${name}.lmp`;
+      const picker = (window as any).showSaveFilePicker;
+      if (picker) {
+        const h = await picker({
+          suggestedName: fileName, id: 'lmp-project',
+          types: [{ description: 'LMP project', accept: { 'application/json': ['.lmp'] } }],
+        });
+        const w = await h.createWritable();
+        await w.write(blob); await w.close();
+        toast(`Saved ${h.name}`);
+      } else {
+        downloadBlob(blob, fileName);
+        toast(`Downloaded ${fileName}`);
+      }
+      this.modified = false;
+      this.updateTitle();
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') toast('Save failed: ' + (e?.message ?? e), true);
+    }
+  }
+
+  /** File → Open project (Ctrl+O). */
+  async openProjectDialog() {
+    const native = (window as any).texpaintNative;
+    if (native?.recentList) { this.openWindow('recent'); return; }
+    if (native?.openProject) {
+      if (!(await this.confirmUnsaved('Open another project anyway?'))) return;
+      const r = await native.openProject();
+      if (r) await this.openProjectFromPath(r.path, r.data);
+      return;
+    }
+    const f = await pickFile('.lmp,.tpaint');
+    if (f) this.openProjectFile(f);
+  }
+
+  async openProjectFromPath(path: string, data?: ArrayBuffer) {
+    const native = (window as any).texpaintNative;
+    try {
+      if (!data) data = (await native.readProject(path)).data as ArrayBuffer;
+      await this.openProjectText(new TextDecoder().decode(data));
+      this.projectPath = /\.lmp$/i.test(path) ? path : '';
+      this.updateTitle();
+      if (this.projectPath) setTimeout(() => native?.recentAdd?.(path, this.projectName(), this.snapshotThumb()), 800);
+      toast(`Opened ${path.split(/[\\/]/).pop()}`);
+    } catch (e: any) {
+      console.error(e);
+      toast(e?.message ?? 'Could not open project', true);
+    }
+  }
+
+  /** File → Import (Ctrl+I): models, HDRIs, Substance files, presets, textures, projects. */
+  async importDialog() {
+    const native = (window as any).texpaintNative;
+    if (native?.importFiles) {
+      const list = (await native.importFiles()) as { path: string; name: string; data: ArrayBuffer }[];
+      const files = list.map((f) => new File([f.data], f.name));
+      if (files.length === 1 && /\.(lmp|tpaint)$/i.test(files[0].name)) { await this.openProjectFromPath(list[0].path, list[0].data); return; }
+      if (files.length) await this.dropFiles(files);
+      return;
+    }
+    const f = await pickFile('.lmp,.tpaint,.glb,.gltf,.fbx,.obj,.hdr,.sbsar,.spsm,.tpsmart,.tpmat,.tptex,.tpbrush,.tpgraph,.png,.jpg,.jpeg,.webp');
+    if (f) await this.openAny(f);
+  }
+
+  async openProjectText(text: string) {
+    const f = await parseProject(text);
+    const model = f.model.kind === 'builtin'
+      ? builtinModel(f.model.id as BuiltinId)
+      : await parseModel(f.model.name, fromB64(f.model.data).buffer as ArrayBuffer);
+    const s = (f.settings ?? {}) as any;
+    if (this.ts && s.bake) this.ts.bakeSettings = { ...this.ts.bakeSettings, ...s.bake };
+    if (this.ts && s.high) this.ts.highSettings = { ...this.ts.highSettings, ...s.high };
+    if (this.ts && typeof s.heightStrength === 'number') this.ts.heightStrength = s.heightStrength;
+    else if (this.ts && typeof s.normalStrength === 'number') this.ts.heightStrength = s.normalStrength;
+    this.setModel(model, f.resolution, !!f.meshMaps);
+    await restoreLayers(this.ts, f);
+    if (await restoreMeshMaps(this.ts, f)) { this.applyViews(); this.updateBakeStatus(); }
+    if (s.brush) {
+      Object.assign(this.brush, s.brush);
+      if (s.brushTipPng && this.brush.tip) {
+        const cv = await imageTip(s.brushTipPng);
+        this.registerTip(this.brush.tip, cv, s.brushTipPng);
+      }
+      this.brush.channels = { ...this.brush.channels, normal: false };
+      if (!this.brush.values.emit) this.brush.values.emit = [0.2, 0.9, 1];
+    }
+    if (s.exportPreset) this.exportPreset = s.exportPreset;
+    this.modified = false;
+    this.buildAll();
+  }
+
+  async openProjectFile(file: File) {
+    if (!(await this.confirmUnsaved('Open this project anyway?'))) return;
+    try {
+      await this.openProjectText(await file.text());
+      toast(`Opened ${file.name}`);
+    } catch (e: any) {
+      console.error(e);
+      toast(e?.message ?? 'Could not open project', true);
+    }
+  }
+
+  async openAny(file: File) {
+    const ext = file.name.split('.').pop()!.toLowerCase();
+    if (MODEL_EXTS.includes(ext)) {
+      if (this.mode === 'bake') return this.loadHighPoly(file);
+      return this.openModelFile(file);
+    }
+    if (ext === 'tpaint' || ext === 'lmp') return this.openProjectFile(file);
+    if (ext === 'hdr') {
+      try { await this.vp.loadHDR(file); this.buildFlyout(); toast(`Environment: ${file.name}`); }
+      catch { toast('Could not read that HDR file', true); }
+      return;
+    }
+    if (ext === 'sbsar' || ext === 'spsm') { await this.translateSubstance([file]); return; }
+    if (['tpsmart', 'tpmat', 'tptex', 'tpbrush', 'png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
+      await this.shelf.addFiles([file]);
+      this.buildShelf();
+      toast(`Added ${file.name} to the assets shelf`);
+      return;
+    }
+    toast(`Can't open .${ext} files`, true);
+  }
+
+  setResolution(size: number) {
+    if (size === this.ts.size) return;
+    this.ts.setResolution(size);
+    this.bindTextures();
+    this.mapThumbs.clear();
+    toast(`Texture set size: ${size} × ${size} (undo history cleared). Re-bake in the Baking tab for full detail at this size.`);
+    if (this.mode === 'bake') this.buildBakeDock();
+  }
+
+  bindTextures() {
+    this.vp.bindTextures(this.ts);
+    this.applyViews();
+    this.updateMirrorLines?.();
+  }
+
+  private async loadStarter() {
+    const files = STARTER.map((a) => new File(
+      [a.b64 ? fromB64(a.b64) as any : a.text!], a.name,
+      { type: a.b64 ? 'image/png' : 'application/json' }));
+    for (const b of STARTER_BRUSHES) files.push(new File([JSON.stringify(b)], `${b.name}.tpbrush`, { type: 'application/json' }));
+    this.shelf.builtins = [
+      ...BUILTINS.map((b): ShelfItem => ({ kind: 'model', name: b.label, file: 'model:' + b.id, model: b.id })),
+      ...libraryMaterials().map((m): ShelfItem => ({ kind: 'smart', name: m.def.label, file: 'lib:' + m.def.id, smart: m.smart, category: m.def.category, swatch: m.swatch })),
+      ...SMART_MASKS.map((m): ShelfItem => ({ kind: 'mask', name: m.label, file: 'mask:' + m.id, preset: m.id })),
+      ...presetGraphs().map((g): ShelfItem => ({ kind: 'graph', name: g.name, file: 'graph:' + g.name, graph: g })),
+    ];
+    await this.shelf.addFiles(files);
+    await this.shelf.restore();
+    this.buildShelf();
+    await this.checkPerformance();
+    this.applySettings();
+    await this.preloadThumbs();
+    this.startAutosave();
+    const session = this.native?.sessionStart ? await this.native.sessionStart() : { crashed: false };
+    if (session.crashed) this.openWindow('autosave', true);
+    else if (!this.settings.welcomed) { this.settings.welcomed = true; saveSettings(this.settings); this.openGuide('getting-started'); }
+    else if (this.settings.startScreen && this.native) this.openWindow('recent');
+  }
+
+  // ================================================================ baking
+
+  /** Bake in the background; generators update when it finishes. */
+  async startBake() {
+    const ts = this.ts;
+    ts.highGeometries = this.useHigh ? (this.high?.geometries ?? null) : null;
+    if (ts.highGeometries) ts.highName = this.high!.name;
+    else if (ts.bakeMaps.normal || ts.bakeMaps.height || !ts.bakedOnce) ts.highName = '';
+    this.bakeProgress = 0;
+    this.updateBakeStatus();
+    if (this.mode === 'bake') this.buildBakeDock();
+    const run = ts.bakeMeshMaps((f) => { if (this.ts === ts) { this.bakeProgress = f; this.updateBakeStatus(); } });
+    this.showingBake = true;
+    this.updateCage();
+    this.renderBakeRun();
+    if (this.mode === 'bake') { this.bakeLabel.textContent = 'Baking…'; this.bakeLabel.classList.add('on'); }
+    const ok = await run;
+    if (this.ts !== ts || ts.baking) return;
+    this.bakeProgress = -1;
+    this.updateBakeStatus();
+    this.bakeLabel.textContent = ok ? 'All maps baked ✓' : 'Bake stopped';
+    setTimeout(() => this.bakeLabel.classList.remove('on'), 2500);
+    if (ok) {
+      this.applyViews();
+      this.mapThumbs.clear();
+      if (ts.lastHigh && ts.highGeometries) {
+        const pct = (100 * ts.lastHigh.hits) / Math.max(1, ts.lastHigh.texels);
+        toast(pct > 99.5 ? `Baked from the high poly ✓ (rays hit ${pct.toFixed(1)}%)`
+          : `Baked. ${(100 - pct).toFixed(1)}% of rays missed — check Ray check and raise the cage distances there.`, pct <= 99.5);
+      }
+    }
+    if (this.mode === 'bake') this.buildBakeDock();
+    this.buildRight();
+  }
+
+  /** A map started / finished baking: update the list, and show the finished map on the model. */
+  private onBakeStage(k: BakeKey, st: 'working' | 'done') {
+    const label = BAKE_ITEMS.find(([b]) => b === k)?.[1] ?? k;
+    if (st === 'working') this.bakeLabel.textContent = `Baking ${label}…`;
+    if (st === 'done') {
+      this.mapThumbs.delete(BAKE_VIEW[k]);
+      if (this.mode === 'bake') {
+        this.view3 = BAKE_VIEW[k]; this.view2 = BAKE_VIEW[k]; this.bakeItem = k;
+        this.applyViews(); this.buildPaneSelects(); this.buildBakeDock(); this.buildRight();
+      }
+      const next = BAKE_ITEMS.find(([b]) => this.ts.bakeStage[b] === 'working');
+      this.bakeLabel.textContent = next ? `Baking ${next[1]}…` : `${label} ✓`;
+    }
+    this.bakeLabel.classList.toggle('on', this.mode === 'bake');
+    this.renderBakeRun();
+    this.poke(800);
+  }
+
+  private renderBakeRun() {
+    const host = document.getElementById('bake-run');
+    if (!host) return;
+    host.innerHTML = '';
+    const st = this.ts.bakeStage;
+    const keys = BAKE_ITEMS.filter(([k]) => st[k]);
+    for (const [k, label] of keys) {
+      const s = st[k]!;
+      const icon = s === 'done' ? el('span', { class: 'st' }, '✓') : s === 'working' ? el('span', { class: 'st' }, el('span', { class: 'spin' })) : el('span', { class: 'st' }, '–');
+      host.append(el('div', { class: 'bake-run-row ' + s, title: s === 'done' ? 'Done' : s === 'working' ? 'Baking…' : 'Waiting' }, icon, el('span', { class: 'grow' }, label),
+        el('span', { class: 'muted' }, s === 'done' ? 'done' : s === 'working' ? 'processing' : 'waiting')));
+    }
+  }
+
+  private bakeLabel = el('div', { id: 'bake-label' });
+  /** True while a bake runs and its maps are shown on the model (cage hidden). */
+  private showingBake = false;
+
+  private updateBakeStatus() {
+    const t = this.bakeProgress >= 0
+      ? `Baking… ${Math.round(this.bakeProgress * 100)}%`
+      : this.ts?.bakedOnce ? `Mesh maps baked ✓ (${this.ts.baked.size} of ${BAKE_ITEMS.length})` : 'Mesh maps not baked — open the Baking tab';
+    for (const id of ['bake-status', 'bp-status']) { const e = document.getElementById(id); if (e) e.textContent = t; }
+    const bar = document.getElementById('bp-bar');
+    if (bar) bar.style.width = `${Math.round(Math.max(0, this.bakeProgress) * 100)}%`;
+    const s2 = document.getElementById('status-bake');
+    if (s2) s2.textContent = this.bakeProgress >= 0 ? t : '';
+  }
+
+  async loadHighPoly(file: File) {
+    try {
+      toast(`Loading high poly ${file.name}…`);
+      const m = await parseModel(file.name, await file.arrayBuffer(), { xf: this.model.xf, highPoly: true });
+      this.setHigh(m);
+    } catch (e: any) {
+      console.error(e);
+      toast(e?.message ?? 'Could not load the high poly', true);
+    }
+  }
+
+  setHigh(m: LoadedModel | null) {
+    this.high = m;
+    this.useHigh = true;
+    if (m) {
+      const lo = new THREE.Box3(), hiB = new THREE.Box3();
+      for (const g of this.model.geometries) lo.union(g.boundingBox!);
+      for (const g of m.geometries) hiB.union(g.boundingBox!);
+      const off = lo.getCenter(new THREE.Vector3()).distanceTo(hiB.getCenter(new THREE.Vector3()));
+      const ratio = hiB.getSize(new THREE.Vector3()).length() / Math.max(1e-6, lo.getSize(new THREE.Vector3()).length());
+      if (off > 0.15 || ratio < 0.7 || ratio > 1.4) {
+        toast('The high poly doesn\'t line up with the low poly. Export both from the same scene, at the same position and scale.', true);
+      } else toast(`High poly: ${m.name} · ${m.triangles.toLocaleString()} tris. Adjust the cage, then bake.`);
+    }
+    if (this.mode === 'bake') this.buildBakeDock();
+    this.updateCage();
+  }
+
+  private updateCage() {
+    const hs = this.ts.highSettings;
+    // While baking (and right after) the cage and high poly are hidden, so the baked maps show on the model.
+    const on = this.mode === 'bake' && this.useHigh && !!this.high && !this.showingBake;
+    this.vp.setCage(this.ts.geometries, hs.front, hs.rear, on && this.showCage, hs.average);
+    this.vp.setHighPreview(this.high?.geometries ?? null, on && this.showHigh);
+  }
+
+  setMode(m: Mode) {
+    if (this.mode === m) return;
+    if (this.path.p3.length || this.path.p2.length) this.finishPath();
+    this.mode = m;
+    if (!this.ts.baking) this.showingBake = false;
+    document.getElementById('app')!.className = 'mode-' + m;
+    if (m === 'bake') {
+      this.stroke = null;
+      this.view3 = 'material';
+      this.selectBakeItem(this.bakeItem);
+    } else {
+      this.view2 = 'material';
+      this.view3 = 'material';
+      this.bakeLabel.classList.remove('on');
+    }
+    if (m === 'design') {
+      this.stroke = null;
+      if (this.split > 0.45) this.split = 0.42;
+      this.setLayout('split');
+      const l = this.ts.activeLayer;
+      if (l?.kind === 'fill' && l.graph && this.designLinked !== l.id) { this.designLinked = l.id; this.designer.open(l.graph); }
+      else this.designer.changed(false);
+    }
+    this.flyout.classList.remove('open');
+    this.updateCage();
+    this.updateMirrorLines();
+    this.buildAll();
+    this.applyViews();
+  }
+
+  private selectBakeItem(it: BakeItem) {
+    if (!this.ts.baking && this.showingBake) { this.showingBake = false; this.updateCage(); }
+    this.bakeItem = it;
+    this.view2 = BAKE_VIEW[it];
+    if (this.layout3 === '3d') this.setLayout('split');
+    this.applyViews();
+    this.buildBakeDock();
+  }
+
+  // ================================================================ views
+
+  private viewSource(v: ViewMode): ViewSource | null {
+    const ts = this.ts;
+    switch (v) {
+      case 'material': return null;
+      case 'color': case 'emit': return { tex: ts.final[v].texture, mode: 0 };
+      case 'rough': case 'metal': case 'height': return { tex: ts.final[v].texture, mode: 1 };
+      case 'normal': return { tex: ts.finalN.texture, mode: 0 };
+      case 'ao': return { tex: ts.meshRT.texture, mode: 1 };
+      case 'curv': return { tex: ts.meshRT.texture, mode: 2 };
+      case 'mask': {
+        const m = ts.activeLayer?.mask;
+        return m ? { tex: m.rt.texture, mode: 1 } : { tex: ts.final.color.texture, mode: 0 };
+      }
+      case 'bnormal': return { tex: ts.bakedNRT.texture, mode: 0 };
+      case 'bheight': return { tex: ts.bakedHRT.texture, mode: 1 };
+      case 'rays': return { tex: ts.bakedHRT.texture, mode: 3 };
+      case 'id': return { tex: ts.idRT.texture, mode: 0 };
+      case 'wsn': return { tex: ts.wsnRT.texture, mode: 0 };
+      case 'pos': return { tex: ts.posNRT.texture, mode: 0 };
+      case 'thick': return { tex: ts.meshRT.texture, mode: 4 };
+    }
+  }
+
+  applyViews() {
+    if (!this.ts) return;
+    this.vp.setView(this.view3, this.viewSource(this.view3));
+    this.uv.bind(this.viewSource(this.view2) ?? { tex: this.ts.final.color.texture, mode: 0 }, this.ts.posRT.texture);
+    this.buildPaneSelects();
+  }
+
+  /** Keys 1–0 switch both views (like Substance's channel shortcuts). */
+  setView(v: ViewMode) {
+    if (v === 'mask' && !this.ts.activeLayer?.mask) toast('The selected layer has no mask', true);
+    this.view3 = v; this.view2 = v;
+    this.applyViews();
+  }
+
+  private buildPaneSelects() {
+    const mk = (cur: ViewMode, set: (v: ViewMode) => void) => {
+      const s = select<ViewMode>(VIEWS.map((x) => ({ value: x.v, label: x.label })), cur, set);
+      s.title = 'What this view shows';
+      return s;
+    };
+    this.sel3.innerHTML = ''; this.sel2.innerHTML = '';
+    this.sel3.append(mk(this.view3, (v) => { this.view3 = v; this.applyViews(); }));
+    this.sel2.append(mk(this.view2, (v) => { this.view2 = v; this.applyViews(); }));
+  }
+
+  // ================================================================ layout (3D | UV split)
+
+  setLayout(l: Layout) {
+    this.layout3 = l;
+    this.layout();
+    this.buildToolbar();
+  }
+
+  layout() {
+    const c = this.container;
+    const W = c.clientWidth, H = c.clientHeight;
+    this.vp.resize(W, H);
+    const gap = 3;
+    const w3 = this.layout3 === 'split' ? Math.round(W * this.split) : this.layout3 === '3d' ? W : 0;
+    const showUV = this.layout3 !== '3d';
+    const r3: Region = { x: 0, y: 0, w: w3, h: H };
+    const x2 = this.layout3 === 'split' ? w3 + gap : 0;
+    const r2: Region = { x: x2, y: 0, w: showUV ? Math.max(0, W - x2) : 0, h: H };
+    this.vp.setRegion(r3);
+    if (!this.framedOnce && w3 > 50) { this.vp.frame(); this.framedOnce = true; }
+    this.uv.region = r2;
+    if (!this.uv.userMoved) this.uv.frame();
+    Object.assign(this.uvOverlay.style, { display: showUV ? 'block' : 'none', left: `${r2.x}px`, width: `${r2.w}px` });
+    Object.assign(this.designEl.style, { left: `${r2.x}px`, width: `${Math.max(0, r2.w)}px` });
+    Object.assign(this.uvSplitter.style, { display: this.layout3 === 'split' ? 'block' : 'none', left: `${w3}px`, width: `${gap}px` });
+    Object.assign(this.sel3.style, { display: w3 > 0 ? 'block' : 'none', left: `${w3 / 2}px` });
+    Object.assign(this.sel2.style, { display: showUV ? 'block' : 'none', left: `${r2.x + r2.w / 2}px` });
+  }
+
+  private bindUVInput() {
+    const ov = this.uvOverlay;
+    const rect = () => this.vp.canvas.getBoundingClientRect();
+    ov.addEventListener('contextmenu', (e) => e.preventDefault());
+    ov.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const at = this.uv.toUV(e.clientX, e.clientY, rect());
+      this.uv.zoomAt(Math.exp(e.deltaY * 0.0015), at);
+    }, { passive: false });
+    ov.addEventListener('pointerdown', (e) => {
+      try { ov.setPointerCapture(e.pointerId); } catch { /* not an active pointer */ }
+      if (this.wantsAdjust(e)) { e.preventDefault(); this.startAdjust(e); return; }
+      if (e.button === 0 && !e.altKey) {
+        const uv = this.uv.toUV(e.clientX, e.clientY, rect());
+        if (this.idPick >= 0) { this.pickIdColor(uv); return; }
+        if (this.tool === 'fill' && this.mode === 'paint') { this.startBox('2d', e.clientX, e.clientY); return; }
+        this.setPressure(e);
+        this.startUVStroke(uv, e.shiftKey);
+        if (this.uvStroke) this.lazyStart(e.clientX, e.clientY);
+      } else this.uvPan = { x: e.clientX, y: e.clientY };
+    });
+    ov.addEventListener('pointermove', (e) => {
+      if (this.adjust) { this.moveAdjust(e); return; }
+      const r = rect();
+      this.uvHover = this.uv.toUV(e.clientX, e.clientY, r);
+      if (this.tool === 'picker') this.updatePickPreview(e.clientX, e.clientY, this.uvHover);
+      if (this.uvPan) {
+        this.uv.pan(e.clientX - this.uvPan.x, e.clientY - this.uvPan.y);
+        this.uvPan = { x: e.clientX, y: e.clientY };
+      } else if (this.box) {
+        this.moveBox(e.clientX, e.clientY);
+      } else if (this.uvStroke) {
+        const co = (e as any).getCoalescedEvents?.() as PointerEvent[] | undefined; const evs = co?.length ? co : [e];
+        for (const ce of evs) {
+          this.setPressure(ce);
+          const q = this.lazyMove(ce.clientX, ce.clientY);
+          if (q) this.continueUVStroke(this.uv.toUV(q.x, q.y, r));
+        }
+      }
+    });
+    const end = (e: PointerEvent) => {
+      if (this.adjust) { this.endAdjust(); return; }
+      this.uvPan = null;
+      if (this.box?.pane === '2d') this.endBox(e.ctrlKey || e.metaKey);
+      if (this.uvStroke) { this.lastEnd2 = this.uvStroke.uv.clone(); this.uvStroke = null; this.ts.endStroke(); this.queueLayerThumbs(); }
+      this.lazyEnd();
+    };
+    ov.addEventListener('dblclick', () => { if (this.tool === 'path') this.finishPath(); });
+    ov.addEventListener('pointerup', end);
+    ov.addEventListener('pointercancel', end);
+    ov.addEventListener('pointerleave', () => { this.uvHover = null; });
+
+    const sp = this.uvSplitter;
+    sp.addEventListener('pointerdown', (e) => {
+      sp.setPointerCapture(e.pointerId);
+      const move = (ev: PointerEvent) => {
+        const r = this.container.getBoundingClientRect();
+        this.split = Math.min(0.85, Math.max(0.15, (ev.clientX - r.left) / r.width));
+        this.layout();
+      };
+      const up = () => { sp.removeEventListener('pointermove', move); sp.removeEventListener('pointerup', up); };
+      sp.addEventListener('pointermove', move);
+      sp.addEventListener('pointerup', up);
+    });
+  }
+
+  private get radiusUV() { return this.brush.radius * 0.5; }
+
+  // ---------------------------------------------------------------- pen pressure & lazy mouse
+
+  /** Pen pressure from a pointer event (mouse and touch count as full pressure). */
+  private setPressure(e: PointerEvent) {
+    this.ts.pressure = e.pointerType === 'pen' ? Math.max(0.01, e.pressure || 0) : 1;
+    if (e.pointerType === 'pen' && !this.penSeen) { this.penSeen = true; if (this.mode === 'paint') this.buildProperties(); }
+  }
+  penSeen = false;
+  /** Lazy mouse: where the brush is (trails the cursor on a string), in client pixels. */
+  private lazyPt: { x: number; y: number } | null = null;
+  private lazyLine = el('div', { id: 'lazy-line' }, el('i', { class: 'a' }), el('i', { class: 'b' }), el('span', { class: 'str' }));
+  private get lazyLen() { return (this.brush.smoothing ?? 0) * 100; }
+  private lazyStart(x: number, y: number) { this.lazyPt = { x, y }; this.drawLazy(x, y); }
+  /** Move the string end toward the cursor; returns the new brush point, or null while it is still slack. */
+  private lazyMove(x: number, y: number): { x: number; y: number } | null {
+    const L = this.lazyLen;
+    if (!L || !this.lazyPt) return { x, y };
+    const p = this.lazyPt, dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy);
+    this.drawLazy(x, y);
+    if (d <= L) return null;
+    const k = (d - L) / d;
+    p.x += dx * k; p.y += dy * k;
+    return { x: p.x, y: p.y };
+  }
+  private drawLazy(x: number, y: number) {
+    const ln = this.lazyLine, p = this.lazyPt;
+    if (!this.lazyLen || !p) { ln.style.display = 'none'; return; }
+    if (!ln.isConnected) document.body.append(ln);
+    const dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy);
+    ln.style.display = 'block';
+    const [a, b, str] = [...ln.children] as HTMLElement[];
+    Object.assign(a.style, { left: `${p.x}px`, top: `${p.y}px` });
+    Object.assign(b.style, { left: `${x}px`, top: `${y}px` });
+    Object.assign(str.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${d}px`, transform: `rotate(${Math.atan2(dy, dx)}rad)`, opacity: d >= this.lazyLen - 0.5 ? '1' : '.55' });
+  }
+  private lazyEnd() { this.lazyPt = null; this.lazyLine.style.display = 'none'; }
+
+  /** Can the current tool paint into the selection? (doesn't start a stroke) */
+  private paintable(): boolean {
+    if (this.mode === 'bake') { toast('You\'re in Baking mode. Switch to Painting (top right) to paint.', true); return false; }
+    const layer = this.ts.activeLayer;
+    if (!layer) { toast('Add a layer first', true); return false; }
+    if (this.paintTarget === 'mask') {
+      if (!layer.mask) { this.paintTarget = 'content'; this.refresh(); return this.paintable(); }
+    } else if (layer.kind !== 'paint') {
+      toast(layer.mask
+        ? `“${layer.name}” is a ${layer.kind === 'group' ? 'folder' : 'fill layer'}. Click its mask thumbnail to paint the mask, or select a paint layer.`
+        : `To paint a ${layer.kind === 'group' ? 'folder' : 'fill layer'}, give it a black mask (right-click it → Add black mask) and paint the mask white.`, true);
+      return false;
+    }
+    if (!layer.visible) toast('Painting on a hidden layer', true);
+    return true;
+  }
+
+  private canPaint(): boolean {
+    if (!this.paintable()) return false;
+    this.brush.erase = this.tool === 'erase';
+    this.ensureTip();
+    if (!this.ts.beginStroke(this.brush, this.paintTarget)) {
+      toast('Turn on at least one channel in Properties → Material', true);
+      return false;
+    }
+    return true;
+  }
+
+  startUVStroke(uv: THREE.Vector2, shift = false) {
+    if (this.tool === 'picker') { this.pickAt(uv); return; }
+    if (this.tool === 'path') { this.addPathPoint2(uv); return; }
+    if (!this.canPaint()) return;
+    if (shift && this.lastEnd2) {
+      // Shift+click: straight line from the end of the last stroke.
+      this.ts.stampUV(this.lastEnd2, this.radiusUV);
+      this.uvStroke = { uv: this.lastEnd2.clone() };
+      this.continueUVStroke(uv);
+    } else {
+      this.ts.stampUV(uv, this.radiusUV);
+      this.uvStroke = { uv };
+    }
+    this.modified = true;
+  }
+
+  continueUVStroke(uv: THREE.Vector2) {
+    const st = this.uvStroke;
+    if (!st) return;
+    const step = Math.max(this.brush.spacing * this.radiusUV, 1e-5);
+    const dist = uv.distanceTo(st.uv);
+    if (dist < step) return;
+    const n = Math.min(Math.floor(dist / step), 256);
+    for (let i = 1; i <= n; i++) this.ts.stampUV(st.uv.clone().lerp(uv, i / n), this.radiusUV);
+    st.uv = uv;
+  }
+
+  /** Material picker: copy the material under the cursor into the brush. */
+  /** Picker: the whole material (all channels) or only the base color, like Substance's color picker. */
+  pickMode: 'material' | 'color' = 'material';
+  private pickAt(uv: THREE.Vector2) {
+    const v = this.ts.sampleAt(uv);
+    if (this.pickMode === 'color') {
+      this.brush.values = { ...this.brush.values, color: v.color };
+      this.brush.channels.color = true;
+      toast(`Picked color ${rgbToHex(v.color)}`);
+    } else {
+      this.brush.values = { ...this.brush.values, ...v };
+      toast(`Picked ${rgbToHex(v.color)} · rough ${v.rough.toFixed(2)} · metal ${v.metal.toFixed(2)}`);
+    }
+    this.pickPreview.style.display = 'none';
+    this.setTool(this.pickReturn ?? 'paint');
+    this.pickReturn = null;
+    this.buildProperties();
+  }
+  /** Tool to go back to after a pick (the picker is usually a quick detour, like in Substance). */
+  private pickReturn: Tool | null = null;
+  /** Live swatch next to the cursor while picking. */
+  private pickPreview = el('div', { id: 'pick-preview' }, el('span', { class: 'sw' }), el('span', { class: 'tx' }));
+  private pickQueued = false;
+  private updatePickPreview(x: number, y: number, uv: THREE.Vector2 | null | undefined) {
+    if (this.tool !== 'picker' || !uv) { this.pickPreview.style.display = 'none'; return; }
+    if (this.pickQueued) return;
+    this.pickQueued = true;
+    requestAnimationFrame(() => {
+      this.pickQueued = false;
+      const v = this.ts.sampleAt(uv);
+      const sw = this.pickPreview.querySelector('.sw') as HTMLElement, tx = this.pickPreview.querySelector('.tx') as HTMLElement;
+      sw.style.background = rgbToHex(v.color);
+      tx.textContent = this.pickMode === 'color' ? rgbToHex(v.color) : `${rgbToHex(v.color)} · R ${v.rough.toFixed(2)} · M ${v.metal.toFixed(2)}`;
+      Object.assign(this.pickPreview.style, { display: 'flex', left: `${x + 18}px`, top: `${y + 18}px` });
+    });
+  }
+
+  // ================================================================ painting input (3D)
+
+  private bindInput(container: HTMLElement) {
+    const canvas = this.vp.canvas;
+    const controls = this.vp.controls;
+    container.addEventListener('pointerdown', (e) => {
+      if (e.target !== canvas) return;
+      if (this.wantsAdjust(e)) {
+        e.preventDefault(); e.stopPropagation();
+        controls.enabled = false;
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* not an active pointer */ }
+        this.startAdjust(e);
+        return;
+      }
+      if (e.button === 0 && !e.altKey) {
+        controls.enabled = false;
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* not an active pointer */ }
+        if (this.idPick >= 0) { const h = this.vp.pick(e.clientX, e.clientY); if (h?.uv) this.pickIdColor(h.uv); else toast('Click on the model to pick an ID color', true); return; }
+        if (this.tool === 'fill' && this.mode === 'paint') { this.startBox('3d', e.clientX, e.clientY); return; }
+        if (this.tool === 'path') { if (!this.pathDown3(e.clientX, e.clientY, e.ctrlKey || e.metaKey)) { controls.enabled = true; } return; }
+        this.setPressure(e);
+        this.startStroke(e.clientX, e.clientY, e.shiftKey);
+        if (this.stroke) this.lazyStart(e.clientX, e.clientY);
+      } else {
+        controls.enabled = true;
+        controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+        controls.mouseButtons.RIGHT = e.altKey ? THREE.MOUSE.DOLLY : THREE.MOUSE.ROTATE;
+      }
+    }, { capture: true });
+    canvas.addEventListener('pointermove', (e) => {
+      if (this.adjust) { this.moveAdjust(e); return; }
+      this.hover = { x: e.clientX, y: e.clientY };
+      if (this.box?.pane === '3d') { this.moveBox(e.clientX, e.clientY); return; }
+      if (this.pathDrag) { this.pathMove3(e.clientX, e.clientY); return; }
+      if (this.tool === 'picker') this.updatePickPreview(e.clientX, e.clientY, this.vp.pick(e.clientX, e.clientY)?.uv);
+      if (this.stroke) {
+        const co = (e as any).getCoalescedEvents?.() as PointerEvent[] | undefined; const evs = co?.length ? co : [e];
+        for (const ce of evs) {
+          this.setPressure(ce);
+          const q = this.lazyMove(ce.clientX, ce.clientY);
+          if (q) this.continueStroke(q.x, q.y);
+        }
+      }
+    });
+    const end = (e: PointerEvent) => {
+      if (this.adjust) { this.endAdjust(); controls.enabled = true; return; }
+      if (this.box?.pane === '3d') this.endBox(e.ctrlKey || e.metaKey);
+      if (this.pathDrag) this.pathUp();
+      if (this.stroke) { this.lastEnd3 = this.stroke.hit.point.clone(); this.stroke = null; this.ts.endStroke(); this.queueLayerThumbs(); }
+      this.lazyEnd();
+      controls.enabled = true;
+    };
+    canvas.addEventListener('dblclick', () => { if (this.tool === 'path') this.finishPath(); });
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+    canvas.addEventListener('pointerleave', () => { this.hover = null; this.pickPreview.style.display = 'none'; });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    window.addEventListener('keydown', (e) => this.onKey(e));
+    window.addEventListener('click', () => document.querySelectorAll('.menu.open').forEach((m) => m.classList.remove('open')));
+
+    let depth = 0;
+    const isFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+    container.addEventListener('dragenter', (e) => { e.preventDefault(); if (!isFiles(e)) return; depth++; container.classList.add('dragging'); });
+    container.addEventListener('dragleave', (e) => { if (!isFiles(e)) return; if (--depth <= 0) { depth = 0; container.classList.remove('dragging'); } });
+    container.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (this.dragItem) { e.dataTransfer!.dropEffect = 'copy'; this.hoverDropTarget(e.clientX, e.clientY); }
+    });
+    container.addEventListener('drop', async (e) => {
+      e.preventDefault(); depth = 0; container.classList.remove('dragging');
+      if (this.dragItem) { const items = this.dragList(this.dragItem); this.dragItem = null; this.vp.setHighlight('', null); await this.dropAssets(items, e.clientX, e.clientY); return; }
+      await this.dropFiles([...(e.dataTransfer?.files ?? [])]);
+    });
+    // Files dropped anywhere else (Assets, Layers, menus…) are handled too, instead of the
+    // browser opening / downloading them.
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    window.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer!.dropEffect = 'copy'; } });
+    window.addEventListener('drop', async (e) => {
+      if (!hasFiles(e) || e.defaultPrevented) return;
+      e.preventDefault();
+      await this.dropFiles([...(e.dataTransfer?.files ?? [])]);
+    });
+  }
+
+  /** Files dropped from the computer: Substance files are translated, the rest opened / added to Assets. */
+  async dropFiles(all: File[]) {
+    let files = all;
+    const sub = files.filter((f) => /\.(sbsar|spsm)$/i.test(f.name));
+    if (sub.length) { await this.translateSubstance(sub); files = files.filter((f) => !sub.includes(f)); if (!files.length) return; }
+    const imgs = files.filter((f) => /\.(png|jpe?g|webp|bmp|tga|tiff?)$/i.test(f.name));
+    if (imgs.length && imgs.length === files.length) { await this.importImages(imgs); return; }
+    if (files.length > 1) {
+      await this.shelf.addFiles(files); this.buildShelf();
+      toast(`Added ${files.length} files to the assets shelf`);
+    } else if (files[0]) await this.openAny(files[0]);
+  }
+
+  startStroke(x: number, y: number, shift = false) {
+    const hit = this.vp.pick(x, y);
+    if (!hit) return;
+    if (this.tool === 'picker') { if (hit.uv) this.pickAt(hit.uv); return; }
+    if (this.tool === 'path') { this.addPathPoint3(hit); return; }
+    if (this.tool === 'fill') { this.polyFillAt(hit); return; }
+    if (!this.canPaint()) return;
+    if (shift && this.lastEnd3) {
+      // Shift+click: straight line from where the last stroke ended.
+      const s = this.toScreen(this.lastEnd3);
+      const start = s ? this.vp.pick(s.x, s.y) : null;
+      if (start) {
+        this.ts.stamp(start.point, start.normal);
+        this.stroke = { hit: start, x: s!.x, y: s!.y };
+        this.continueStroke(x, y);
+        this.modified = true;
+        return;
+      }
+    }
+    this.ts.stamp(hit.point, hit.normal);
+    this.stroke = { hit, x, y };
+    this.modified = true;
+  }
+
+  /** World point → client coordinates of the 3D view (null if behind the camera). */
+  private toScreen(p: THREE.Vector3): { x: number; y: number } | null {
+    const v = p.clone().project(this.vp.camera);
+    if (v.z > 1) return null;
+    const r = this.vp.canvas.getBoundingClientRect(), g = this.vp.region;
+    return { x: r.left + g.x + (v.x * 0.5 + 0.5) * g.w, y: r.top + g.y + (-v.y * 0.5 + 0.5) * g.h };
+  }
+
+  // ================================================================ polygon fill + drop on mesh
+
+  private partAt(hit: Hit | null, mode: PartMode): Part | null {
+    if (!hit || hit.mesh === undefined || hit.mesh < 0 || hit.face === undefined) return null;
+    return this.parts.pick(mode, hit.mesh, hit.face);
+  }
+
+  polyFillAt(hit: Hit) {
+    const part = this.partAt(hit, this.fillMode);
+    if (part) this.fillParts([part]);
+  }
+
+  /**
+   * Polygon fill: paint layers get the brush material; fill layers and folders get their
+   * mask filled white (a black mask is added first, like Substance). `erase` fills black.
+   */
+  fillParts(parts: Part[], erase = false) {
+    if (!parts.length) return;
+    if (this.mode === 'bake') { toast('Switch to Painting mode to fill.', true); return; }
+    const ts = this.ts;
+    const layer = ts.activeLayer;
+    if (!layer) { toast('Add a layer first', true); return; }
+    const tris = parts.map((p) => ({ geo: p.geo, tris: p.tris }));
+    const n = parts.reduce((a, p) => a + p.tris.length, 0);
+    if (layer.kind !== 'paint' || this.paintTarget === 'mask') {
+      const added = !layer.mask;
+      ts.batchSync(added ? 'Black mask + fill' : 'Fill mask', () => {
+        if (!layer.mask) ts.addMask(layer, { base: 'black', gen: null });
+        ts.activeId = layer.id;
+        ts.polyFill({ ...this.brush, erase }, 'mask', tris);
+      });
+      this.paintTarget = 'mask';
+      if (added) toast(`Added a black mask to “${layer.name}” and filled ${n.toLocaleString()} triangle${n === 1 ? '' : 's'} white. Ctrl+drag fills black.`);
+      this.modified = true;
+      this.refresh();
+      return;
+    }
+    if (!this.paintable()) return;
+    const ok = ts.polyFill({ ...this.brush, erase: erase || this.tool === 'erase' }, this.paintTarget, tris);
+    if (!ok) { toast('Turn on at least one channel in Properties → Material', true); return; }
+    this.modified = true;
+  }
+
+  // ---------------------------------------------------------------- Ctrl + drag brush adjust
+
+  /** Same as Substance: Ctrl + right drag = size (←→) / hardness (↑↓); Ctrl + left drag = flow (←→) / rotation (↑↓). */
+  private wantsAdjust(e: PointerEvent) {
+    return (e.ctrlKey || e.metaKey) && !e.altKey && (e.button === 0 || e.button === 2) && this.mode === 'paint'
+      && (this.tool === 'paint' || this.tool === 'erase' || this.tool === 'path');
+  }
+
+  private startAdjust(e: PointerEvent) {
+    const b = this.brush;
+    this.adjust = { x: e.clientX, y: e.clientY, mode: e.button === 2 ? 'size' : 'angle', r0: b.radius, h0: b.hardness, f0: b.flow, a0: b.angle ?? 0 };
+    this.drawAdjust();
+  }
+
+  private moveAdjust(e: PointerEvent) {
+    const a = this.adjust;
+    if (!a) return;
+    const dx = e.clientX - a.x, dy = e.clientY - a.y;
+    if (a.mode === 'size') {
+      this.setBrush('radius', Math.min(100, Math.max(1, a.r0 * 200 + dx * 0.25)) / 200);
+      this.setBrush('hardness', Math.min(1, Math.max(0, a.h0 - dy * 0.004)));
+    } else {
+      // Like Substance: horizontal = flow, vertical = rotation.
+      this.setBrush('flow', Math.min(1, Math.max(0.01, a.f0 + dx * 0.004)));
+      this.brush.angle = (((a.a0 - dy * 0.75) % 360) + 360) % 360;
+    }
+    this.drawAdjust();
+  }
+
+  private endAdjust() {
+    const a = this.adjust;
+    this.adjust = null;
+    this.adjustEl.style.display = 'none';
+    if (a?.mode === 'angle') this.buildProperties();
+  }
+
+  /** Little label + tip preview next to the cursor while adjusting. */
+  private drawAdjust() {
+    const a = this.adjust;
+    if (!a) return;
+    const b = this.brush;
+    const host = this.container.getBoundingClientRect();
+    const n = 72;
+    const cv = el('canvas', { width: n, height: n }) as HTMLCanvasElement;
+    const g = cv.getContext('2d')!;
+    g.fillStyle = '#000'; g.fillRect(0, 0, n, n);
+    const tip = b.tip ?? 'round';
+    const src = tip === 'round' || tip === 'square' ? tipPreview(tip, undefined, b.hardness) : this.tipCanvases.get(tip);
+    const r = 8 + Math.min(1, b.radius * 6) * 26;
+    g.save(); g.translate(n / 2, n / 2); g.rotate(-((b.angle ?? 0) * Math.PI) / 180);
+    g.globalAlpha = Math.max(0.15, b.flow);
+    if (src) g.drawImage(src, -r, -r, r * 2, r * 2);
+    g.restore();
+    const txt = a.mode === 'size'
+      ? `Size ${Math.round(b.radius * 200)} · Hardness ${Math.round(b.hardness * 100)}`
+      : `Flow ${Math.round(b.flow * 100)} · Rotation ${Math.round(b.angle ?? 0)}°${tip === 'round' ? ' (round tip: pick a shaped tip to see rotation)' : ''}`;
+    this.adjustEl.innerHTML = '';
+    this.adjustEl.append(cv, el('span', {}, txt), el('span', { class: 'muted' }, a.mode === 'size' ? '←→ size · ↑↓ hardness' : '←→ flow · ↑↓ rotation'));
+    Object.assign(this.adjustEl.style, { display: 'flex', left: `${a.x - host.left + 18}px`, top: `${a.y - host.top + 18}px` });
+  }
+
+  // ---------------------------------------------------------------- box selection (polygon fill)
+
+  private startBox(pane: '3d' | '2d', x: number, y: number) {
+    this.box = { pane, x0: x, y0: y, x1: x, y1: y, moved: false, parts: [], queued: false };
+  }
+
+  private moveBox(x: number, y: number) {
+    const b = this.box;
+    if (!b) return;
+    b.x1 = x; b.y1 = y;
+    if (!b.moved && Math.hypot(x - b.x0, y - b.y0) > 5) b.moved = true;
+    if (!b.moved) return;
+    const host = this.container.getBoundingClientRect();
+    Object.assign(this.boxEl.style, {
+      display: 'block', left: `${Math.min(b.x0, x) - host.left}px`, top: `${Math.min(b.y0, y) - host.top}px`,
+      width: `${Math.abs(x - b.x0)}px`, height: `${Math.abs(y - b.y0)}px`,
+    });
+    if (b.queued) return;
+    b.queued = true;
+    requestAnimationFrame(() => {
+      if (this.box !== b) return;
+      b.queued = false;
+      b.parts = this.boxParts(b);
+      this.showSelection(b.parts);
+    });
+  }
+
+  private showSelection(parts: Part[]) {
+    if (parts.length) {
+      const key = 'box:' + parts.map((p) => p.key).join('|');
+      this.vp.setHighlight(key, () => this.parts.highlightMany(parts), 0xff3b30);
+      this.uv.setSelection(this.parts.highlightMany(parts, true));
+    } else { this.vp.setHighlight('', null); this.uv.setSelection(null); }
+  }
+
+  /** Regions touched by the box: in 3D, front-facing triangles whose centre is inside it; in 2D, triangles with a corner or centre inside. */
+  private boxParts(b: NonNullable<App['box']>): Part[] {
+    const geos = this.model.geometries;
+    if (b.pane === '2d') {
+      const r = this.vp.canvas.getBoundingClientRect();
+      const a = this.uv.toUV(b.x0, b.y0, r), c = this.uv.toUV(b.x1, b.y1, r);
+      const u0 = Math.min(a.x, c.x), u1 = Math.max(a.x, c.x), v0 = Math.min(a.y, c.y), v1 = Math.max(a.y, c.y);
+      const inside = (u: number, v: number) => u >= u0 && u <= u1 && v >= v0 && v <= v1;
+      return this.parts.select(this.fillMode, (gi, t) => {
+        const g = geos[gi], uv = g.attributes.uv, idx = g.index;
+        if (!uv) return false;
+        let su = 0, sv = 0;
+        for (let k = 0; k < 3; k++) {
+          const v = idx ? idx.getX(t * 3 + k) : t * 3 + k;
+          const u = uv.getX(v), w = uv.getY(v);
+          if (inside(u, w)) return true;
+          su += u; sv += w;
+        }
+        return inside(su / 3, sv / 3);
+      });
+    }
+    const r = this.vp.canvas.getBoundingClientRect(), reg = this.vp.region;
+    const nx = (x: number) => ((x - r.left - reg.x) / reg.w) * 2 - 1, ny = (y: number) => -(((y - r.top - reg.y) / reg.h) * 2 - 1);
+    const x0 = Math.min(nx(b.x0), nx(b.x1)), x1 = Math.max(nx(b.x0), nx(b.x1)), y0 = Math.min(ny(b.y0), ny(b.y1)), y1 = Math.max(ny(b.y0), ny(b.y1));
+    const cam = this.vp.camera;
+    cam.updateMatrixWorld();
+    const m = new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse).elements;
+    const cp = cam.position;
+    return this.parts.select(this.fillMode, (gi, t) => {
+      const g = geos[gi], pos = g.attributes.position, idx = g.index;
+      let cx = 0, cy = 0, cz = 0;
+      const vs: number[] = [];
+      for (let k = 0; k < 3; k++) {
+        const v = idx ? idx.getX(t * 3 + k) : t * 3 + k;
+        const px = pos.getX(v), py = pos.getY(v), pz = pos.getZ(v);
+        vs.push(px, py, pz);
+        cx += px / 3; cy += py / 3; cz += pz / 3;
+      }
+      // front facing?
+      const ax = vs[3] - vs[0], ay = vs[4] - vs[1], az = vs[5] - vs[2], bx = vs[6] - vs[0], by = vs[7] - vs[1], bz = vs[8] - vs[2];
+      const fx = ay * bz - az * by, fy = az * bx - ax * bz, fz = ax * by - ay * bx;
+      if (fx * (cx - cp.x) + fy * (cy - cp.y) + fz * (cz - cp.z) > 0) return false;
+      const w = m[3] * cx + m[7] * cy + m[11] * cz + m[15];
+      if (w <= 0) return false;
+      const sx = (m[0] * cx + m[4] * cy + m[8] * cz + m[12]) / w, sy = (m[1] * cx + m[5] * cy + m[9] * cz + m[13]) / w;
+      return sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
+    });
+  }
+
+  private endBox(erase: boolean) {
+    const b = this.box;
+    if (!b) return;
+    this.box = null;
+    this.boxEl.style.display = 'none';
+    if (b.moved) {
+      const parts = this.boxParts(b);
+      this.showSelection([]);
+      if (!parts.length) { toast('Nothing inside the box', true); return; }
+      this.fillParts(parts, erase);
+      return;
+    }
+    this.showSelection([]);
+    // A click: fill the region under the cursor.
+    if (b.pane === '3d') { const hit = this.vp.pick(b.x0, b.y0); if (hit) { const part = this.partAt(hit, this.fillMode); if (part) this.fillParts([part], erase); } return; }
+    const part = this.partAtUV(this.uv.toUV(b.x0, b.y0, this.vp.canvas.getBoundingClientRect()));
+    if (part) this.fillParts([part], erase);
+  }
+
+  private partAtUV(uv: THREE.Vector2): Part | null {
+    for (let gi = 0; gi < this.model.geometries.length; gi++) {
+      const t = this.parts.triAtUV(gi, uv.x, uv.y);
+      if (t >= 0) return this.parts.pick(this.fillMode, gi, t);
+    }
+    return null;
+  }
+
+  /** ID color selection mask: sample the ID map under the click. */
+  private pickIdColor(uv: THREE.Vector2) {
+    const layer = this.ts.allLayers.find((l) => l.id === this.idPick);
+    this.idPick = -1;
+    document.body.classList.remove('picking-id');
+    const g = layer?.mask?.gen;
+    if (!layer || !g || g.type !== 'id') return;
+    if (!this.ts.baked.has('id')) { toast('Bake the ID map first (Baking tab → ID).', true); return; }
+    const c = this.ts.sampleTex(this.ts.idRT.texture, uv);
+    this.ts.checkpoint('Pick ID color');
+    g.colors = [...(g.colors ?? []), c].slice(-8);
+    this.ts.maskChanged(layer);
+    this.modified = true;
+    this.buildProperties();
+    toast(`ID color ${rgbToHex(c)} added to the mask`);
+  }
+
+  private hoverDropTarget(x: number, y: number) {
+    const part = this.dropMode === 'whole' ? null : this.partAt(this.vp.pick(x, y), this.dropMode);
+    if (part) this.vp.setHighlight(part.key, () => this.parts.highlightGeometry(part));
+    else this.vp.setHighlight('', null);
+  }
+
+  /** Drop an asset on the 3D/2D view: new fill layer (or folder); with a part mode, masked to that part. */
+  async dropAsset(it: ShelfItem, x: number, y: number) { return this.dropAssets([it], x, y); }
+
+  /** Several assets (Ctrl-click picked on the shelf) dropped at once: one undo step. */
+  async dropAssets(items: ShelfItem[], x: number, y: number) {
+    if (this.mode === 'bake') this.setMode('paint');
+    const usable = items.filter((it) => it.kind !== 'unsupported' && it.kind !== 'brush' && it.kind !== 'mask' && it.kind !== 'env' && it.kind !== 'model');
+    if (!usable.length) { if (items[0]) this.applyShelfItem(items[0]); return; }
+    const hit = this.vp.pick(x, y);
+    const part = this.dropMode === 'whole' ? null : this.partAt(hit, this.dropMode);
+    const label = usable.length > 1 ? `Drop ${usable.length} assets` : `Drop “${usable[0].name}”`;
+    let added = 0;
+    await this.ts.batch(label, async () => {
+      for (const it of usable) {
+        const layer = await this.addAssetLayer(it);
+        if (!layer) continue;
+        added++;
+        if (part) {
+          this.ts.addMask(layer, { base: 'black', gen: null });
+          this.ts.activeId = layer.id;
+          this.ts.polyFill({ ...this.brush, erase: false }, 'mask', [{ geo: part.geo, tris: part.tris }]);
+        }
+      }
+    });
+    if (!added) return;
+    if (part) {
+      this.paintTarget = 'mask';
+      toast(`${usable.length > 1 ? usable.length + ' assets' : '“' + usable[0].name + '”'} applied to this ${PART_LABEL[this.dropMode as PartMode].toLowerCase()}. Paint the mask white/black to adjust.`);
+    } else toast(usable.length > 1 ? `Added ${added} assets` : `Added “${usable[0].name}”`);
+    this.clearShelfPick();
+    this.modified = true;
+    this.refresh();
+  }
+
+  /** What a drag carries: every picked asset if the dragged one is picked, else just it. */
+  private dragList(it: ShelfItem): ShelfItem[] {
+    const many = this.dragMany;
+    this.dragMany = null;
+    return many && many.includes(it) ? many : [it];
+  }
+
+  /** Add several assets above the active layer as one undo step. */
+  async addAssets(items: ShelfItem[]) {
+    if (this.mode === 'bake') this.setMode('paint');
+    const usable = items.filter((it) => it.kind !== 'unsupported' && it.kind !== 'brush' && it.kind !== 'mask' && it.kind !== 'env' && it.kind !== 'model');
+    if (!usable.length) { const b = items.find((it) => it.kind === 'brush' || it.kind === 'mask' || it.kind === 'env' || it.kind === 'model'); if (b) this.applyShelfItem(b); return; }
+    let n = 0;
+    await this.ts.batch(`Add ${usable.length} assets`, async () => { for (const it of usable) if (await this.addAssetLayer(it)) n++; });
+    this.paintTarget = 'content';
+    this.modified = true;
+    this.clearShelfPick();
+    this.refresh();
+    toast(`Added ${n} asset${n === 1 ? '' : 's'}`);
+  }
+
+  private clearShelfPick() {
+    if (!this.shelfPick.size) return;
+    this.shelfPick.clear();
+    document.querySelectorAll('.tile.picked').forEach((t) => t.classList.remove('picked'));
+    this.updatePickBar();
+  }
+
+  private updatePickBar() {
+    const bar = this.pickBar;
+    if (!bar) return;
+    bar.innerHTML = '';
+    const n = this.shelfPick.size;
+    bar.classList.toggle('on', n > 0);
+    if (!n) return;
+    bar.append(
+      el('span', { class: 'grow' }, `${n} selected`),
+      el('button', { class: 'primary', onclick: () => this.addAssets([...this.shelfPick]) }, 'Add all'),
+      el('button', { onclick: () => this.clearShelfPick() }, 'Clear'),
+    );
+  }
+
+  /** Create the layer (or folder) for an asset above the active layer. */
+  private async addAssetLayer(it: ShelfItem, parent?: GroupLayer): Promise<Layer | null> {
+    if (it.kind === 'smart') return applySmartMaterial(this.ts, it.smart, parent);
+    if (it.kind === 'graph') {
+      const g = it.graph as GraphJSON;
+      const images = await this.bakeGraph(g);
+      const enabled = {} as Record<Ch, boolean>;
+      for (const ch of CHANNELS) enabled[ch] = !!images[ch];
+      const fl = this.ts.addFillLayer(g.name, undefined, enabled, !parent, images, 1, parent);
+      fl.graph = structuredClone(g);
+      return fl;
+    }
+    if (it.kind === 'material') {
+      return this.ts.addFillLayer(it.name, structuredClone(it.preset.values), { ...it.preset.enabled, normal: false }, !parent, undefined, 1, parent);
+    }
+    if (it.kind === 'textures') {
+      const images: Partial<Record<Ch, FillImage>> = {};
+      const enabled = {} as Record<Ch, boolean>;
+      for (const ch of CHANNELS) {
+        const f = it.files[ch];
+        enabled[ch] = !!f;
+        if (!f) continue;
+        const bytes = await f.arrayBuffer();
+        images[ch] = { name: f.name, bytes, tex: await imageTexture(bytes, f.name), flipG: ch === 'normal' && !!it.normalDX };
+      }
+      if (!Object.keys(images).length) { toast('No usable maps in that set', true); return null; }
+      return this.applyTexSettings(this.ts.addFillLayer(it.name, undefined, enabled, !parent, images, it.tiling ?? 1, parent), it);
+    }
+    return null;
+  }
+
+  // ================================================================ path (vector) painting
+  // Like Substance's path tool: click to add points (drag while clicking to pull bezier handles), drag
+  // points and handles to edit, and the brush follows the curve live. Enter finishes, Esc cancels.
+
+  private addPathPoint3(hit: Hit) {
+    if (this.path.pane !== '3d' && this.path.p2.length) this.finishPath();
+    this.path.pane = '3d';
+    this.path.p3.push({ p: hit.point.clone(), n: hit.normal.clone(), h: null });
+    this.pathSel = this.path.p3.length - 1;
+    this.pathChanged();
+  }
+
+  private addPathPoint2(uv: THREE.Vector2) {
+    if (this.path.pane !== '2d' && this.path.p3.length) this.finishPath();
+    this.path.pane = '2d';
+    this.path.p2.push({ p: uv.clone(), h: null });
+    this.pathSel = this.path.p2.length - 1;
+    this.pathChanged();
+  }
+
+  /** Remove the path without painting it (a live stroke is undone). */
+  clearPath() {
+    if (this.pathLiveOn) { this.ts.cancelStroke(); this.pathLiveOn = false; }
+    this.path = { pane: '3d', p3: [], p2: [] };
+    this.pathSel = -1;
+    this.updatePathOverlay();
+  }
+
+  /** Automatic (smooth) tangent at point i when it has no handle of its own. */
+  private autoHandle3(i: number): THREE.Vector3 {
+    const P = this.path.p3;
+    if (!this.pathSmooth || P.length < 2) return new THREE.Vector3();
+    const a = P[Math.max(0, i - 1)].p, b = P[Math.min(P.length - 1, i + 1)].p;
+    return b.clone().sub(a).multiplyScalar(i === 0 || i === P.length - 1 ? 1 / 3 : 1 / 6);
+  }
+  private handle3(i: number) { return this.path.p3[i].h ?? this.autoHandle3(i); }
+
+  private pathCurve3(): THREE.Vector3[] {
+    const P = this.path.p3;
+    if (P.length < 2) return P.map((x) => x.p.clone());
+    const out: THREE.Vector3[] = [];
+    for (let i = 0; i + 1 < P.length; i++) {
+      const c = new THREE.CubicBezierCurve3(P[i].p, P[i].p.clone().add(this.handle3(i)), P[i + 1].p.clone().sub(this.handle3(i + 1)), P[i + 1].p);
+      const pts = c.getPoints(32);
+      if (i > 0) pts.shift();
+      out.push(...pts);
+    }
+    return out;
+  }
+
+  private autoHandle2(i: number): THREE.Vector2 {
+    const P = this.path.p2;
+    if (!this.pathSmooth || P.length < 2) return new THREE.Vector2();
+    const a = P[Math.max(0, i - 1)].p, b = P[Math.min(P.length - 1, i + 1)].p;
+    return b.clone().sub(a).multiplyScalar(i === 0 || i === P.length - 1 ? 1 / 3 : 1 / 6);
+  }
+  private handle2(i: number) { return this.path.p2[i].h ?? this.autoHandle2(i); }
+
+  private pathCurve2(): THREE.Vector2[] {
+    const P = this.path.p2;
+    if (P.length < 2) return P.map((x) => x.p.clone());
+    const out: THREE.Vector2[] = [];
+    for (let i = 0; i + 1 < P.length; i++) {
+      const c = new THREE.CubicBezierCurve(P[i].p, P[i].p.clone().add(this.handle2(i)), P[i + 1].p.clone().sub(this.handle2(i + 1)), P[i + 1].p);
+      const pts = c.getPoints(32);
+      if (i > 0) pts.shift();
+      out.push(...pts);
+    }
+    return out;
+  }
+
+  private updatePathOverlay() {
+    const lift = (v: THREE.Vector3, n: THREE.Vector3) => v.clone().addScaledVector(n, 0.004);
+    const P = this.path.p3;
+    const handles: [THREE.Vector3, THREE.Vector3][] = [];
+    if (this.path.pane === '3d') P.forEach((x, i) => {
+      if (!x.h && i !== this.pathSel) return;
+      const h = this.handle3(i);
+      if (h.lengthSq() < 1e-12) return;
+      const p = lift(x.p, x.n);
+      handles.push([p, p.clone().add(h)], [p, p.clone().sub(h)]);
+    });
+    const sel = this.path.pane === '3d' && P[this.pathSel] ? lift(P[this.pathSel].p, P[this.pathSel].n) : null;
+    this.vp.setPath(P.map((x) => lift(x.p, x.n)), this.path.pane === '3d' ? this.pathCurve3().map((v) => v) : [], handles, sel);
+    this.uv.setPath(this.path.p2.map((x) => x.p), this.path.pane === '2d' ? this.pathCurve2() : []);
+    if (this.tool === 'path') this.buildToolbar();
+    this.poke();
+  }
+
+  /** The path changed: redraw it and repaint the live stroke (once per frame). */
+  private pathChanged() {
+    this.updatePathOverlay();
+    if (!this.pathLive || this.pathQueued) return;
+    this.pathQueued = true;
+    requestAnimationFrame(() => { this.pathQueued = false; this.paintPathLive(); });
+  }
+
+  /** Stamp the brush along the path into the open stroke (from scratch each time). */
+  private stampPath() {
+    if (this.path.pane === '2d') {
+      const curve = this.pathCurve2();
+      const step = Math.max(this.brush.spacing * this.radiusUV, 1e-5);
+      let prev = curve[0];
+      this.ts.stampUV(prev, this.radiusUV);
+      for (let i = 1; i < curve.length; i++) {
+        const d = curve[i].distanceTo(prev);
+        const k = Math.max(1, Math.ceil(d / step));
+        for (let j = 1; j <= k; j++) this.ts.stampUV(prev.clone().lerp(curve[i], j / k), this.radiusUV);
+        prev = curve[i];
+      }
+      this.lastEnd2 = prev.clone();
+    } else {
+      const curve = this.pathCurve3();
+      const step = Math.max(this.brush.spacing * this.brush.radius, 1e-4);
+      let prev = curve[0];
+      const s0 = this.snapToSurface(prev); if (s0) this.ts.stamp(s0.point, s0.normal);
+      for (let i = 1; i < curve.length; i++) {
+        const d = curve[i].distanceTo(prev);
+        const k = Math.max(1, Math.ceil(d / step));
+        for (let j = 1; j <= k; j++) {
+          const s1 = this.snapToSurface(prev.clone().lerp(curve[i], j / k));
+          if (s1) this.ts.stamp(s1.point, s1.normal);
+        }
+        prev = curve[i];
+      }
+      this.lastEnd3 = prev.clone();
+    }
+  }
+
+  private paintPathLive() {
+    const n = this.path.pane === '3d' ? this.path.p3.length : this.path.p2.length;
+    if (n < 2) { if (this.pathLiveOn) { this.ts.cancelStroke(); this.pathLiveOn = false; } return; }
+    if (!this.pathLiveOn) {
+      if (!this.paintable()) return;
+      this.brush.erase = false;
+      this.ensureTip();
+      if (!this.ts.beginStroke(this.brush, this.paintTarget)) return;
+      this.pathLiveOn = true;
+    } else this.ts.restartStroke();
+    this.stampPath();
+    this.ts.flushStroke();
+    this.modified = true;
+    this.poke();
+  }
+
+  /** Finish the path: the painted stroke becomes one undo step (Enter / double-click). */
+  finishPath() {
+    const n = this.path.pane === '3d' ? this.path.p3.length : this.path.p2.length;
+    if (n >= 2) {
+      if (!this.pathLiveOn) {
+        if (!this.canPaint()) return;
+        this.pathLiveOn = true;
+      } else this.ts.restartStroke();
+      this.stampPath();
+      this.ts.endStroke();
+      this.pathLiveOn = false;
+      this.modified = true;
+      toast('Path painted (Ctrl+Z to undo)');
+    } else if (this.pathLiveOn) { this.ts.cancelStroke(); this.pathLiveOn = false; }
+    this.path = { pane: '3d', p3: [], p2: [] };
+    this.pathSel = -1;
+    this.updatePathOverlay();
+  }
+  applyPath() { this.finishPath(); }
+
+  /** Path tool mouse down in the 3D view. Returns true when it handled the click. */
+  private pathDown3(x: number, y: number, ctrl: boolean): boolean {
+    const P = this.path.p3;
+    const near = (p: THREE.Vector3) => { const s = this.toScreen(p); return s ? Math.hypot(s.x - x, s.y - y) : Infinity; };
+    // Handles of the selected / handled points first, then points.
+    let best: { kind: 'point' | 'hout' | 'hin'; idx: number; d: number } | null = null;
+    if (this.path.pane === '3d') P.forEach((pt, i) => {
+      const dp = near(pt.p);
+      if (dp < 9 && (!best || dp < best.d)) best = { kind: 'point', idx: i, d: dp };
+      if (pt.h || i === this.pathSel) {
+        const h = this.handle3(i);
+        if (h.lengthSq() > 1e-12) {
+          const a = near(pt.p.clone().add(h)), b = near(pt.p.clone().sub(h));
+          if (a < 8 && (!best || a < best.d)) best = { kind: 'hout', idx: i, d: a };
+          if (b < 8 && (!best || b < best.d)) best = { kind: 'hin', idx: i, d: b };
+        }
+      }
+    });
+    const b = best as { kind: 'point' | 'hout' | 'hin'; idx: number; d: number } | null;
+    if (b) {
+      this.pathSel = b.idx;
+      if (ctrl && b.kind === 'point') { P[b.idx].h = null; this.pathChanged(); return true; }
+      this.pathDrag = { kind: b.kind, idx: b.idx, x, y, moved: false };
+      this.updatePathOverlay();
+      return true;
+    }
+    const hit = this.vp.pick(x, y);
+    if (!hit) return false;
+    this.addPathPoint3(hit);
+    this.pathDrag = { kind: 'new', idx: this.path.p3.length - 1, x, y, moved: false };
+    return true;
+  }
+
+  private pathMove3(x: number, y: number) {
+    const d = this.pathDrag;
+    if (!d) return;
+    if (!d.moved && Math.hypot(x - d.x, y - d.y) < 4) return;
+    d.moved = true;
+    const pt = this.path.p3[d.idx];
+    if (!pt) return;
+    if (d.kind === 'point') {
+      const hit = this.vp.pick(x, y);
+      if (hit) { pt.p.copy(hit.point); pt.n.copy(hit.normal); }
+    } else {
+      // Handles live in the surface's tangent plane at the point.
+      const ray = this.vp.rayAt(x, y);
+      if (!ray) return;
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(pt.n, pt.p);
+      const q = ray.intersectPlane(plane, new THREE.Vector3());
+      if (!q) return;
+      const v = q.sub(pt.p);
+      pt.h = d.kind === 'hin' ? v.negate() : v;
+    }
+    this.pathChanged();
+  }
+
+  private pathUp() { this.pathDrag = null; }
+
+  /** Delete the selected point (Delete / Backspace). */
+  private deletePathPoint() {
+    const list = this.path.pane === '3d' ? this.path.p3 : this.path.p2;
+    if (!list.length) return;
+    const i = this.pathSel >= 0 && this.pathSel < list.length ? this.pathSel : list.length - 1;
+    list.splice(i, 1);
+    this.pathSel = Math.min(i, list.length - 1);
+    this.pathChanged();
+  }
+
+  /** Nearest point on the model (for path samples between clicked points). */
+  private snapToSurface(p: THREE.Vector3): { point: THREE.Vector3; normal: THREE.Vector3 } | null {
+    let best: any = null, bestG: THREE.BufferGeometry | null = null;
+    for (const g of this.ts.geometries) {
+      const hit = (g as any).boundsTree?.closestPointToPoint(p, {});
+      if (hit && (!best || hit.distance < best.distance)) { best = { ...hit, point: hit.point.clone() }; bestG = g; }
+    }
+    if (!best || !bestG) return null;
+    const idx = bestG.index, pos = bestG.attributes.position, nrm = bestG.attributes.normal;
+    const f = best.faceIndex;
+    const ia = idx ? idx.getX(f * 3) : f * 3, ib = idx ? idx.getX(f * 3 + 1) : f * 3 + 1, ic = idx ? idx.getX(f * 3 + 2) : f * 3 + 2;
+    const a = new THREE.Vector3().fromBufferAttribute(pos, ia), b = new THREE.Vector3().fromBufferAttribute(pos, ib), c = new THREE.Vector3().fromBufferAttribute(pos, ic);
+    const bc = new THREE.Triangle(a, b, c).getBarycoord(best.point, new THREE.Vector3()) ?? new THREE.Vector3(1 / 3, 1 / 3, 1 / 3);
+    const n = new THREE.Vector3()
+      .addScaledVector(new THREE.Vector3().fromBufferAttribute(nrm, ia), bc.x)
+      .addScaledVector(new THREE.Vector3().fromBufferAttribute(nrm, ib), bc.y)
+      .addScaledVector(new THREE.Vector3().fromBufferAttribute(nrm, ic), bc.z).normalize();
+    return { point: best.point, normal: n };
+  }
+
+  continueStroke(x: number, y: number) {
+    const st = this.stroke;
+    if (!st) return;
+    const hit = this.vp.pick(x, y);
+    if (!hit) { st.x = x; st.y = y; return; }
+    const step = Math.max(this.brush.spacing * this.brush.radius, 1e-4);
+    const dist = hit.point.distanceTo(st.hit.point);
+    if (dist < step) return;
+    const n = Math.min(Math.floor(dist / step), 96);
+    let last: Hit | null = null;
+    for (let i = 1; i <= n; i++) {
+      const t = i / n;
+      const h = i === n ? hit : this.vp.pick(st.x + (x - st.x) * t, st.y + (y - st.y) * t);
+      if (h) { this.ts.stamp(h.point, h.normal); last = h; }
+    }
+    if (last) { st.hit = last; st.x = x; st.y = y; }
+  }
+
+  private onKey(e: KeyboardEvent) {
+    const t = e.target as HTMLElement;
+    const k = e.key.toLowerCase();
+    // Ctrl+Z / Ctrl+Y in a number field (opacity…) is the app's undo, not the field's.
+    if (t && t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'number' && (e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
+      e.preventDefault(); (t as HTMLInputElement).blur();
+      if (k === 'y' || e.shiftKey) this.redo(); else this.undo();
+      return;
+    }
+    if (t && (t.tagName === 'INPUT' && ['text', 'search', 'number'].includes((t as HTMLInputElement).type))) return;
+    if ((e.ctrlKey || e.metaKey) && k === 'z' && !e.shiftKey) { e.preventDefault(); this.undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); this.redo(); return; }
+    if ((e.ctrlKey || e.metaKey) && k === 'g' && this.mode === 'paint') { e.preventDefault(); this.groupLayers(this.selection()); return; }
+    if ((e.ctrlKey || e.metaKey) && k === 'd' && this.mode === 'paint') { e.preventDefault(); this.duplicateLayers(this.selection()); return; }
+    if (k === 'delete' && this.mode === 'paint' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); this.deleteLayers(this.selection()); return; }
+    if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); this.saveProject(e.shiftKey); return; }
+    if ((e.ctrlKey || e.metaKey) && k === 'o') { e.preventDefault(); this.openProjectDialog(); return; }
+    if ((e.ctrlKey || e.metaKey) && k === 'i') { e.preventDefault(); this.importDialog(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === 'e') { e.preventDefault(); this.openExport(); return; }
+    if (k === 'f1') { e.preventDefault(); this.toggleGuide(); return; }
+    if (k === 'f4' && !e.altKey) { e.preventDefault(); this.setLayout('split'); return; }
+    if (k === 'f2') { e.preventDefault(); this.setLayout('3d'); return; }
+    if (k === 'f3') { e.preventDefault(); this.setLayout('2d'); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (k === '[' || k === ']') {
+      const size = this.brush.radius * 200;
+      const ns = k === ']' ? Math.min(100, size * 1.15 + 0.5) : Math.max(1, size / 1.15 - 0.5);
+      this.setBrush('radius', ns / 200);
+    } else if (k === '{' || k === '}') {
+      this.setBrush('hardness', Math.min(1, Math.max(0, this.brush.hardness + (k === '}' ? 0.1 : -0.1))));
+    } else if (k === 'e') this.setTool(this.tool === 'erase' ? 'paint' : 'erase');
+    else if (k === 'b') this.setTool('paint');
+    else if (k === 'p') { if (this.tool === 'picker') { this.setTool(this.pickReturn ?? 'paint'); this.pickReturn = null; } else { this.pickReturn = this.tool === 'erase' || this.tool === 'path' || this.tool === 'fill' ? this.tool : 'paint'; this.setTool('picker'); } }
+    else if (k === 'g') this.setTool('fill');
+    else if (k === 'l') this.setTool('path');
+    else if (k === 'h' && !e.ctrlKey && !e.metaKey) this.toggleHistory();
+    else if (k === 'x' && !e.ctrlKey && !e.metaKey) {
+      const sym = (this.brush.symmetry ??= { x: false, y: false, z: false });
+      sym.x = !sym.x; this.updateMirrorLines(); this.buildToolbar(); if (this.mode === 'paint') this.buildProperties();
+      toast(`X symmetry ${sym.x ? 'on' : 'off'}`);
+    }
+    else if (k === 'enter' && this.tool === 'path') this.finishPath();
+    else if ((k === 'backspace' || k === 'delete') && this.tool === 'path') this.deletePathPoint();
+    else if (k === 'f') { if (this.uvHover) this.uv.frame(); else this.vp.frame(); }
+    else if (k === 'w') { this.uv.setWire(!this.uv.showWire); this.buildToolbar(); }
+    else if (k === 'o') this.toggleOverlap();
+    else if (k === 'escape') {
+      if (this.guideOpen) this.closeGuide();
+      else if (this.tool === 'path' && (this.path.p3.length || this.path.p2.length)) this.clearPath();
+      else if (this.flyout.classList.contains('open')) this.flyout.classList.remove('open');
+      else if (this.mode === 'bake') this.setMode('paint');
+    }
+    else if (k === 'm') { if (this.ts.activeLayer?.mask) this.setPaintTarget(this.paintTarget === 'mask' ? 'content' : 'mask'); }
+    else if ('1234567890'.includes(k)) {
+      const i = k === '0' ? 9 : +k - 1;
+      if (VIEWS[i]) this.setView(VIEWS[i].v);
+    }
+  }
+
+  // ================================================================ loop
+
+  /** Render on demand: keep drawing while something happens, then idle (1 frame a second). */
+  private activeUntil = 0;
+  private lastRender = 0;
+  poke(ms = 500) { this.activeUntil = Math.max(this.activeUntil, performance.now() + ms); }
+  private loop = () => {
+    requestAnimationFrame(this.loop);
+    const now = performance.now();
+    if (!this.ts.busy && !this.ts.baking && now > this.activeUntil && now - this.lastRender < 1000) return;
+    this.lastRender = now;
+    this.ts.flushStroke();
+    this.ts.compositeDirty();
+    let hit: Hit | null = null;
+    if (this.hover && this.mode === 'paint' && !(this.vp.controls.enabled && this.isDraggingCamera())) {
+      hit = this.vp.pick(this.hover.x, this.hover.y);
+    }
+    const brushCursor = this.tool === 'paint' || this.tool === 'erase';
+    this.vp.showCursor(brushCursor || this.tool === 'path' ? hit : null, this.tool === 'path' ? this.brush.radius * 0.5 : this.brush.radius);
+    if (this.box) { /* box selection draws its own highlight */ }
+    else if (this.tool === 'fill' && !this.dragItem && this.mode === 'paint') {
+      let part = this.partAt(hit, this.fillMode);
+      if (!part && this.uvHover && this.layout3 !== '3d') {
+        const k = `${this.fillMode}:${this.uvHover.x.toFixed(4)},${this.uvHover.y.toFixed(4)}`;
+        if (k !== this.uvHoverKey) { this.uvHoverKey = k; this.uvHoverPart = this.partAtUV(this.uvHover); }
+        part = this.uvHoverPart;
+      } else this.uvHoverKey = '';
+      if (part) { this.vp.setHighlight(part.key, () => this.parts.highlightGeometry(part!)); if (this.uvSelKey !== part.key) { this.uvSelKey = part.key; this.uv.setSelection(this.parts.highlightMany([part], true)); } }
+      else { this.vp.setHighlight('', null); if (this.uvSelKey) { this.uvSelKey = ''; this.uv.setSelection(null); } }
+    } else if (!this.dragItem) { this.vp.setHighlight('', null); if (this.uvSelKey) { this.uvSelKey = ''; this.uv.setSelection(null); } }
+    this.vp.render();
+    if (this.layout3 !== '3d') {
+      if (this.mode === 'paint' && brushCursor && this.uvHover && !this.uvPan) this.uv.setCursor({ kind: 'uv', uv: this.uvHover, radius: this.radiusUV });
+      else if (hit && brushCursor) this.uv.setCursor({ kind: 'sphere', center: hit.point, radius: this.brush.radius });
+      else this.uv.setCursor(null);
+      this.uv.updateCamera();
+      this.vp.renderRegion(this.uv.scene, this.uv.camera, this.uv.region);
+    }
+  };
+  private isDraggingCamera() { return (this.vp.controls as any).state !== undefined && (this.vp.controls as any).state !== -1; }
+
+  // ================================================================ tools + brush
+
+  setTool(t: Tool) {
+    this.tool = t;
+    this.brush.erase = t === 'erase';
+    this.vp.canvas.style.cursor = t === 'picker' || t === 'fill' || t === 'path' ? 'crosshair' : '';
+    if (t !== 'picker') this.pickPreview.style.display = 'none';
+    this.updateMirrorLines?.();
+    if (t !== 'path' && (this.path.p3.length || this.path.p2.length)) this.finishPath();
+    this.buildToolstrip();
+    this.buildToolbar();
+    this.buildProperties();
+  }
+
+  setPaintTarget(t: PaintTarget) {
+    this.paintTarget = t;
+    if (t === 'mask') toast('Painting the mask: Paint = white (show), Erase = black (hide). M switches back.');
+    this.refresh();
+  }
+
+  private setBrush(key: 'radius' | 'flow' | 'hardness' | 'spacing' | 'opacity', v: number) {
+    this.brush[key] = v;
+    const live = (this.brushSync.get(key) ?? []).filter((x) => x.el.isConnected);
+    this.brushSync.set(key, live);
+    for (const x of live) x.set(key === 'radius' ? Math.round(v * 200) : v);
+    this.drawBrushPreview();
+  }
+
+  /** X / Y / Z mirror-painting toggles (shortcut: X toggles X symmetry, like Substance). */
+  /** Show where the mirror planes cut the model (red lines) while a painting tool with symmetry is active. */
+  updateMirrorLines() {
+    const sym = this.brush.symmetry;
+    const show = this.mode === 'paint' && !!sym && (sym.x || sym.y || sym.z) && (this.tool === 'paint' || this.tool === 'erase' || this.tool === 'path');
+    if (!show) { this.vp.setMirrorLines(null); return; }
+    const c = this.ts.symmetryCenter(this.brush);
+    const parts: Float32Array[] = [];
+    for (const a of ['x', 'y', 'z'] as const) if (sym![a]) parts.push(this.ts.mirrorLines(a, c[a]));
+    const all = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
+    this.vp.setMirrorLines(all);
+    this.poke();
+  }
+
+  /** Mirror plane position sliders (one per active axis). */
+  private symmetryOffsets(): HTMLElement[] {
+    const sym = this.brush.symmetry;
+    if (!sym || !(sym.x || sym.y || sym.z)) return [];
+    const off = (this.brush.symOffset ??= { x: 0, y: 0, z: 0 });
+    const out: HTMLElement[] = [];
+    for (const a of ['x', 'y', 'z'] as const) {
+      if (!sym[a]) continue;
+      out.push(slider(`${a.toUpperCase()} position`, { min: -1, max: 1, step: 0.005, value: off[a], fmt: (v) => `${Math.round(v * 100)}%`,
+        onInput: (v) => { off[a] = v; this.updateMirrorLines(); } }).el);
+    }
+    out.push(el('div', { class: 'row' }, el('label', {}, ''), el('button', { class: 'grow', onclick: () => { off.x = off.y = off.z = 0; this.updateMirrorLines(); this.buildProperties(); } }, 'Centre the mirror planes')));
+    return out;
+  }
+
+  private symmetryButtons(): HTMLElement {
+    const sym = (this.brush.symmetry ??= { x: false, y: false, z: false });
+    const box = el('div', { class: 'seg sym-seg', title: 'Mirror painting across the model (red line = mirror plane; move it in Properties → Brush)' });
+    for (const a of ['x', 'y', 'z'] as const) {
+      const b = el('button', { class: sym[a] ? 'on' : '', onclick: () => { sym[a] = !sym[a]; this.updateMirrorLines(); this.buildToolbar(); if (this.mode === 'paint') this.buildProperties(); } }, a.toUpperCase());
+      box.append(b);
+    }
+    return el('span', { class: 'inline sym-wrap' }, el('span', { class: 'tb-note' }, 'Sym'), box);
+  }
+
+  private brushSlider(label: string, key: 'radius' | 'flow' | 'hardness' | 'spacing' | 'opacity', inline = false) {
+    const conf = {
+      opacity: { min: 0.01, max: 1, step: 0.01, value: this.brush.opacity ?? 1, fmt: (v: number) => Math.round(v * 100).toString() },
+      radius: { min: 1, max: 100, step: 1, value: Math.round(this.brush.radius * 200), fmt: (v: number) => v.toFixed(0) },
+      flow: { min: 0.01, max: 1, step: 0.01, value: this.brush.flow, fmt: (v: number) => Math.round(v * 100).toString() },
+      hardness: { min: 0, max: 1, step: 0.01, value: this.brush.hardness, fmt: (v: number) => Math.round(v * 100).toString() },
+      spacing: { min: 0.03, max: 3, step: 0.01, value: this.brush.spacing, fmt: (v: number) => Math.round(v * 100).toString() },
+    }[key];
+    const s = slider(label, { ...conf, onInput: (v) => this.setBrush(key, key === 'radius' ? v / 200 : v) });
+    if (!this.brushSync.has(key)) this.brushSync.set(key, []);
+    this.brushSync.get(key)!.push({ el: s.el, set: s.set });
+    if (inline) s.el.classList.add('inline-slider');
+    return s.el;
+  }
+
+  /** Lazy mouse (Substance calls it "Lazy mouse"; Photoshop "Smoothing"). */
+  private smoothingSlider(inline = false) {
+    const s = slider('Smoothing', { min: 0, max: 1, step: 0.01, value: this.brush.smoothing ?? 0, fmt: (v) => v ? Math.round(v * 100).toString() : 'off',
+      onInput: (v) => { this.brush.smoothing = v; for (const o of this.brushSync.get('smoothing' as any) ?? []) if (o.el !== s.el) o.set(v); } });
+    s.el.title = 'Lazy mouse: the brush trails the cursor on a string, so lines come out smooth and steady';
+    if (!this.brushSync.has('smoothing' as any)) this.brushSync.set('smoothing' as any, []);
+    this.brushSync.get('smoothing' as any)!.push({ el: s.el, set: s.set });
+    if (inline) s.el.classList.add('inline-slider');
+    return s.el;
+  }
+  private pressureRow() {
+    const tog = (key: 'pressureSize' | 'pressureFlow', label: string) => el('button', { class: this.brush[key] ? 'on' : '', title: `Pen pressure changes the ${label.toLowerCase()} (graphics tablets; a mouse is always full pressure)`,
+      onclick: () => { this.brush[key] = !this.brush[key]; this.buildProperties(); } }, label);
+    return el('div', { class: 'row' }, el('label', {}, 'Pen pressure'), el('div', { class: 'seg' }, tog('pressureSize', 'Size'), tog('pressureFlow', 'Flow')));
+  }
+
+  // ---------------------------------------------------------------- brush tips and presets
+
+  private registerTip(id: string, cv: HTMLCanvasElement, png?: string) {
+    this.tipCanvases.set(id, cv);
+    this.tipUrls.delete(id);
+    if (png) this.tipPng.set(id, png);
+    this.ts.setTip(id, tipTexture(cv));
+  }
+
+  /** Make sure the brush's tip is loaded into the current texture set (falls back to round). */
+  private ensureTip() {
+    const t = this.brush.tip ?? 'round';
+    if (t === 'round' || t === 'square' || this.ts.hasTip(t)) return;
+    let cv = this.tipCanvases.get(t);
+    if (!cv && t.startsWith('builtin:')) cv = builtinTip(t.slice(8));
+    if (cv) this.registerTip(t, cv);
+    else this.brush.tip = 'round';
+  }
+
+  private async brushTipCanvas(it: Extract<ShelfItem, { kind: 'brush' }>): Promise<HTMLCanvasElement> {
+    const t = it.brush.tip;
+    if (t.startsWith('builtin:')) return this.tipCanvases.get(t) ?? builtinTipThumb(t.slice(8), 96);
+    if (t === 'image') return imageTip(it.tipFile ?? it.brush.tipPng!);
+    return tipPreview(t);
+  }
+
+  /** Set the brush tip: 'round', 'square', 'builtin:<id>' or a picture. */
+  async setTip(tip: string, image?: Blob | string, name = 'custom') {
+    let id = tip;
+    if (tip === 'image' && image) {
+      const cv = await imageTip(image);
+      id = 'img:' + name;
+      this.registerTip(id, cv, cv.toDataURL());
+    } else if (tip.startsWith('builtin:') && !this.tipCanvases.has(tip)) this.registerTip(tip, builtinTip(tip.slice(8)));
+    this.brush.tip = id;
+    this.ensureTip();
+  }
+
+  async applyBrushPreset(bp: BrushPreset, tipFile?: File) {
+    try {
+      await this.setTip(bp.tip, tipFile ?? bp.tipPng, bp.name);
+    } catch (e: any) { toast('Could not load that brush tip: ' + (e?.message ?? e), true); return; }
+    const d: BrushSettings = { radius: this.brush.radius, hardness: 0.5, flow: 1, spacing: 0.12, angle: 0, angleJitter: 0, followStroke: false, sizeJitter: 0, scatter: 0 };
+    Object.assign(this.brush, d, bp.settings);
+    if (this.tool !== 'paint' && this.tool !== 'erase') this.setTool('paint');
+    this.buildToolbar();
+    this.buildProperties();
+    toast(`Brush: ${bp.name}`);
+  }
+
+  private async importTip() {
+    const f = await pickFile('.png,.jpg,.jpeg,.webp');
+    if (!f) return;
+    try {
+      await this.setTip('image', f, f.name.replace(/\.[^.]+$/, ''));
+      if (this.tool !== 'paint' && this.tool !== 'erase') this.setTool('paint');
+      this.buildProperties();
+      toast(`Brush tip: ${f.name} (white / opaque = paint)`);
+    } catch (e: any) { toast(e?.message ?? 'Could not read that image', true); }
+  }
+
+  private async saveBrushPreset() {
+    const name = prompt('Brush preset name:', 'My brush');
+    if (!name) return;
+    const b = this.brush;
+    const t = b.tip ?? 'round';
+    const bp: BrushPreset = {
+      format: 'texpaint-brush', version: 1, name,
+      tip: t.startsWith('img:') ? 'image' : t, tipPng: t.startsWith('img:') ? this.tipPng.get(t) : undefined,
+      settings: { radius: b.radius, hardness: b.hardness, flow: b.flow, spacing: b.spacing, angle: b.angle ?? 0, angleJitter: b.angleJitter ?? 0, followStroke: !!b.followStroke, sizeJitter: b.sizeJitter ?? 0, scatter: b.scatter ?? 0 },
+    };
+    try {
+      const msg = await this.shelf.saveJSON(`${name.replace(/[^\w\- ]+/g, '_').trim() || 'brush'}.tpbrush`, bp);
+      toast(msg);
+      this.buildShelf();
+    } catch (e: any) { toast('Could not save the brush: ' + e?.message, true); }
+  }
+
+  /** Brush tip picker + dynamics (Properties → Brush). */
+  private brushTipProps(): HTMLElement[] {
+    const b = this.brush;
+    const cur = b.tip ?? 'round';
+    const tips: [string, string][] = [['round', 'Round'], ['square', 'Square'], ...BUILTIN_TIPS.map((t): [string, string] => ['builtin:' + t.id, t.label])];
+    if (cur.startsWith('img:')) tips.push([cur, cur.slice(4)]);
+    const row = el('div', { class: 'tip-row' });
+    for (const [id, label] of tips) {
+      const key = id === 'round' || id === 'square' ? `${id}:${b.hardness.toFixed(2)}` : id;
+      let url = this.tipUrls.get(key);
+      if (!url) {
+        let cv = id === 'round' || id === 'square' ? tipPreview(id, undefined, b.hardness) : this.tipCanvases.get(id);
+        if (!cv && id.startsWith('builtin:')) cv = builtinTipThumb(id.slice(8));
+        url = cv!.toDataURL();
+        this.tipUrls.set(key, url);
+      }
+      const img = el('img', { src: url, alt: label }) as HTMLImageElement;
+      row.append(el('button', { class: 'tip-btn' + (cur === id ? ' on' : ''), title: label, onclick: async () => { await this.setTip(id); this.buildProperties(); } }, img));
+    }
+    const num = (label: string, key: 'angle' | 'angleJitter' | 'sizeJitter' | 'scatter', min: number, max: number, step: number, fmt: (v: number) => string) =>
+      slider(label, { min, max, step, value: (b[key] as number) ?? 0, fmt, onInput: (v) => { b[key] = v; this.drawBrushPreview(); } }).el;
+    const follow = el('input', { type: 'checkbox', checked: !!b.followStroke }) as HTMLInputElement;
+    follow.addEventListener('change', () => { b.followStroke = follow.checked; this.drawBrushPreview(); });
+    const shaped = cur !== 'round';
+    return [
+      row,
+      el('div', { class: 'row' },
+        el('button', { class: 'grow', onclick: () => this.importTip(), title: 'Any picture: white (or opaque) parts paint. Also: put PNGs in a "brushes" folder inside your presets folder.' }, 'Import tip…'),
+        el('button', { class: 'grow', onclick: () => this.saveBrushPreset(), title: 'Save size, flow, tip and dynamics as a .tpbrush preset' }, 'Save brush…')),
+      el('div', { class: 'group-sub' + (shaped ? '' : ' dim') },
+        num('Angle', 'angle', 0, 360, 1, (v) => `${v.toFixed(0)}°`),
+        el('label', { class: 'check-row' }, follow, ' Follow stroke direction'),
+      ),
+      num('Angle jitter', 'angleJitter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
+      num('Size jitter', 'sizeJitter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
+      num('Scatter', 'scatter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
+    ];
+  }
+
+  /** Little stroke drawing with the current size / hardness / flow. */
+  private drawBrushPreview() {
+    const c = this.brushPreview;
+    if (!c || !c.isConnected) return;
+    const ctx = c.getContext('2d')!;
+    const W = c.width, H = c.height;
+    ctx.clearRect(0, 0, W, H);
+    const r = 4 + Math.min(1, this.brush.radius * 6) * 20;
+    const hard = this.brush.hardness;
+    const step = Math.max(1, this.brush.spacing * r);
+    ctx.globalCompositeOperation = 'lighter';
+    const path = (t: number) => [W * (0.14 + 0.72 * t), H * (0.5 + 0.28 * Math.sin(t * Math.PI * 2.6))];
+    let prev = path(0), acc = 0;
+    for (let t = 0; t <= 1; t += 0.002) {
+      const p = path(t);
+      acc += Math.hypot(p[0] - prev[0], p[1] - prev[1]);
+      prev = p;
+      if (acc < step) continue;
+      acc = 0;
+      const b = this.brush;
+      const tipC = b.tip && b.tip !== 'round' ? (b.tip === 'square' ? tipPreview('square') : this.tipCanvases.get(b.tip)) : null;
+      const rr = r * (b.sizeJitter ? 1 - b.sizeJitter * Math.random() * 0.9 : 1);
+      const sc = (b.scatter ?? 0) * rr;
+      const px = p[0] + (Math.random() * 2 - 1) * sc, py = p[1] + (Math.random() * 2 - 1) * sc;
+      if (tipC) {
+        const dir = Math.atan2(Math.cos(t * Math.PI * 2.6) * 0.28 * 2.6 * Math.PI * H, 0.72 * W);
+        let ang = ((b.angle ?? 0) * Math.PI) / 180 + (b.followStroke ? dir : 0) + (b.angleJitter ? (Math.random() * 2 - 1) * Math.PI * b.angleJitter : 0);
+        ctx.save(); ctx.translate(px, py); ctx.rotate(-ang); ang = 0;
+        ctx.globalAlpha = 0.85 * b.flow;
+        ctx.drawImage(tipC, -rr, -rr, rr * 2, rr * 2);
+        ctx.restore();
+        continue;
+      }
+      const g = ctx.createRadialGradient(px, py, rr * hard * 0.98, px, py, rr);
+      const a = 0.25 * this.brush.flow;
+      g.addColorStop(0, `rgba(255,255,255,${a})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  private async updateMatPreview() {
+    if (!this.matPreview) return;
+    const b = this.brush;
+    const key = 'brush:' + JSON.stringify([b.values, b.channels]);
+    const img = this.matPreview;
+    const url = await this.thumbs.material(key, b.values, b.channels);
+    if (img.isConnected) img.src = url;
+  }
+
+  // ================================================================ build: menus, strips, toolbar
+
+  private buildAll() {
+    this.buildToolstrip();
+    this.buildToolbar();
+    this.buildShelf();
+    this.buildRight();
+    this.buildModeTabs();
+    this.buildStatus();
+    this.buildPaneSelects();
+  }
+
+  private buildMenus() {
+    const host = document.getElementById('menus')!;
+    host.innerHTML = '';
+    type Item = [string, () => void, string?] | '-';
+    const menu = (name: string, items: () => Item[]) => {
+      const m = el('div', { class: 'menu' });
+      const list = el('div', { class: 'menu-items' });
+      const btn = el('button', { class: 'menu-btn', onclick: (e: Event) => {
+        e.stopPropagation();
+        const open = m.classList.contains('open');
+        document.querySelectorAll('.menu.open').forEach((x) => x.classList.remove('open'));
+        if (!open) {
+          list.innerHTML = '';
+          for (const it of items()) {
+            if (it === '-') { list.append(el('hr')); continue; }
+            list.append(el('button', { onclick: () => { m.classList.remove('open'); it[1](); } },
+              el('span', {}, it[0]), it[2] ? el('span', { class: 'kbd' }, it[2]) : null));
+          }
+          m.classList.add('open');
+        }
+      } }, name);
+      btn.addEventListener('mouseenter', () => { if (document.querySelector('.menu.open') && !m.classList.contains('open')) btn.click(); });
+      m.append(btn, list);
+      return m;
+    };
+    host.append(
+      menu('File', () => [
+        ['Open model…', async () => { const f = await pickFile('.glb,.gltf,.fbx,.obj'); if (f) this.openModelFile(f); }],
+        '-',
+        ['Open project…', () => this.openProjectDialog(), 'Ctrl+O'],
+        ...(this.native ? [['Recent & autosaves…', () => this.openWindow('recent')] as Item] : []),
+        ['Save', () => this.saveProject(false), 'Ctrl+S'],
+        ['Save as…', () => this.saveProject(true), 'Ctrl+Shift+S'],
+        ['Import…', () => this.importDialog(), 'Ctrl+I'],
+        '-',
+        ['Export textures…', () => this.openExport(), 'Ctrl+Shift+E'],
+        '-',
+        ['Settings…', () => this.openSettings()],
+      ]),
+      menu('Edit', () => [
+        ['Undo', () => this.undo(), 'Ctrl+Z'],
+        ['Redo', () => this.redo(), 'Ctrl+Y'],
+      ]),
+      menu('Mode', () => [
+        ['Painting', () => this.setMode('paint')],
+        ['Baking', () => this.setMode('bake')],
+        ['Material Designer (node graphs, Shader Maker)', () => this.setMode('design')],
+      ]),
+      menu('Viewport', () => [
+        ['3D / 2D', () => this.setLayout('split'), 'F4'],
+        ['3D only', () => this.setLayout('3d'), 'F2'],
+        ['2D only', () => this.setLayout('2d'), 'F3'],
+        '-',
+        ['Frame model', () => this.vp.frame(), 'F'],
+        ['Fit texture in 2D view', () => this.uv.frame()],
+        ['UV wireframe on/off', () => { this.uv.setWire(!this.uv.showWire); this.buildToolbar(); }, 'W'],
+        ['UV overlaps on/off', () => this.toggleOverlap(), 'O'],
+        '-',
+        ['Display settings…', () => this.toggleFlyout()],
+      ]),
+    );
+    host.append(el('button', { id: 'guide-btn', class: 'guide-top' + (this.guideOpen ? ' on' : ''), title: 'Guide (F1): how-tos with search, Getting started, What\'s new',
+      onclick: (e: Event) => { e.stopPropagation(); this.toggleGuide(); } }, el('span', { class: 'q' }, '?'), 'Guide'));
+  }
+
+  private showShortcuts() {
+    const dlg = document.getElementById('export-dialog') as HTMLDialogElement;
+    dlg.innerHTML = '';
+    const rows: [string, string][] = [
+      ['Paint / Erase / Picker', 'B / E / P'], ['Brush size / hardness', '[ ]  /  { }'],
+      ['Orbit / Pan / Zoom', 'RMB or Alt+LMB / MMB / Wheel'], ['Frame model (or 2D view)', 'F'],
+      ['Guide', 'F1'], ['Layouts 3D / 2D / 3D+2D', 'F2 / F3 / F4'], ['History panel', 'H'], ['Straight line', 'Shift+click'], ['Path tool / polygon fill', 'L / G'], ['X symmetry', 'X'], ['Views (both panes)', '1 – 9, 0'],
+      ['Paint the layer mask', 'M'], ['UV wireframe', 'W'], ['UV overlaps (dark spots)', 'O'], ['Brush size / hardness', 'Ctrl + right-drag ←→ / ↑↓'], ['Brush flow / rotation', 'Ctrl + left-drag ←→ / ↑↓'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Y'], ['Select several layers / assets', 'Ctrl+click · Shift+click'], ['Group / duplicate / delete selected layers', 'Ctrl+G / Ctrl+D / Delete'],
+      ['Save / Save as / Open / Import', 'Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+I'], ['Export textures', 'Ctrl+Shift+E'], ['Leave Baking mode / close panel', 'Esc'],
+    ];
+    dlg.append(el('header', {}, 'Keyboard shortcuts'),
+      el('div', { class: 'body' }, ...rows.map(([a, b]) => el('div', { class: 'row' }, el('label', { style: { flexBasis: '220px' } }, a), el('span', { class: 'kbd' }, b)))),
+      el('footer', {}, el('button', { class: 'primary', onclick: () => dlg.close() }, 'Close')));
+    dlg.showModal();
+  }
+
+  private buildModeTabs() {
+    const host = document.getElementById('mode-tabs')!;
+    host.innerHTML = '';
+    const tab = (m: Mode, label: string) => el('button', { class: this.mode === m ? 'on' : '', onclick: () => this.setMode(m) }, label);
+    host.append(tab('paint', 'Painting'), tab('bake', 'Baking'), tab('design', 'Material Designer'));
+  }
+
+  private buildToolstrip() {
+    const host = document.getElementById('toolstrip')!;
+    host.innerHTML = '';
+    const t = (tool: Tool, svg: string, title: string) => icon(svg, title, () => this.setTool(tool), this.tool === tool ? 'on' : '');
+    const layer = this.ts?.activeLayer;
+    const maskBtn = icon(I.mask, layer?.mask ? 'Paint the layer mask (M)' : 'Select a layer with a mask to paint it',
+      () => { if (layer?.mask) this.setPaintTarget(this.paintTarget === 'mask' ? 'content' : 'mask'); },
+      this.paintTarget === 'mask' ? 'on' : '');
+    if (!layer?.mask) maskBtn.disabled = true;
+    host.append(
+      t('paint', I.paint, 'Paint (B) — Shift+click draws a straight line'), t('erase', I.erase, 'Eraser (E)'),
+      t('fill', I.polyfill, 'Polygon fill (G) — click a triangle / UV island / mesh part to fill it'),
+      t('path', I.path, 'Path / bezier (L) — click to add points, click-drag to pull handles; the brush follows the curve live. Enter finishes'),
+      t('picker', I.picker, 'Picker (P) — click the model to pick its material (or only its color) into the brush; P again goes back'),
+      el('div', { class: 'strip-sep' }), maskBtn,
+      el('div', { class: 'strip-sep' }),
+      icon(I.history, 'History (H) — every recent change; click one to go back to it', () => this.toggleHistory(), this.historyOpen ? 'on' : ''),
+    );
+  }
+
+  private buildSidestrip() {
+    const host = document.getElementById('sidestrip')!;
+    host.innerHTML = '';
+    host.append(
+      icon(I.export, 'Export textures (Ctrl+Shift+E)', () => this.openExport(), 'accent'),
+      icon(I.tsSettings, 'Texture set settings', () => { this.layersTab = 'settings'; this.setMode('paint'); this.buildRight(); }),
+      icon(I.display, 'Display settings (lighting, tone map)', () => this.toggleFlyout()),
+      icon(I.bake, 'Bake mesh maps (Baking mode)', () => this.setMode(this.mode === 'bake' ? 'paint' : 'bake')),
+      el('span', { class: 'grow' }),
+      icon(I.help, 'Guide (F1)', () => this.toggleGuide()),
+    );
+  }
+
+  /** Tool settings bar: settings scroll sideways when they don't fit; the view buttons on the right always stay visible. */
+  private buildToolbar() {
+    this.buildToolbarInner();
+    const host = document.getElementById('toolbar')!;
+    const right = host.querySelector(':scope > .tb-right');
+    const scroll = el('div', { class: 'tb-scroll' });
+    for (const c of [...host.children]) if (c !== right) scroll.append(c);
+    host.prepend(scroll);
+    scroll.addEventListener('wheel', (e) => {
+      if (scroll.scrollWidth <= scroll.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      scroll.scrollLeft += e.deltaY;
+    }, { passive: false });
+  }
+
+  private buildToolbarInner() {
+    const host = document.getElementById('toolbar')!;
+    host.innerHTML = '';
+    const right = el('div', { class: 'tb-right' },
+      icon(I.split, '3D / 2D (F4)', () => this.setLayout('split'), this.layout3 === 'split' ? 'on' : ''),
+      icon(I.cube, '3D only (F2)', () => this.setLayout('3d'), this.layout3 === '3d' ? 'on' : ''),
+      icon(I.square, '2D only (F3)', () => this.setLayout('2d'), this.layout3 === '2d' ? 'on' : ''),
+      el('div', { class: 'strip-sep v' }),
+      icon(I.wire, 'UV wireframe in the 2D view (W)', () => { this.uv.setWire(!this.uv.showWire); this.buildToolbar(); }, this.uv.showWire ? 'on' : ''),
+      (() => { const b = icon(I.overlap, 'UV overlaps (O): dark spots on the model and in the 2D view where UVs overlap', () => this.toggleOverlap(), this.showOverlap ? 'on' : '');
+        if (this.uvOverlap?.tris) { b.classList.add('warn-dot'); b.title += ` · ${this.uvOverlap.areas} found`; } return b; })(),
+      icon(I.frame, 'Frame model (F)', () => { this.vp.frame(); this.uv.frame(); }),
+    );
+    if (this.mode === 'design') {
+      host.append(el('div', { class: 'tb-title' }, 'Material Designer'),
+        el('span', { class: 'tb-note' }, 'Build a tileable material from nodes on the right; it drives a fill layer live on the model.'),
+        el('button', { class: 'tb-back', onclick: () => this.setMode('paint') }, '← Back to painting'),
+        right);
+      return;
+    }
+    if (this.mode === 'bake') {
+      host.append(el('div', { class: 'tb-title' }, 'Baking mode'),
+        el('span', { class: 'tb-note' }, 'Pick the maps on the left, set up the high poly and cage, then click Bake selected textures.'),
+        el('button', { class: 'tb-back', onclick: () => this.setMode('paint') }, '← Back to painting'),
+        right);
+      return;
+    }
+    const title = { paint: 'Paint', erase: 'Eraser', picker: 'Material picker', fill: 'Polygon fill', path: 'Path' }[this.tool];
+    host.append(el('div', { class: 'tb-title' }, title));
+    if (this.tool === 'picker') {
+      host.append(el('div', { class: 'seg tb-seg' },
+        el('button', { class: this.pickMode === 'material' ? 'on' : '', title: 'Copy every channel (color, roughness, metallic, height, emissive)', onclick: () => { this.pickMode = 'material'; this.buildToolbar(); } }, 'Material'),
+        el('button', { class: this.pickMode === 'color' ? 'on' : '', title: 'Copy only the base color', onclick: () => { this.pickMode = 'color'; this.buildToolbar(); } }, 'Color only')),
+        el('span', { class: 'tb-note' }, 'Click the model (or the 2D view) to pick what\'s under the cursor into the brush. P switches to the picker and back.'));
+    } else if (this.tool === 'fill') {
+      const modes: PartMode[] = ['tri', 'island', 'part', 'object'];
+      host.append(el('div', { class: 'seg tb-seg' }, ...modes.map((m) => el('button', { class: this.fillMode === m ? 'on' : '', onclick: () => { this.fillMode = m; this.buildToolbar(); } }, PART_LABEL[m]))),
+        el('span', { class: 'tb-note' }, this.paintTarget === 'mask' ? 'Fills the mask: click = white (show), with Eraser on = black.' : 'Fills the paint layer with the brush material. Select a mask to fill the mask instead.'));
+      if (this.paintTarget === 'mask') host.append(el('span', { class: 'tb-chip' }, 'Filling MASK'));
+    } else if (this.tool === 'path') {
+      const n = this.path.pane === '3d' ? this.path.p3.length : this.path.p2.length;
+      const smooth = el('input', { type: 'checkbox', checked: this.pathSmooth }) as HTMLInputElement;
+      smooth.addEventListener('change', () => { this.pathSmooth = smooth.checked; this.updatePathOverlay(); });
+      const live = el('input', { type: 'checkbox', checked: this.pathLive }) as HTMLInputElement;
+      live.addEventListener('change', () => { this.pathLive = live.checked; if (!this.pathLive && this.pathLiveOn) { this.ts.cancelStroke(); this.pathLiveOn = false; } else this.pathChanged(); });
+      host.append(
+        this.brushSlider('Size', 'radius', true),
+        this.brushSlider('Flow', 'flow', true),
+        this.brushSlider('Hardness', 'hardness', true),
+        el('label', { class: 'inline', title: 'Automatic smooth handles on points you haven\'t pulled' }, smooth, ' Smooth'),
+        el('label', { class: 'inline', title: 'The brush follows the path while you edit it' }, live, ' Live'),
+        el('button', { class: 'primary', disabled: n < 2, onclick: () => this.finishPath() }, 'Finish (Enter)'),
+        el('button', { disabled: !n, onclick: () => this.clearPath() }, 'Cancel (Esc)'),
+        el('span', { class: 'tb-note' }, n
+          ? `${n} point${n > 1 ? 's' : ''} · drag points or handles to edit · Ctrl+click a point resets its handles · Delete removes the selected point`
+          : 'Click on the model to add points; click-drag to pull bezier handles'),
+      );
+      if (this.paintTarget === 'mask') host.append(el('span', { class: 'tb-chip' }, 'Painting MASK'));
+    } else {
+      host.append(
+        this.brushSlider('Size', 'radius', true),
+        this.brushSlider('Flow', 'flow', true),
+        this.brushSlider('Stroke opacity', 'opacity', true),
+        this.brushSlider('Hardness', 'hardness', true),
+        this.smoothingSlider(true),
+        this.symmetryButtons(),
+      );
+      if (this.paintTarget === 'mask') host.append(el('span', { class: 'tb-chip' }, 'Painting MASK'));
+    }
+    host.append(right);
+  }
+
+  private buildStatus() {
+    const m = this.model;
+    document.getElementById('status-model')!.textContent =
+      `LMP v${VERSION} · ${m.name} · ${m.triangles.toLocaleString()} tris · ${this.ts.size}×${this.ts.size}`;
+    document.getElementById('status-hints')!.textContent = this.mode === 'bake'
+      ? 'Baking mode · RMB orbit · MMB pan · Wheel zoom · Esc back to painting'
+      : 'LMB paint · RMB / Alt+LMB orbit · MMB pan · Wheel zoom · [ ] size · B/E/P tools · F2/F3/F4 layout · 1–0 views · M mask · F1 Guide';
+  }
+
+  // ================================================================ display settings flyout
+
+  private toggleFlyout() {
+    const open = !this.flyout.classList.contains('open');
+    this.flyout.classList.toggle('open', open);
+    if (open) this.buildFlyout();
+  }
+
+  private buildFlyout() {
+    const f = this.flyout;
+    if (!f.classList.contains('open')) return;
+    f.innerHTML = '';
+    const vp = this.vp;
+    f.append(dock(el('span', {}, 'Display settings', el('span', { class: 'grow' }), icon(I.close, 'Close', () => f.classList.remove('open'))),
+      el('div', { class: 'dock-body' },
+        group('Environment',
+          el('div', { class: 'row' }, el('label', {}, 'Lighting'),
+            select<string>([
+              ...Viewport.ENVIRONMENTS.map((n) => ({ value: n, label: n + (n === 'Studio Soft' ? ' (default)' : '') })),
+              { value: 'soft', label: 'Flat (true color)' },
+              { value: 'room', label: 'Bright room' },
+              ...(vp.envName !== 'Studio' ? [{ value: 'hdr', label: vp.envName }] : []),
+            ], vp.envName !== 'Studio' ? 'hdr' : vp.studioKind, (v) => { if (v !== 'hdr') { vp.setStudioEnv(v); vp.applyBackground(); this.buildFlyout(); } })),
+          el('div', { class: 'row' }, el('label', {}, ''),
+            el('button', { class: 'grow', onclick: async () => { const file = await pickFile('.hdr'); if (file) this.openAny(file); } }, 'Load .hdr environment…')),
+          slider('Rotation', { min: 0, max: 360, step: 1, value: 0, fmt: (v) => `${v}°`, onInput: (v) => (vp.envRotation = v) }).el,
+          el('div', { class: 'row' }, el('label', {}, 'Background'),
+            select([{ value: 'env', label: 'Blurred environment' }, { value: 'solid', label: 'Solid dark gray' }], vp.bgMode, (v) => { vp.bgMode = v as any; vp.applyBackground(); })),
+        ),
+        group('Camera & color',
+          el('div', { class: 'row' }, el('label', {}, 'Tone map'),
+            select<ToneMap>([
+              { value: 'neutral', label: 'Neutral (true color)' }, { value: 'aces', label: 'ACES Filmic' },
+              { value: 'agx', label: 'AgX' }, { value: 'none', label: 'None (linear)' },
+            ], vp.toneMap, (v) => vp.setToneMap(v))),
+          slider('Exposure', { min: 0.2, max: 3, step: 0.01, value: vp.renderer.toneMappingExposure, onInput: (v) => (vp.exposure = v) }).el,
+          slider('Field of view', { min: 15, max: 80, step: 1, value: vp.camera.fov, fmt: (v) => `${v}°`, onInput: (v) => { vp.camera.fov = v; vp.camera.updateProjectionMatrix(); } }).el,
+        ),
+        group('Shading',
+          slider('Height bump', { min: 0, max: 30, step: 0.5, value: this.ts.heightStrength, fmt: (v) => v.toFixed(1), onInput: (v) => this.ts.setHeightStrength(v) }).el,
+          slider('AO shading', { min: 0, max: 1, step: 0.01, value: vp.litMat.aoMapIntensity, onInput: (v) => (vp.aoStrength = v) }).el,
+          slider('Glow', { min: 0, max: 10, step: 0.1, value: vp.litMat.emissiveIntensity, fmt: (v) => v.toFixed(1), onInput: (v) => (vp.emissiveStrength = v) }).el,
+        ),
+      )));
+  }
+
+  // ================================================================ left: assets shelf / baking dock
+
+  buildShelf() {
+    const host = document.getElementById('shelf')!;
+    if (this.mode === 'bake') { this.buildBakeDock(); return; }
+    if (this.historyOpen && this.mode === 'paint') { this.buildHistory(host); return; }
+    if (this.mode === 'design') {
+      host.innerHTML = '';
+      const inner = el('div', { class: 'dz-left-host' });
+      host.append(dock(el('span', {}, this.designer.tab === 'shader' ? 'Shader Maker' : 'Material Designer'), inner, 'grow'));
+      this.designer.buildLeft(inner);
+      return;
+    }
+    host.innerHTML = '';
+    const sh = this.shelf;
+    const search = el('input', { type: 'search', placeholder: 'Search assets', value: this.shelfSearch }) as HTMLInputElement;
+    search.addEventListener('input', () => { this.shelfSearch = search.value; this.fillShelfGrid(grid); });
+    const chip = (f: ShelfFilter, label: string) => el('button', { class: 'chip' + (this.shelfFilter === f ? ' on' : ''), onclick: () => { this.shelfFilter = f; this.buildShelf(); } }, label);
+    const grid = el('div', { class: 'shelf-grid' });
+    let folder: HTMLElement;
+    if (sh.state === 'ready') folder = el('span', { class: 'folder-name', title: sh.folderName }, sh.folderName);
+    else if (sh.state === 'needs-permission') folder = el('button', { class: 'link', onclick: async () => { if (await sh.reconnect()) this.buildShelf(); } }, `Reconnect “${sh.folderName}”`);
+    else if (sh.state === 'unsupported') folder = el('span', { class: 'folder-name' }, 'Drop files here to add them');
+    else folder = el('button', { class: 'link', onclick: async () => {
+      try { if (await sh.link()) { this.buildShelf(); toast(`Assets folder: ${sh.folderName}`); } } catch (e: any) { toast('Could not open folder: ' + e?.message, true); }
+    } }, 'Link folder…');
+    const body = el('div', { class: 'dock-body shelf-body' },
+      el('div', { class: 'shelf-search' }, el('span', { class: 'si' }), search),
+      el('div', { class: 'chips' }, chip('all', 'All'), chip('model', 'Models'), chip('smart', 'Smart materials'), chip('material', 'Materials'), chip('textures', 'Textures'), chip('mask', 'Smart masks'), chip('brush', 'Brushes'), chip('graph', 'Graphs'), chip('env', 'Environments'), chip('unsupported', 'Substance')),
+      el('div', { class: 'row drop-row', title: 'What dragging an asset onto the model fills' }, el('label', {}, 'Drop onto'),
+        select<DropMode>([{ value: 'whole', label: 'Whole model' }, { value: 'object', label: 'Object (separate mesh)' },
+          { value: 'part', label: 'Mesh part' }, { value: 'island', label: 'UV island' }, { value: 'tri', label: 'Triangle' }],
+        this.dropMode, (v) => (this.dropMode = v))),
+      (this.pickBar = el('div', { class: 'pick-bar' })),
+      grid,
+    );
+    (body.querySelector('.si') as HTMLElement).innerHTML = I.search;
+    const foot = el('div', { class: 'dock-foot' },
+      isDesktopApp
+        ? icon(I.folder, 'Open the presets folder (next to LMP.exe) — put materials, textures, brushes and HDRIs there, then Rescan', () => { openNativePresets(); })
+        : icon(I.folder, sh.state === 'ready' ? 'Choose another folder' : 'Link a presets folder (e.g. D:\\LMP\\presets)', async () => { try { if (await sh.link()) this.buildShelf(); } catch (e: any) { toast(e?.message ?? 'Could not open folder', true); } }),
+      icon(I.refresh, 'Rescan the folder', async () => { await sh.scan(); this.buildShelf(); toast('Assets refreshed'); }),
+      el('span', { class: 'grow' }, folder),
+      icon(I.save, 'Save the brush material (or selected fill layer) as a material preset', () => this.saveMaterialPreset()),
+      icon(I.smart, 'Save every fill layer + mask as a smart material', () => this.saveSmartMaterial()),
+    );
+    host.append(dock(el('span', {}, 'Assets'), body, 'grow'), foot);
+    this.fillShelfGrid(grid);
+    this.updatePickBar();
+  }
+
+  /** Which shelf section an asset belongs to (one-layer library materials count as materials). */
+  private shelfGroup(it: ShelfItem): Exclude<ShelfFilter, 'all'> {
+    if (it.kind === 'smart') return it.category && it.smart.layers.length === 1 ? 'material' : 'smart';
+    return it.kind as Exclude<ShelfFilter, 'all'>;
+  }
+  private static SHELF_SECTIONS: [Exclude<ShelfFilter, 'all'>, string][] = [
+    ['model', 'Models'], ['smart', 'Smart materials'], ['material', 'Materials'], ['textures', 'Textures'], ['mask', 'Smart masks'],
+    ['brush', 'Brushes'], ['graph', 'Graphs'], ['env', 'Environments'], ['unsupported', 'Substance'],
+  ];
+  /** Sections opened in this session; every section starts closed (a new file closes them again). */
+  private shelfOpen = new Set<string>();
+
+  private fillShelfGrid(grid: HTMLElement) {
+    grid.innerHTML = '';
+    const q = this.shelfSearch.trim().toLowerCase();
+    const items = this.shelf.items.filter((it) =>
+      (this.shelfFilter === 'all' || this.shelfGroup(it) === this.shelfFilter) && (!q || it.name.toLowerCase().includes(q)));
+    if (!items.length) { grid.append(el('p', { class: 'note', style: { gridColumn: '1 / -1' } }, q ? 'Nothing matches.' : 'No assets of this kind yet.')); return; }
+    // Sections (and sub-sections by category, e.g. Metal / Wood), each collapsible.
+    // Top sections start closed; sub-sections (Metal, Wood…) start open. Picking one filter or searching opens them.
+    const header = (key: string, label: string, n: number, sub = false) => {
+      const opened = this.shelfOpen.has(key);
+      const closed = !q && (sub ? opened : this.shelfFilter === 'all' && !opened);
+      const h = el('button', { class: 'shelf-sec' + (sub ? ' sub' : '') + (closed ? ' closed' : ''), onclick: () => {
+        if (this.shelfOpen.has(key)) this.shelfOpen.delete(key); else this.shelfOpen.add(key);
+        this.fillShelfGrid(grid);
+      } }, el('span', { class: 'caret' }, closed ? '▸' : '▾'), el('span', { class: 'grow' }, label), el('span', { class: 'muted' }, String(n)));
+      grid.append(h);
+      return !closed;
+    };
+    for (const [g, label] of App.SHELF_SECTIONS) {
+      const list = items.filter((it) => this.shelfGroup(it) === g);
+      if (!list.length) continue;
+      if (!header('sec:' + g, label, list.length)) continue;
+      const catOf = (it: ShelfItem) => (it.kind === 'smart' && it.category) || '';
+      const cats = [...new Set(list.map(catOf))];
+      if (cats.length > 1) {
+        for (const c of cats) {
+          const sub = list.filter((it) => catOf(it) === c);
+          if (!header(`sec:${g}:${c}`, c || 'Basic', sub.length, true)) continue;
+          for (const it of sub) grid.append(this.shelfTile(it));
+        }
+      } else for (const it of list) grid.append(this.shelfTile(it));
+    }
+  }
+
+  /** Make a thumbnail only when its tile scrolls into view (keeps startup and scrolling smooth). */
+  private thumbIO?: IntersectionObserver;
+  private thumbJobs = new WeakMap<Element, () => void>();
+  private lazyThumb(img: HTMLElement, job: () => void) {
+    this.thumbIO ??= new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const j = this.thumbJobs.get(e.target);
+        this.thumbIO!.unobserve(e.target);
+        this.thumbJobs.delete(e.target);
+        j?.();
+      }
+    }, { rootMargin: '200px' });
+    this.thumbJobs.set(img, job);
+    this.thumbIO.observe(img);
+  }
+
+  /** The job that makes an asset's thumbnail (null = no thumbnail). */
+  private thumbJob(it: ShelfItem): (() => Promise<string>) | null {
+    if (it.kind === 'material') return () => this.thumbs.material('m:' + it.file, it.preset.values, it.preset.enabled);
+    if (it.kind === 'smart') {
+      const fills = it.smart.layers.filter((l) => l.kind === 'fill') as any[];
+      const main = fills[Math.min(1, fills.length - 1)];
+      const base = it.smart.layers[0] as any;
+      if (it.category && base?.kind === 'fill' && base.procs && it.smart.layers.length === 1) return () => this.thumbs.procMaterial('s:' + it.file, base.values, base.procs, base.enabled);
+      if (main || it.smart.layers.length) return () => this.smartThumb('s:' + it.file, it.smart);
+      return null;
+    }
+    if (it.kind === 'model') return () => this.thumbs.model('model:' + it.model, builtinModel(it.model as BuiltinId).geometries);
+    if (it.kind === 'env') return () => this.hdrThumb(it);
+    if (it.kind === 'graph') return () => this.graphThumb(it.graph);
+    if (it.kind === 'mask') return () => this.thumbs.smartMask(it.preset);
+    if (it.kind === 'textures') return () => this.thumbs.textures('t:' + it.name, it.files as any);
+    if (it.kind === 'brush') return () => this.brushTipCanvas(it).then((cv) => cv.toDataURL());
+    return null;
+  }
+  private thumbKey(it: ShelfItem) {
+    if (it.kind === 'smart') return `${it.kind}:${it.file}:${it.name}:${this.hashOf(it.smart)}`;
+    return `${it.kind}:${it.file}:${it.name}`;
+  }
+  private hashes = new WeakMap<object, string>();
+  /** Short content hash, so a changed smart material gets a new preview. */
+  private hashOf(o: object): string {
+    let h = this.hashes.get(o);
+    if (h) return h;
+    const s = JSON.stringify(o);
+    let a = 0x811c9dc5;
+    for (let i = 0; i < s.length; i += s.length > 200000 ? 7 : 1) a = Math.imul(a ^ s.charCodeAt(i), 0x01000193);
+    h = (a >>> 0).toString(36) + s.length.toString(36);
+    this.hashes.set(o, h);
+    return h;
+  }
+  /** Built-in assets never change, so their thumbnails are kept between sessions. */
+  private thumbPersist(it: ShelfItem) { return /^(lib|mask|graph|model):/.test(it.file ?? '') || it.kind === 'smart' || (it.kind === 'brush' && !it.tipFile && it.brush.tip.startsWith('builtin:')); }
+  private thumbCache = new Map<string, string>();
+  private thumbWaits = new Map<string, Promise<string | null>>();
+  thumbOf(it: ShelfItem): Promise<string | null> {
+    const key = this.thumbKey(it);
+    const c = this.thumbCache.get(key);
+    if (c) return Promise.resolve(c);
+    let w = this.thumbWaits.get(key);
+    if (w) return w;
+    const job = this.thumbJob(it);
+    if (!job) return Promise.resolve(null);
+    w = job().then((u) => {
+      this.thumbCache.set(key, u);
+      if (this.thumbPersist(it)) saveThumb(key, u);
+      return u;
+    }).catch(() => null).finally(() => this.thumbWaits.delete(key));
+    this.thumbWaits.set(key, w);
+    return w;
+  }
+
+  /** Loading screen: make every shelf thumbnail before showing the app, so opening the shelf never stutters. */
+  private async preloadThumbs() {
+    const splash = document.getElementById('splash');
+    const bar = document.getElementById('splash-bar');
+    const txt = document.getElementById('splash-text');
+    const t0 = performance.now();
+    const step = async (label: string, pct: number, f: () => void | Promise<void>) => {
+      if (txt) txt.textContent = label;
+      if (bar) bar.style.width = `${pct}%`;
+      await new Promise((r) => setTimeout(r, 16));
+      try { await f(); } catch (e) { console.warn(label, e); }
+    };
+    await step('Compiling painting shaders…', 4, () => this.ts.warmup());
+    await step('Compiling viewport shaders…', 8, () => this.vp.warmup());
+    await step('Compiling Material Designer nodes…', 12, () => { this.designer.runner.warmup(); this.graphRunner.warmup(); });
+    await step('Preparing Material Designer…', 16, () => this.designer.changed(false));
+    await step('Preparing bake previews…', 19, async () => {
+      for (const v of ['bnormal', 'wsn', 'id', 'ao', 'curv', 'pos', 'thick', 'bheight', 'rays'] as ViewMode[]) if (!this.mapThumbs.has(v)) this.mapThumbs.set(v, await this.mapThumb(v));
+    });
+    const saved = await loadThumbs();
+    for (const [k, v] of saved) this.thumbCache.set(k, v);
+    const items = this.shelf.items.filter((it) => this.thumbJob(it) && !this.thumbCache.has(this.thumbKey(it)));
+    let n = 0, last = performance.now();
+    const pctOf = (k: number) => 20 + Math.round((k / Math.max(1, items.length)) * 80);
+    if (items.length && txt) txt.textContent = saved.size ? `Loading new assets… 0 / ${items.length}` : `Preparing materials (first start only)… 0 / ${items.length}`;
+    for (const it of items) {
+      await this.thumbOf(it);
+      n++;
+      if (performance.now() - last > 40) {
+        if (bar) bar.style.width = `${pctOf(n)}%`;
+        if (txt) txt.textContent = `${saved.size ? 'Loading new assets' : 'Preparing materials (first start only)'}… ${n} / ${items.length} · ${it.name}`;
+        await new Promise((r) => setTimeout(r, 0));
+        last = performance.now();
+      }
+    }
+    if (bar) bar.style.width = '100%';
+    await flushThumbs();
+    (window as any).__thumbStats = { saved: saved.size, made: items.length, ms: Math.round(performance.now() - t0), boot: Math.round(t0) };
+    if (splash) { splash.classList.add('done'); setTimeout(() => splash.remove(), 400); }
+    this.buildShelf();
+  }
+
+  private shelfTile(it: ShelfItem) {
+    const img = el('img', { class: 'sphere', alt: '' }) as HTMLImageElement;
+    let tip = it.name;
+    let badge: string | null = null;
+    const cached = this.thumbCache.get(this.thumbKey(it));
+    if (cached) img.src = cached;
+    else if (this.thumbJob(it)) this.lazyThumb(img, () => this.thumbOf(it).then((u) => { if (u) img.src = u; }));
+    if (it.kind === 'material') {
+      tip += ' — material: click to load into the brush (or the selected fill layer)';
+    } else if (it.kind === 'smart') {
+      badge = it.smart.layers.length > 1 ? 'SMART' : it.category ? 'LIB' : 'SMART';
+      tip += it.smart.layers.length > 1 ? ` — smart material (${it.smart.layers.length} layers with smart masks${it.category ? ', ' + it.category : ''}). Click to add above the selected layer`
+        : ` — procedural material${it.category ? ' (' + it.category + ')' : ''}. Click to add as a fill layer`;
+    } else if (it.kind === 'model') {
+      badge = 'MODEL';
+      tip += ' — starter model: click to start a new file with it (or File → Open model… for your own)';
+    } else if (it.kind === 'env') {
+      badge = 'HDRI';
+      img.classList.add('env');
+      tip += ' — HDR environment: click to light the scene with it';
+    } else if (it.kind === 'graph') {
+      badge = 'GRAPH';
+      img.classList.add('tip');
+      tip += ' — Material Designer graph: click to open it, or drag it onto the model to add it as a fill layer';
+    } else if (it.kind === 'mask') {
+      img.classList.add('tip');
+      badge = 'MASK';
+      tip += ' — smart mask: click to put it on the selected layer (or drag it onto a layer)';
+    } else if (it.kind === 'textures') {
+      tip += ` — texture set (${Object.keys(it.files).join(', ')}). Click to add as a fill layer`;
+    } else if (it.kind === 'brush') {
+      img.classList.add('tip');
+      badge = 'BRUSH';
+      tip += ' — brush preset: click to use it';
+    } else {
+      img.classList.add('adobe');
+      badge = it.file.split('.').pop()!.toUpperCase();
+      tip = /\.(sbsar|spsm)$/i.test(it.file) ? `${it.file} — ${it.reason}. Click (or drag onto the model) to translate it into an LMP material` : `${it.file} — ${it.reason}. Can't be translated`;
+    }
+    const tile = el('button', {
+      class: 'tile' + (it.kind === 'unsupported' ? ' unsupported' : '') + (this.shelfPick.has(it) ? ' picked' : ''),
+      title: tip + ' · or drag it onto the model / a layer · Ctrl+click to pick several',
+      onclick: (e: MouseEvent) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+          if (it.kind === 'unsupported' || it.kind === 'brush' || it.kind === 'mask' || it.kind === 'env' || it.kind === 'model') return;
+          if (this.shelfPick.has(it)) this.shelfPick.delete(it); else this.shelfPick.add(it);
+          tile.classList.toggle('picked', this.shelfPick.has(it));
+          this.updatePickBar();
+          return;
+        }
+        this.clearShelfPick();
+        this.applyShelfItem(it);
+      },
+    }, img, el('span', { class: 'tile-name' }, it.name));
+    tile.draggable = true;
+    img.draggable = false;
+    tile.addEventListener('dragstart', (e) => {
+      this.dragItem = it;
+      this.dragMany = this.shelfPick.has(it) && this.shelfPick.size > 1 ? [...this.shelfPick] : null;
+      e.dataTransfer!.effectAllowed = 'copy';
+      e.dataTransfer!.setData('text/plain', it.name);
+      if (img.src) e.dataTransfer!.setDragImage(img, 32, 32);
+    });
+    tile.addEventListener('dragend', () => { this.dragItem = null; this.dragMany = null; this.vp.setHighlight('', null); });
+    if (badge) tile.append(el('span', { class: 'tile-badge' }, badge));
+    return tile;
+  }
+
+  async applyShelfItem(it: ShelfItem) {
+    if (this.mode === 'bake') this.setMode('paint');
+    if (it.kind === 'brush') { await this.applyBrushPreset(it.brush, it.tipFile); return; }
+    if (it.kind === 'mask') { this.applySmartMaskTo(this.ts.activeLayer, it.preset); return; }
+    if (it.kind === 'model') { this.loadBuiltin(it.model as BuiltinId); return; }
+    if (it.kind === 'env') {
+      try { await this.vp.loadHDR(await it.src()); this.vp.applyBackground(); this.buildFlyout(); toast(`Environment: ${it.name}`); } catch { toast('Could not read that HDR file', true); }
+      return;
+    }
+    if (it.kind === 'graph') { this.setMode('design'); await this.designer.open(it.graph); this.designLinked = -1; this.buildProperties(); toast(`Opened graph “${it.name}” — click Add as fill layer to use it`); return; }
+    if (it.kind === 'unsupported') {
+      if (/\.(sbsar|spsm)$/i.test(it.file) && it.src) { await this.translateSubstance([await it.src()]); return; }
+      toast(`${it.reason} can't be translated (only .sbsar materials and .spsm smart materials can).`, true);
+      return;
+    }
+    if (it.kind === 'smart') {
+      await this.ts.batch(`Add “${it.name}”`, () => applySmartMaterial(this.ts, it.smart));
+      this.paintTarget = 'content';
+      this.modified = true;
+      this.refresh();
+      toast(`Added smart material “${it.name}” (${it.smart.layers.length} layers)`);
+      return;
+    }
+    if (it.kind === 'material') {
+      const layer = this.ts.activeLayer;
+      const p = it.preset;
+      if (layer?.kind === 'fill' && !Object.keys(layer.images ?? {}).length) {
+        this.ts.checkpoint(`Apply “${it.name}”`);
+        layer.values = structuredClone(p.values);
+        layer.enabled = { ...layer.enabled, ...p.enabled, normal: layer.enabled.normal };
+        this.ts.layerChanged();
+        this.modified = true;
+        toast(`Applied “${it.name}” to ${layer.name}`);
+      } else {
+        this.brush.values = structuredClone(p.values);
+        this.brush.channels = { ...p.enabled, normal: false };
+        this.buildProperties();
+        toast(`Brush material: ${it.name}`);
+      }
+      return;
+    }
+    try {
+      const images: Partial<Record<Ch, FillImage>> = {};
+      const enabled = {} as Record<Ch, boolean>;
+      for (const ch of CHANNELS) {
+        const f = it.files[ch];
+        enabled[ch] = !!f;
+        if (!f) continue;
+        const bytes = await f.arrayBuffer();
+        images[ch] = { name: f.name, bytes, tex: await imageTexture(bytes, f.name), flipG: ch === 'normal' && !!it.normalDX };
+      }
+      if (!Object.keys(images).length) { toast('No usable maps in that set', true); return; }
+      this.applyTexSettings(this.ts.addFillLayer(it.name, undefined, enabled, true, images, it.tiling ?? 1), it);
+      this.paintTarget = 'content';
+      this.modified = true;
+      toast(`Added “${it.name}” as a fill layer`);
+    } catch (e: any) {
+      console.error(e);
+      toast('Could not load those images: ' + (e?.message ?? e), true);
+    }
+  }
+
+  // ---------------------------------------------------------------- Substance materials (.sbsar / .spsm)
+
+  /**
+   * Translate Substance files right here: the archive and its description are read in the browser,
+   * pictures stored inside become maps, and the rest is approximated from its name and sliders.
+   */
+  async translateSubstance(files: File[]) {
+    if (this.mode === 'bake') this.setMode('paint');
+    for (const f of files) {
+      toast(`Reading ${f.name}…`);
+      try {
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        if (/\.spsm$/i.test(f.name)) {
+          const { root, skipped } = await translateSpsm(bytes, f.name);
+          let count = 0;
+          await this.ts.batch(`Translate ${f.name}`, async () => {
+            const top = await this.buildSp(root, undefined, () => count++);
+            if (top) this.ts.activeId = top.id;
+          });
+          toast(`Translated smart material “${root.name}”: ${count} layer${count === 1 ? '' : 's'} with their masks.${skipped.length ? ' Not carried over: ' + skipped.slice(0, 4).join('; ') + (skipped.length > 4 ? '…' : '') + '.' : ''} Bake mesh maps (Baking tab) so the edge/dirt masks show.`);
+        } else {
+          const info = await readSbsar(bytes, f.name);
+          const tr = translateSbs(info);
+          await this.ts.batch(`Translate ${f.name}`, () => this.addTranslated(tr));
+          toast(tr.exact ? `Translated “${tr.name}” using the textures stored in the file ✓`
+            : `Translated “${tr.name}” as an approximation (its pattern is compiled for Adobe's engine). Details in Properties.`, !tr.exact);
+        }
+        this.paintTarget = 'content';
+        this.modified = true;
+        this.refresh();
+      } catch (e: any) {
+        console.error(e);
+        toast(`Couldn't translate ${f.name}: ${e?.message ?? e}`, true);
+      }
+    }
+  }
+
+  /** Rebuild a translated Substance layer stack. */
+  private async buildSp(n: SpNode, parent: GroupLayer | undefined, counted: () => void): Promise<Layer | null> {
+    const ts = this.ts;
+    let layer: Layer;
+    if (n.kind === 'group') {
+      const g = ts.addGroup(n.name, !parent, parent);
+      for (const c of n.children) await this.buildSp(c, g, counted);
+      layer = g;
+    } else {
+      const images: Partial<Record<Ch, FillImage>> = {};
+      for (const [ch, f] of Object.entries(n.maps) as [Ch, File][]) {
+        const bytes = await f.arrayBuffer();
+        images[ch] = { name: f.name, bytes, tex: await imageTexture(bytes, f.name) };
+        n.enabled[ch] = true;
+      }
+      const fl = ts.addFillLayer(n.name, structuredClone(n.values), { ...n.enabled }, !parent, Object.keys(images).length ? images : undefined, 1, parent);
+      fl.note = n.note;
+      if (n.tri && Object.keys(images).length) fl.xf = { ...DEFAULT_XF, proj: 'tri' };
+      if (n.glossInv && images.rough) fl.adj = { ...structuredClone(DEFAULT_ADJ), roughInv: true };
+      layer = fl;
+      counted();
+    }
+    layer.visible = n.visible;
+    layer.opacity = n.opacity;
+    layer.blend = n.blend;
+    if (n.mask) {
+      ts.addMask(layer, { base: n.mask.base, gen: n.mask.gen });
+      if (n.mask.image) {
+        try {
+          const tex = await imageTexture(await n.mask.image.arrayBuffer(), n.mask.image.name);
+          ts.maskFromImage(layer, tex, n.mask.amount ?? 0.5, n.mask.contrast ?? 0.5, !!n.mask.invert);
+          tex.dispose();
+        } catch { /* keep the plain black mask */ }
+      }
+    }
+    return layer;
+  }
+
+  private async addTranslated(tr: Translation, parent?: GroupLayer): Promise<Layer> {
+    if (!tr.exact && !parent) {
+      // Procedural material: a small look-alike stack (base + variation + glow) instead of one flat color.
+      const ts = this.ts;
+      const g = ts.addGroup(tr.name);
+      const base = await this.addTranslated({ ...tr, exact: true, glow: undefined }, g);
+      base.name = 'Base';
+      const dark = tr.values.color.map((c) => c * 0.55) as [number, number, number];
+      const vari = ts.addFillLayer('Variation', { ...structuredClone(tr.values), color: dark, rough: Math.min(1, tr.values.rough + 0.12), height: 0.4 },
+        { color: true, rough: true, metal: false, height: true, emit: false, normal: false }, false, undefined, 1, g);
+      const vg = defaultGen('noise'); vg.amount = 0.45; vg.contrast = 0.45; vg.noiseScale = 5;
+      ts.addMask(vari, { base: 'black', gen: vg });
+      vari.note = tr.note;
+      if (tr.glow) {
+        const glow = ts.addFillLayer('Glow', { color: tr.glow, rough: 0.35, metal: 0, height: 0.35, emit: tr.glow },
+          { color: true, rough: true, metal: false, height: true, emit: true, normal: false }, false, undefined, 1, g);
+        const gg = defaultGen('noise'); gg.amount = 0.32; gg.contrast = 0.85; gg.noiseScale = 4;
+        ts.addMask(glow, { base: 'black', gen: gg });
+        glow.note = tr.note;
+      }
+      ts.activeId = g.id;
+      return g;
+    }
+    const images: Partial<Record<Ch, FillImage>> = {};
+    for (const [ch, f] of Object.entries(tr.maps) as [Ch, File][]) {
+      const bytes = await f.arrayBuffer();
+      images[ch] = { name: f.name, bytes, tex: await imageTexture(bytes, f.name), flipG: ch === 'normal' && tr.normalDX };
+      tr.enabled[ch] = true;
+    }
+    const fl = this.ts.addFillLayer(tr.name, structuredClone(tr.values), { ...tr.enabled }, !parent, Object.keys(images).length ? images : undefined, 1, parent);
+    fl.note = tr.note;
+    if (tr.maps.rough && (tr.glossy || /gloss|smooth/i.test(tr.maps.rough.name))) fl.adj = { ...structuredClone(DEFAULT_ADJ), roughInv: true };
+    return fl;
+  }
+
+  /** Placement / adjustments stored in a .tptex material. */
+  private applyTexSettings(fl: FillLayer, it: ShelfItem): FillLayer {
+    if (it.kind !== 'textures') return fl;
+    if (it.xf) fl.xf = { ...DEFAULT_XF, ...it.xf };
+    if (it.adj) fl.adj = { ...structuredClone(DEFAULT_ADJ), ...structuredClone(it.adj) };
+    return fl;
+  }
+
+  /** Save an image fill layer (maps + placement + adjustments) as one .tptex file. */
+  private async saveTexMaterial(fill: FillLayer) {
+    const name = prompt('Material name (saves its images, placement and adjustments in one .tptex file):', fill.name);
+    if (!name) return;
+    const maps: Record<string, { name: string; data: string }> = {};
+    for (const [ch, img] of Object.entries(fill.images ?? {}) as [Ch, FillImage][]) maps[ch] = { name: img.name, data: toB64(new Uint8Array(img.bytes)) };
+    const doc = {
+      format: 'texpaint-texmat', version: 1, name, normalDX: !!fill.images?.normal?.flipG, tiling: fill.tiling,
+      xf: fill.xf, adj: fill.adj, maps,
+    };
+    try { toast(await this.shelf.saveJSON(`${name.replace(/[^\w\- ]+/g, '_').trim() || 'material'}.tptex`, doc)); this.buildShelf(); }
+    catch (e: any) { toast('Could not save material: ' + e?.message, true); }
+  }
+
+  async saveMaterialPreset() {
+    const layer = this.ts.activeLayer;
+    if (layer?.kind === 'fill' && Object.keys(layer.images ?? {}).length) return this.saveTexMaterial(layer);
+    const fromFill = layer?.kind === 'fill' && !Object.keys(layer.images ?? {}).length ? layer : null;
+    const name = prompt('Material preset name:', fromFill ? fromFill.name : 'My material');
+    if (!name) return;
+    const p: MaterialPreset = {
+      format: 'texpaint-material', version: 1, name,
+      values: structuredClone(fromFill ? fromFill.values : this.brush.values),
+      enabled: { ...(fromFill ? fromFill.enabled : this.brush.channels), normal: false },
+    };
+    try { toast(await this.shelf.saveJSON(`${name.replace(/[^\w\- ]+/g, '_').trim() || 'material'}.tpmat`, p)); this.buildShelf(); }
+    catch (e: any) { toast('Could not save preset: ' + e?.message, true); }
+  }
+
+  async saveSmartMaterial() {
+    const name = prompt('Smart material name (saves every fill layer and its mask):', 'My smart material');
+    if (!name) return;
+    try {
+      const { smart, skipped } = await makeSmartMaterial(this.ts, name);
+      if (!smart.layers.length) { toast('No fill layers to save. Smart materials are made of fill layers + masks.', true); return; }
+      const msg = await this.shelf.saveJSON(`${name.replace(/[^\w\- ]+/g, '_').trim() || 'smart'}.tpsmart`, smart);
+      toast(skipped ? `${msg} · ${skipped} paint layer(s) skipped (hand painting is model-specific)` : msg);
+      this.buildShelf();
+    } catch (e: any) { toast('Could not save smart material: ' + e?.message, true); }
+  }
+
+  /** Baking mode: map list + parameters (left dock). */
+  buildBakeDock() {
+    const host = document.getElementById('shelf')!;
+    if (this.mode !== 'bake') return;
+    host.innerHTML = '';
+    const ts = this.ts;
+    const maps = ts.bakeMaps;
+    const item = (it: BakeItem, label: string, key?: BakeKey) => {
+      const row = el('div', { class: 'bake-item' + (this.bakeItem === it ? ' on' : ''), onclick: () => this.selectBakeItem(it) });
+      if (key) {
+        const box = el('input', { type: 'checkbox', checked: maps[key], title: 'Bake this map (unticked maps keep their last result)' }) as HTMLInputElement;
+        box.addEventListener('click', (e) => e.stopPropagation());
+        box.addEventListener('change', () => { maps[key] = box.checked; this.buildBakeDock(); });
+        row.append(box);
+      } else row.append(el('span', { class: 'bake-dot' }));
+      row.append(el('span', { class: 'grow' }, label));
+      if (key) row.append(el('span', { class: 'bake-state' + (ts.baked.has(key) ? ' ok' : ''), title: ts.baked.has(key) ? 'Baked' : 'Not baked yet' }, ts.baked.has(key) ? '✓' : '–'));
+      return row;
+    };
+    const all = BAKE_ITEMS.every(([k]) => maps[k]);
+    const allBox = el('input', { type: 'checkbox', checked: all, title: 'Tick / untick every map' }) as HTMLInputElement;
+    allBox.addEventListener('change', () => { for (const [k] of BAKE_ITEMS) maps[k] = allBox.checked; this.buildBakeDock(); });
+    const list = el('div', { class: 'bake-list' },
+      item('common', 'Common parameters'),
+      el('label', { class: 'bake-all' }, allBox, ' All maps'),
+      ...BAKE_ITEMS.map(([k, label]) => item(k, label, k)),
+    );
+    const params = el('div', { class: 'dock-body bake-params' }, ...this.bakeParams(this.bakeItem));
+    const res = ts.lastHigh && ts.highGeometries ? (100 * ts.lastHigh.hits) / Math.max(1, ts.lastHigh.texels) : null;
+    const foot = el('div', { class: 'bake-foot' },
+      el('div', { id: 'bake-run', class: 'bake-run' }),
+      el('div', { class: 'bp-progress' }, el('div', { id: 'bp-bar' })),
+      el('p', { id: 'bp-status', class: 'bp-result' }, ''),
+      res !== null ? el('p', { class: 'bp-result' + (res < 99.5 ? ' warn' : '') }, `Last bake: rays hit ${res.toFixed(1)}% of the surface`) : null,
+      el('div', { class: 'row' }, el('label', {}, 'Output size'),
+        select<number>(RESOLUTIONS.map((r) => ({ value: r, label: RES_LABEL(r) })), ts.size, (v) => this.setResolution(v))),
+      el('button', { class: 'primary big', disabled: ts.baking || !BAKE_ITEMS.some(([k]) => maps[k]), onclick: () => this.startBake() },
+        ts.baking ? 'Baking…' : `Bake selected textures (${BAKE_ITEMS.filter(([k]) => maps[k]).length})`),
+      el('button', { class: 'big', onclick: () => this.setMode('paint') }, 'Return to painting mode'),
+    );
+    const title = this.bakeItem === 'common' ? 'Common parameters' : BAKE_ITEMS.find(([k]) => k === this.bakeItem)![1];
+    host.append(dock(el('span', {}, 'Mesh map bakers'), el('div', { class: 'dock-body' }, list), 'bake-maps'),
+      dock(el('span', {}, title), params, 'grow'),
+      foot);
+    this.updateBakeStatus();
+    this.renderBakeRun();
+  }
+
+  private bakeParams(it: BakeItem): HTMLElement[] {
+    const ts = this.ts;
+    const hs = ts.highSettings;
+    const bs = ts.bakeSettings;
+    const cage = () => this.updateCage();
+    if (it === 'common') {
+      const high = this.high;
+      const demo = demoHighPoly(this.model);
+      const useLow = el('input', { type: 'checkbox', checked: !this.useHigh || !high }) as HTMLInputElement;
+      useLow.disabled = !high;
+      useLow.addEventListener('change', () => { this.useHigh = !useLow.checked; this.buildBakeDock(); cage(); });
+      const showCage = el('input', { type: 'checkbox', checked: this.showCage }) as HTMLInputElement;
+      showCage.addEventListener('change', () => { this.showCage = showCage.checked; cage(); });
+      const showHigh = el('input', { type: 'checkbox', checked: this.showHigh, disabled: !high }) as HTMLInputElement;
+      showHigh.addEventListener('change', () => { this.showHigh = showHigh.checked; cage(); });
+      const avg = el('input', { type: 'checkbox', checked: hs.average }) as HTMLInputElement;
+      avg.addEventListener('change', () => { hs.average = avg.checked; cage(); });
+      const cageOn = !!high && this.useHigh;
+      return [
+        group('Output',
+          el('div', { class: 'row' }, el('label', {}, 'Output size'),
+            select<number>(RESOLUTIONS.map((r) => ({ value: r, label: RES_LABEL(r) })), ts.size, (v) => this.setResolution(v))),
+          el('p', { class: 'note' }, 'The size the maps are baked at (and the texture set size). 4K needs a strong GPU and takes longer — bake at 1K or 2K while setting up, then 4K for the final.'),
+          el('p', { class: 'note' }, 'Nothing bakes automatically: tick the maps you want on the left, then click Bake.'),
+        ),
+        group('High definition meshes',
+          high
+            ? el('div', { class: 'bp-file' }, el('span', { class: 'name', title: high.name }, high.name), el('span', { class: 'tris' }, `${high.triangles.toLocaleString()} tris`))
+            : el('div', { class: 'bp-file' }, el('span', { class: 'name muted' }, ts.highName ? `Last bake used: ${ts.highName}` : 'No high poly loaded')),
+          el('div', { class: 'row' },
+            el('button', { class: 'grow', onclick: async () => { const f = await pickFile('.glb,.gltf,.fbx,.obj'); if (f) this.loadHighPoly(f); } }, 'Load high poly…'),
+            demo && !high ? el('button', { title: 'A detailed sci-fi version of the rounded box, to try it out', onclick: () => this.setHigh(demoHighPoly(this.model)) }, 'Demo') : null,
+            high ? el('button', { onclick: () => this.setHigh(null) }, 'Remove') : null,
+          ),
+          el('label', { class: 'check-row', title: 'High → low baking is optional: with this ticked (or no high poly loaded), maps are baked from the low poly itself' }, useLow, ' Use low poly mesh as high poly'),
+          el('label', { class: 'check-row' }, showHigh, ' Show high poly in the 3D view'),
+          el('p', { class: 'note' }, 'Export high and low from the same scene so they line up. The high poly doesn\'t need UVs.'),
+        ),
+        el('div', { class: 'group' + (cageOn ? '' : ' dim') },
+          el('h4', {}, 'Ray distance (cage)'),
+          slider('Max frontal', { min: 0.001, max: 0.25, step: 0.001, value: hs.front, fmt: (v) => v.toFixed(3), onInput: (v) => { hs.front = v; cage(); } }).el,
+          slider('Max rear', { min: 0.001, max: 0.25, step: 0.001, value: hs.rear, fmt: (v) => v.toFixed(3), onInput: (v) => { hs.rear = v; cage(); } }).el,
+          el('div', { class: 'bp-legend' },
+            el('span', {}, el('i', { class: 'swatch-dot', style: { background: '#3b82f6' } }), 'Blue = frontal'),
+            el('span', {}, el('i', { class: 'swatch-dot', style: { background: '#ef4444' } }), 'Red = rear')),
+          el('label', { class: 'check-row' }, showCage, ' Show cage'),
+          el('label', { class: 'check-row', title: 'Rays follow normals averaged across hard edges, so the cage doesn\'t split open' }, avg, ' Average normals'),
+          el('p', { class: 'note' }, 'All the high poly detail should sit between the blue and red shells. The 2D view shows the Ray check: red where rays missed — raise the distances there.'),
+        ),
+      ];
+    }
+    const fromHigh = this.high && this.useHigh ? 'from the high poly' : 'from the low poly (no high poly in use)';
+    if (it === 'normal') return [group('Normal',
+      el('p', { class: 'note' }, 'Tangent-space normal map from the high poly (OpenGL, Y+). It becomes the base of the final normal; height and normal layers stack on top. The Unreal export converts it to DirectX.'),
+      el('p', { class: 'note' }, this.high && this.useHigh ? '' : 'With no high poly this map is flat.'),
+    )];
+    if (it === 'height') return [group('Height',
+      el('p', { class: 'note' }, 'Distance between the high and low surface (0.5 = on the low poly). The range is ± the larger cage distance.'),
+    )];
+    if (it === 'wsn') return [group('World space normal',
+      el('p', { class: 'note' }, `Surface direction in model space (RGB = XYZ), ${fromHigh}. Used for direction-based effects like dust and snow.`),
+    )];
+    if (it === 'pos') return [group('Position',
+      el('p', { class: 'note' }, `Position on the model, normalised to its bounding box (RGB = XYZ), ${fromHigh}. Used for gradients.`),
+    )];
+    if (it === 'id') {
+      const srcs = (Object.keys(ID_SOURCE_LABEL) as IdSource[]).filter((k) =>
+        k !== 'vertex' || (this.high && this.useHigh ? this.high.geometries : this.model.geometries).some((g) => g.attributes.color));
+      return [group('ID',
+        el('div', { class: 'row' }, el('label', {}, 'Color source'),
+          select<IdSource>(srcs.map((k) => ({ value: k, label: ID_SOURCE_LABEL[k] })), srcs.includes(ts.idSource) ? ts.idSource : 'auto', (v) => { ts.idSource = v; this.buildBakeDock(); })),
+        el('p', { class: 'note' }, `Gives every ${ts.idSource === 'auto' ? 'object (or mesh part / UV island)' : ts.idSource === 'island' ? 'UV island' : ts.idSource === 'object' ? 'object' : ts.idSource === 'material' ? 'material' : ts.idSource === 'vertex' ? 'vertex color region' : 'separate mesh part'} its own flat color, ${fromHigh}. Then use Mask → Smart mask: ID color selection to put a material on one color. Optional: untick it if you don't need it.`),
+      )];
+    }
+    if (it === 'thick') {
+      const th = ts.thickSettings;
+      return [group('Thickness',
+        slider('Rays', { min: 8, max: 96, step: 4, value: th.rays, fmt: (v) => v.toFixed(0), onInput: (v) => (th.rays = v) }).el,
+        slider('Max distance', { min: 0.02, max: 1, step: 0.01, value: th.maxDist, fmt: (v) => v.toFixed(2), onInput: (v) => (th.maxDist = v) }).el,
+        el('p', { class: 'note' }, 'White = thick, black = thin (like Substance). Max distance is a fraction of the bounding box. Used by the Thickness smart mask (e.g. light through thin parts).'),
+      )];
+    }
+    const method = () => el('div', { class: 'row' }, el('label', {}, 'Method'),
+      select<string>([{ value: 'rays', label: 'Ray traced (like Substance)' }, { value: 'gpu', label: 'Fast preview (GPU)' }], bs.method ?? 'rays', (v) => { bs.method = v as any; this.buildBakeDock(); }));
+    const traced = (bs.method ?? 'rays') !== 'gpu';
+    if (it === 'ao') return [group('Ambient occlusion',
+      method(),
+      ...(traced ? [
+        slider('Secondary rays', { min: 8, max: 256, step: 8, value: bs.aoRays ?? 64, fmt: (v) => v.toFixed(0), onInput: (v) => (bs.aoRays = v) }).el,
+        slider('Max occluder distance', { min: 0.005, max: 1, step: 0.005, value: bs.aoMax ?? 0.1, fmt: (v) => v.toFixed(3), onInput: (v) => (bs.aoMax = v) }).el,
+        slider('Spread angle', { min: 10, max: 180, step: 1, value: bs.aoSpread ?? 180, fmt: (v) => `${v.toFixed(0)}°`, onInput: (v) => (bs.aoSpread = v) }).el,
+        el('div', { class: 'row' }, el('label', {}, 'Distribution'),
+          select<string>([{ value: 'cosine', label: 'Cosine' }, { value: 'uniform', label: 'Uniform' }], bs.aoDist ?? 'cosine', (v) => (bs.aoDist = v as any))),
+        el('div', { class: 'row' }, el('label', {}, 'Attenuation'),
+          select<string>([{ value: 'none', label: 'None' }, { value: 'linear', label: 'Linear' }, { value: 'smooth', label: 'Smooth' }], bs.aoAtten ?? 'linear', (v) => (bs.aoAtten = v as any))),
+        (() => { const c = el('input', { type: 'checkbox', checked: !!bs.aoGround }) as HTMLInputElement; c.addEventListener('change', () => (bs.aoGround = c.checked)); return el('label', { class: 'check-row' }, c, ' Ground plane'); })(),
+        el('p', { class: 'note' }, 'Same parameters and defaults as Substance Painter\'s Ambient Occlusion baker: 64 rays, max occluder distance 0.1 of the bounding box, 180° spread, cosine distribution, linear attenuation.'),
+      ] : [
+        el('div', { class: 'row' }, el('label', {}, 'Quality'),
+          select<number>(BAKE_QUALITY, BAKE_QUALITY.some((q) => q.value === bs.samples) ? bs.samples : 96, (v) => (bs.samples = v))),
+      ]),
+      slider('Viewport AO', { min: 0, max: 1, step: 0.01, value: this.vp.litMat.aoMapIntensity, onInput: (v) => (this.vp.aoStrength = v) }).el,
+      el('p', { class: 'note' }, 'Used by the Dirt and AO smart masks, the viewport shading and the exported AO / ORM maps.'),
+    )];
+    return [group('Curvature',
+      method(),
+      ...(traced ? [
+        slider('Secondary rays', { min: 8, max: 128, step: 4, value: bs.curvRays ?? 32, fmt: (v) => v.toFixed(0), onInput: (v) => (bs.curvRays = v) }).el,
+        slider('Sampling radius', { min: 0.001, max: 0.05, step: 0.0005, value: bs.curvRadius ?? 0.005, fmt: (v) => v.toFixed(4), onInput: (v) => (bs.curvRadius = v) }).el,
+        slider('Contrast', { min: 0.25, max: 4, step: 0.05, value: bs.curvStrength, fmt: (v) => v.toFixed(2), onInput: (v) => (bs.curvStrength = v) }).el,
+        el('p', { class: 'note' }, 'Like Substance\'s Curvature baker: rays sample the geometry within the sampling radius (relative to the bounding box), then the result is tonemapped automatically. Convex edges white, cavities black, flat 50% gray. Bigger radius = wider edges.'),
+      ] : [
+        slider('Edge width', { min: 0.004, max: 0.06, step: 0.001, value: bs.edgeWidth, fmt: (v) => v.toFixed(3), onInput: (v) => (bs.edgeWidth = v) }).el,
+        slider('Strength', { min: 0.5, max: 4, step: 0.05, value: bs.curvStrength, fmt: (v) => v.toFixed(2), onInput: (v) => (bs.curvStrength = v) }).el,
+      ]),
+      el('p', { class: 'note' }, 'Drives the Edge wear and Dirt smart masks.'),
+    )];
+  }
+
+  // ================================================================ right: texture set list, layers, properties
+
+  buildRight() {
+    const host = document.getElementById('right')!;
+    host.innerHTML = '';
+    const ts = this.ts;
+    const tsList = dock(el('span', {}, 'Texture set list'),
+      el('div', { class: 'dock-body tight' },
+        el('div', { class: 'ts-row on' }, el('span', { class: 'ts-eye' }), el('span', { class: 'name' }, this.model.name),
+          el('span', { class: 'muted' }, `${ts.size}×${ts.size}`), el('span', { class: 'muted' }, 'PBR metal/rough'))), 'ts-list');
+    (tsList.querySelector('.ts-eye') as HTMLElement).innerHTML = I.eye;
+    if (this.mode === 'bake') {
+      host.append(tsList, dock(el('span', {}, 'Baked mesh maps'), el('div', { class: 'dock-body' }, this.mapGrid(),
+        el('p', { class: 'note' }, 'Click a map to show it in the 2D view.')), 'grow'));
+      return;
+    }
+    const tabs = el('div', { class: 'dock-tabs' },
+      el('button', { class: this.layersTab === 'layers' ? 'on' : '', onclick: () => { this.layersTab = 'layers'; this.buildRight(); } }, 'Layers'),
+      el('button', { class: this.layersTab === 'settings' ? 'on' : '', onclick: () => { this.layersTab = 'settings'; this.buildRight(); } }, 'Texture set settings'));
+    const layersDock = el('section', { class: 'dock layers-dock' }, tabs,
+      this.layersTab === 'layers' ? this.layersBody() : this.settingsBody());
+    const propsDock = el('section', { class: 'dock props-dock' });
+    host.append(tsList, layersDock, propsDock);
+    this.buildProperties();
+  }
+
+  private mapGrid() {
+    const grid = el('div', { class: 'map-grid' });
+    const maps: [ViewMode, string][] = [['bnormal', 'Normal'], ['wsn', 'World normal'], ['id', 'ID'], ['ao', 'AO'], ['curv', 'Curvature'],
+      ['pos', 'Position'], ['thick', 'Thickness'], ['bheight', 'Height'], ['rays', 'Ray check']];
+    for (const [v, label] of maps) {
+      const img = el('img', { alt: label }) as HTMLImageElement;
+      const cached = this.mapThumbs.get(v);
+      if (cached) img.src = cached;
+      else this.mapThumb(v).then((u) => { this.mapThumbs.set(v, u); img.src = u; });
+      grid.append(el('button', { class: 'map-tile' + (this.view2 === v ? ' on' : ''), onclick: () => {
+        this.view2 = v; if (this.layout3 === '3d') this.setLayout('split'); this.applyViews(); this.buildRight();
+      } }, img, el('span', {}, label)));
+    }
+    return grid;
+  }
+
+  private async mapThumb(v: ViewMode) {
+    return 'data:image/png;base64,' + await this.viewForTest(v, 96);
+  }
+
+  private layersBody() {
+    const ts = this.ts;
+    const active = ts.activeLayer;
+    this.syncSel();
+    const maskMenu = el('div', { class: 'menu mask-menu' });
+    const mm = el('div', { class: 'menu-items' });
+    const addMask = (base: 'white' | 'black', gen: GenType | null) => {
+      if (!active) return;
+      maskMenu.classList.remove('open');
+      this.addMaskTo(active, base, gen);
+    };
+    mm.append(
+      el('button', { onclick: () => addMask('white', null) }, 'Add white mask'),
+      el('button', { onclick: () => addMask('black', null) }, 'Add black mask'),
+      el('hr'),
+      el('div', { class: 'menu-label' }, 'Smart mask presets'),
+      ...SMART_MASKS.map((p) => el('button', { onclick: () => { maskMenu.classList.remove('open'); this.applySmartMaskTo(active, p.id); } }, p.label)),
+      el('hr'),
+      el('div', { class: 'menu-label' }, 'Single generator'),
+      ...GEN_TYPES.map((t) => el('button', { onclick: () => addMask('black', t) }, `Smart mask: ${GEN_LABEL[t]}`)),
+      ...(active?.mask ? [el('hr'), el('button', { onclick: () => { ts.removeMask(active); this.paintTarget = 'content'; this.modified = true; maskMenu.classList.remove('open'); } }, 'Remove mask')] : []),
+    );
+    const mBtn = icon(I.addMask, 'Add a mask (white, black or smart mask)', () => {});
+    mBtn.onclick = (e) => { e.stopPropagation(); const o = maskMenu.classList.contains('open'); document.querySelectorAll('.menu.open').forEach((x) => x.classList.remove('open')); if (!o) maskMenu.classList.add('open'); };
+    if (!active) mBtn.disabled = true;
+    maskMenu.append(mBtn, mm);
+    const tools = el('div', { class: 'layer-toolbar' },
+      icon(I.layerPaint, 'Add paint layer', () => { this.paintTarget = 'content'; ts.addPaintLayer(); this.modified = true; }),
+      icon(I.layerFill, 'Add fill layer', () => { this.paintTarget = 'content'; ts.addFillLayer(); this.modified = true; }),
+      icon(I.folder2, 'Add folder', () => { this.paintTarget = 'content'; ts.addGroup(); this.modified = true; }),
+      maskMenu,
+      el('span', { class: 'grow' }),
+      icon(I.up, 'Move up', () => active && ts.moveLayer(active.id, 1)),
+      icon(I.down, 'Move down', () => active && ts.moveLayer(active.id, -1)),
+      icon(I.trash, 'Delete layer (Delete) — all selected layers', () => this.deleteLayers(this.selection())),
+    );
+    const list = el('div', { class: 'layer-list' });
+    this.layerRowEls.clear();
+    this.rowOrder = [];
+    const add = (layers: Layer[], depth: number) => {
+      for (const l of [...layers].reverse()) {
+        this.rowOrder.push(l.id);
+        list.append(this.layerRow(l, depth));
+        if (l.kind === 'group' && l.open) add(l.children, depth + 1);
+      }
+    };
+    add(ts.layers, 0);
+    // Dropping an asset on empty space adds it at the top.
+    list.addEventListener('dragover', (e) => { if (this.dragItem) e.preventDefault(); });
+    list.addEventListener('drop', async (e) => {
+      if (!this.dragItem || (e.target as HTMLElement).closest('.layer')) return;
+      e.preventDefault();
+      const items = this.dragList(this.dragItem); this.dragItem = null;
+      this.ts.activeId = this.ts.layers[this.ts.layers.length - 1]?.id ?? -1;
+      await this.addAssets(items);
+    });
+    return el('div', { class: 'dock-body layers-body' }, tools, list);
+  }
+
+  /** Substance-style: add a mask; a black mask means "paint white to reveal". */
+  addMaskTo(layer: Layer, base: 'white' | 'black', gen: GenType | null) {
+    this.ts.addMask(layer, { base, gen: gen ? defaultGen(gen) : null });
+    this.ts.activeId = layer.id;
+    this.paintTarget = 'mask';
+    this.modified = true;
+    if (base === 'black' && !gen) {
+      if (this.tool !== 'paint' && this.tool !== 'fill' && this.tool !== 'path') this.setTool('paint');
+      toast(`Black mask on “${layer.name}”: paint on the model to reveal it (Erase hides again). Polygon fill (G) fills whole parts.`);
+    }
+    this.refresh();
+  }
+
+  // ================================================================ Material Designer links
+
+  private linkedGraphLayer(): FillLayer | null {
+    const l = this.ts.allLayers.find((x) => x.id === this.designLinked);
+    return l?.kind === 'fill' ? l : null;
+  }
+
+  private async hdrThumb(it: Extract<ShelfItem, { kind: 'env' }>): Promise<string> {
+    const key = 'hdr:' + it.file;
+    const c = this.hdrThumbs.get(key);
+    if (c) return c;
+    const { HDRLoader } = await import('three/examples/jsm/loaders/HDRLoader.js');
+    const url = URL.createObjectURL(await it.src());
+    try {
+      const tex: any = await new HDRLoader().setDataType(THREE.FloatType).loadAsync(url);
+      const { data, width, height } = tex.image as { data: Float32Array; width: number; height: number };
+      const W = 112, H = 112, cv = document.createElement('canvas');
+      cv.width = W; cv.height = H;
+      const ctx = cv.getContext('2d')!, img = ctx.createImageData(W, H);
+      const aces = (x: number) => Math.min(1, Math.max(0, (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)));
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        // centre half of the panorama (horizon band)
+        const sx = Math.floor(((x / W) * 0.5 + 0.25) * width), sy = Math.floor(((y / H) * 0.6 + 0.15) * height);
+        const o = (sy * width + sx) * 4, d = (y * W + x) * 4;
+        for (let k = 0; k < 3; k++) img.data[d + k] = Math.round(Math.pow(aces(data[o + k] * 0.8), 1 / 2.2) * 255);
+        img.data[d + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      tex.dispose();
+      const u = cv.toDataURL();
+      this.hdrThumbs.set(key, u);
+      return u;
+    } finally { URL.revokeObjectURL(url); }
+  }
+  private hdrThumbs = new Map<string, string>();
+
+  private graphThumbs = new Map<string, string>();
+  private async graphThumb(g: GraphJSON): Promise<string> {
+    const key = g.name + ':' + JSON.stringify(g).length;
+    const c = this.graphThumbs.get(key);
+    if (c) return c;
+    const r = this.graphRunner;
+    for (const cc of g.custom ?? []) r.setCustom(cc);
+    await r.run({ ...g, size: 128 });
+    const outs = r.outputs(g);
+    const cv = document.createElement('canvas'); cv.width = cv.height = 112;
+    const id = outs.color ?? Object.values(outs)[0];
+    if (id != null) r.preview(id, cv);
+    const u = cv.toDataURL();
+    this.graphThumbs.set(key, u);
+    return u;
+  }
+
+  /** Render a graph into fresh fill images (opening projects / duplicating layers). */
+  private async bakeGraph(g: GraphJSON): Promise<Partial<Record<Ch, FillImage>>> {
+    const r = this.graphRunner;
+    for (const c of g.custom ?? []) r.setCustom(c);
+    await r.run(g);
+    const out: Partial<Record<Ch, FillImage>> = {};
+    for (const [ch, id] of Object.entries(r.outputs(g)) as [Ch, number][]) {
+      const rt = r.copyOut(id, g.size);
+      if (rt) out[ch] = { name: 'graph:' + ch, bytes: new ArrayBuffer(0), tex: rt.texture, rt };
+    }
+    return out;
+  }
+
+  /** Designer → fill layer: a new layer, or refresh the linked one in place. */
+  private async applyGraph(g: GraphJSON, runner: GraphRunner, mode: 'new' | 'linked'): Promise<string | null> {
+    const outs = runner.outputs(g);
+    if (!Object.keys(outs).length) { toast('The graph has no Output nodes yet', true); return null; }
+    let layer = mode === 'linked' ? this.linkedGraphLayer() : null;
+    if (mode === 'linked' && !layer) return null;
+    const copy = (id: number, prev?: FillImage): FillImage | null => {
+      if (prev?.rt && prev.rt.width === g.size) {
+        // Same size: re-render into the layer's own texture (live updates don't pile up textures).
+        runner.copyInto(id, prev.rt);
+        return prev;
+      }
+      const rt = runner.copyOut(id, g.size);
+      return rt ? { name: prev?.name ?? 'graph', bytes: new ArrayBuffer(0), tex: rt.texture, rt } : null;
+    };
+    if (!layer) {
+      const enabled: Partial<Record<Ch, boolean>> = {};
+      const images: Partial<Record<Ch, FillImage>> = {};
+      for (const [ch, id] of Object.entries(outs) as [Ch, number][]) {
+        const im = copy(id);
+        if (im) { im.name = 'graph:' + ch; images[ch] = im; enabled[ch] = true; }
+      }
+      for (const ch of CHANNELS) enabled[ch] ??= false;
+      layer = this.ts.addFillLayer(g.name, undefined, enabled, true, images, 1);
+      layer.graph = structuredClone(g);
+      this.designLinked = layer.id;
+      this.modified = true;
+      this.ts.layerChanged();
+      this.buildRight();
+      return layer.name;
+    }
+    const imgs = (layer.images ??= {});
+    for (const ch of OUTPUT_CHANNELS as readonly Ch[]) {
+      const id = outs[ch as keyof typeof outs];
+      const prev = imgs[ch];
+      if (id == null) { if (prev?.name.startsWith('graph:')) { delete imgs[ch]; layer.enabled[ch] = false; } continue; }
+      const im = copy(id, prev?.name.startsWith('graph:') ? prev : undefined);
+      if (im) { im.name = 'graph:' + ch; imgs[ch] = im; layer.enabled[ch] = true; }
+    }
+    layer.graph = structuredClone(g);
+    this.modified = true;
+    this.ts.markDirty();
+    this.updateLayerRow(layer);
+    return layer.name;
+  }
+
+  /** Open a fill layer's graph in the Designer (and link them). */
+  editInDesigner(l: FillLayer) {
+    if (!l.graph) return;
+    this.designLinked = l.id;
+    this.ts.activeId = l.id;
+    this.setMode('design');
+    this.designer.open(l.graph);
+  }
+
+  /** Procedural channels of a fill layer (library materials): pattern, scale, seed, range. */
+  private procProps(l: FillLayer): HTMLElement[] {
+    const procs = l.procs;
+    if (!procs || !Object.keys(procs).length) return [];
+    const ts = this.ts;
+    const live = () => { ts.markDirty(); this.modified = true; this.updateLayerRow(l); };
+    const pre = (k: string) => ts.checkpoint('Edit procedural', `proc:${l.id}:${k}`);
+    const box = group('Procedural channels', el('p', { class: 'note' }, 'These channels come from a pattern on the model (no textures). Each value goes from Low to High across the pattern.'));
+    for (const [ch, p] of Object.entries(procs) as [Ch, NonNullable<typeof procs[Ch]>][]) {
+      const color = ch === 'color' || ch === 'emit';
+      const ps = select<string>(PATTERNS.map((x) => ({ value: x, label: PATTERN_LABEL[x] })), p.pattern, (v) => { pre(ch + 'pat'); p.pattern = v as PatternType; live(); });
+      const lohi = (key: 'low' | 'high', label: string) => {
+        if (color) {
+          const inp = el('input', { type: 'color', value: rgbToHex(p[key]) }) as HTMLInputElement;
+          inp.addEventListener('input', () => { pre(ch + key); p[key] = hexToRgb(inp.value); live(); });
+          return el('div', { class: 'row' }, el('label', {}, label), inp);
+        }
+        return slider(label, { min: 0, max: 1, step: 0.005, value: p[key][0], onInput: (v) => { pre(ch + key); p[key] = [v, v, v]; live(); } }).el;
+      };
+      const off = el('button', { class: 'link', onclick: () => { pre('rm:' + Math.random()); delete procs[ch]; live(); this.buildProperties(); } }, 'Use a flat value instead');
+      box.append(el('h5', {}, CH_LABEL[ch]), el('div', { class: 'row' }, el('label', {}, 'Pattern'), ps),
+        slider('Scale', { min: 0.25, max: 100, step: 0.25, value: p.scale, fmt: (v) => v.toFixed(2), onInput: (v) => { pre(ch + 'scale'); p.scale = v; live(); } }).el,
+        slider('Contrast', { min: 0, max: 3, step: 0.01, value: p.contrast, onInput: (v) => { pre(ch + 'con'); p.contrast = v; live(); } }).el,
+        lohi('low', 'Low'), lohi('high', 'High'),
+        el('div', { class: 'row' }, el('button', { class: 'grow', onclick: () => { pre(ch + 'seed:' + Math.random()); p.seed = Math.round(Math.random() * 1000); live(); } }, 'New seed'), off));
+    }
+    return [box];
+  }
+
+  // ================================================================ image import (Substance-style)
+
+  /**
+   * Images dropped / imported: choose what each one is (base color, normal, height, roughness, metallic,
+   * emissive, a mask, a brush tip, or just add it to the shelf), then put them on a new or the selected fill layer.
+   */
+  async importImages(files: File[]) {
+    type Use = Ch | 'normalDX' | 'mask' | 'tip' | 'shelf' | 'skip';
+    const USES: [Use, string][] = [['color', 'Base color'], ['rough', 'Roughness'], ['metal', 'Metallic'], ['height', 'Height'],
+      ['normal', 'Normal (OpenGL)'], ['normalDX', 'Normal (DirectX)'], ['emit', 'Emissive'], ['mask', 'Mask of the selected layer'],
+      ['tip', 'Brush tip (alpha)'], ['shelf', 'Add to Assets shelf only'], ['skip', 'Skip']];
+    const guess = (name: string): Use => {
+      const sp = splitMapName(name.replace(/\.[^.]+$/, ''));
+      if (!sp) return 'color';
+      if (sp.slot === 'normal') return sp.dx ? 'normalDX' : 'normal';
+      if ((CHANNELS as string[]).includes(sp.slot)) return sp.slot as Ch;
+      return 'skip'; // AO and other maps TexPaint has no channel for
+    };
+    const rows = files.map((f) => ({ f, use: guess(f.name), url: URL.createObjectURL(f) }));
+    // A picture without a map suffix is base color only if nothing else already is.
+    rows.forEach((r) => {
+      const named = !!splitMapName(r.f.name.replace(/\.[^.]+$/, ''));
+      if (!named && rows.some((o) => o !== r && o.use === 'color' && !!splitMapName(o.f.name.replace(/\.[^.]+$/, '')))) r.use = 'shelf';
+    });
+    const active = this.ts.activeLayer;
+    const canSel = active?.kind === 'fill' && !active.graph;
+    let target = 'new' as 'new' | 'sel';
+    const list = el('div', { class: 'imp-list' });
+    for (const r of rows) {
+      const sel = select<string>(USES.map(([v, l]) => ({ value: v, label: l })), r.use, (v) => { r.use = v as Use; });
+      list.append(el('div', { class: 'imp-row' }, el('img', { src: r.url, alt: '' }), el('span', { class: 'imp-name', title: r.f.name }, r.f.name), sel));
+    }
+    const tNew = el('button', { class: 'on', onclick: () => { target = 'new'; tNew.classList.add('on'); tSel.classList.remove('on'); } }, 'New fill layer');
+    const tSel = el('button', { disabled: !canSel, title: canSel ? '' : 'Select a fill layer first', onclick: () => { target = 'sel'; tSel.classList.add('on'); tNew.classList.remove('on'); } },
+      canSel ? `Selected: ${active!.name}` : 'Selected fill layer');
+    const content = el('div', {}, list, el('div', { class: 'row imp-target' }, el('label', {}, 'Put maps on'), el('div', { class: 'seg grow' }, tNew, tSel)));
+    const r = await this.modal({
+      title: files.length > 1 ? `Import ${files.length} images` : `Import “${files[0].name}”`,
+      text: 'Choose what each image is. Names like _BaseColor, _Normal, _Roughness or _Height are recognised automatically.',
+      icon: 'info', wide: true, content, buttons: [['Import', 'ok', 'primary'], ['Cancel', 'cancel']],
+    });
+    rows.forEach((x) => URL.revokeObjectURL(x.url));
+    if (r !== 'ok') return;
+    const chans = rows.filter((x) => (CHANNELS as string[]).includes(x.use) || x.use === 'normalDX');
+    const seen = new Set<string>();
+    for (const x of chans) { const k = x.use === 'normalDX' ? 'normal' : x.use; if (seen.has(k)) toast(`Two images were set to ${CH_LABEL[k as Ch]}; the last one is used`, true); seen.add(k); }
+    const shelf = rows.filter((x) => x.use === 'shelf').map((x) => x.f);
+    if (shelf.length) { await this.shelf.addFiles(shelf); this.buildShelf(); }
+    for (const x of rows.filter((q) => q.use === 'tip')) { await this.setTip('image', x.f, x.f.name.replace(/\.[^.]+$/, '')); this.setTool('paint'); toast(`Brush tip: ${x.f.name}`); }
+    const maskRow = rows.find((x) => x.use === 'mask');
+    if (maskRow) {
+      const layer = this.ts.activeLayer;
+      if (!layer) toast('Select a layer to put the mask on', true);
+      else {
+        const bytes = await maskRow.f.arrayBuffer();
+        const tex = await imageTexture(bytes, maskRow.f.name);
+        await this.ts.batch(`Mask from ${maskRow.f.name}`, () => {
+          if (!layer.mask) this.ts.addMask(layer, { base: 'black', gen: null });
+          this.ts.maskFromImage(layer, tex, 0.5, 0.5, false);
+        });
+        this.paintTarget = 'mask';
+        toast(`Mask from ${maskRow.f.name} on “${layer.name}”`);
+      }
+    }
+    if (chans.length) {
+      const images: Partial<Record<Ch, FillImage>> = {};
+      for (const x of chans) {
+        const ch: Ch = x.use === 'normalDX' ? 'normal' : (x.use as Ch);
+        const bytes = await x.f.arrayBuffer();
+        images[ch] = { name: x.f.name, bytes, tex: await imageTexture(bytes, x.f.name), flipG: x.use === 'normalDX' };
+      }
+      if (target === 'sel' && canSel) {
+        const fl = active as FillLayer;
+        this.ts.checkpoint(`Images on ${fl.name}`);
+        fl.images = { ...(fl.images ?? {}), ...images };
+        for (const ch of Object.keys(images) as Ch[]) fl.enabled[ch] = true;
+        this.ts.layerChanged();
+      } else {
+        const enabled = {} as Record<Ch, boolean>;
+        for (const ch of CHANNELS) enabled[ch] = !!images[ch];
+        const base = splitMapName(chans[0].f.name.replace(/\.[^.]+$/, ''))?.set || chans[0].f.name.replace(/\.[^.]+$/, '');
+        this.ts.addFillLayer(base, undefined, enabled, true, images, 1);
+      }
+      this.paintTarget = 'content';
+      toast(`${chans.length} map${chans.length > 1 ? 's' : ''} on ${target === 'sel' && canSel ? '“' + active!.name + '”' : 'a new fill layer'}`);
+    }
+    this.modified = true;
+    this.refresh();
+  }
+
+  /** Load / replace one channel's image on a fill layer. */
+  private async setFillChannelImage(fl: FillLayer, ch: Ch, file?: File) {
+    const f = file ?? await pickFile('image/*');
+    if (!f) return;
+    const bytes = await f.arrayBuffer();
+    this.ts.checkpoint(`Image on ${fl.name}`);
+    const dx = ch === 'normal' && /(normaldx|directx|_dx\b|nordx)/i.test(f.name);
+    fl.images = { ...(fl.images ?? {}), [ch]: { name: f.name, bytes, tex: await imageTexture(bytes, f.name), flipG: dx } };
+    fl.enabled[ch] = true;
+    this.ts.layerChanged();
+    this.modified = true;
+    this.buildProperties();
+  }
+  private removeFillChannelImage(fl: FillLayer, ch: Ch) {
+    if (!fl.images?.[ch]) return;
+    this.ts.checkpoint(`Remove image from ${fl.name}`);
+    const imgs = { ...fl.images };
+    delete imgs[ch];
+    fl.images = imgs;
+    if (ch === 'normal') fl.enabled.normal = false;
+    this.ts.layerChanged();
+    this.modified = true;
+    this.buildProperties();
+  }
+
+  // ================================================================ History panel
+
+  historyOpen = false;
+  private historyTimer = 0;
+  private historyShown = -1;
+  toggleHistory(open = !this.historyOpen) {
+    this.historyOpen = open;
+    if (open && this.mode !== 'paint') this.setMode('paint');
+    clearInterval(this.historyTimer);
+    if (open) this.historyTimer = window.setInterval(() => { if (this.historyOpen) this.buildHistory(); }, 1000);
+    this.buildToolstrip();
+    this.buildShelf();
+  }
+
+  private ago(t: number) {
+    if (!t) return '';
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    return s < 5 ? 'just now' : s < 60 ? `${s} s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`;
+  }
+
+  /** The undo history as a list (newest at the top). Click a row to jump there; undone steps stay (greyed) until you do something new. */
+  private buildHistory(host = document.getElementById('shelf')!) {
+    if (!this.historyOpen || this.mode !== 'paint') return;
+    const list = this.ts.historyList();
+    const pos = this.ts.historyPos;
+    const key = list.map((h) => h.label + h.done).join('|') + pos + Math.floor(Date.now() / 10000);
+    if (key === this.historyShownKey && host.querySelector('.hist-list')) {
+      host.querySelectorAll<HTMLElement>('.hist-time').forEach((e) => { const t = +(e.dataset.t ?? 0); e.textContent = this.ago(t); });
+      return;
+    }
+    this.historyShownKey = key;
+    host.innerHTML = '';
+    const rows = el('div', { class: 'hist-list' });
+    const kindIcon = (k: string) => k === 'stroke' ? '🖌' : '◆';
+    for (let i = list.length - 1; i >= 0; i--) {
+      const h = list[i];
+      const current = i === pos - 1;
+      rows.append(el('button', {
+        class: 'hist-row' + (h.done ? '' : ' undone') + (current ? ' current' : ''),
+        title: h.done ? (current ? 'You are here' : 'Go back to right after this step') : 'Undone — click to bring it back',
+        onclick: () => { this.ts.jumpTo(i + 1); this.modified = true; this.refresh(); this.buildHistory(); },
+      }, el('span', { class: 'hist-ico' }, kindIcon(h.kind)), el('span', { class: 'hist-label' }, h.label),
+        el('span', { class: 'hist-time', 'data-t': String(h.t) }, this.ago(h.t))));
+    }
+    rows.append(el('button', {
+      class: 'hist-row original' + (pos === 0 ? ' current' : ''), title: 'How the file was before these steps',
+      onclick: () => { this.ts.jumpTo(0); this.modified = true; this.refresh(); this.buildHistory(); },
+    }, el('span', { class: 'hist-ico' }, '⟲'), el('span', { class: 'hist-label' }, 'Original'), el('span', { class: 'hist-time' }, '')));
+    const body = el('div', { class: 'dock-body hist-body' },
+      el('p', { class: 'note' }, `Your last ${this.ts.historyLimit} changes. Click one to go back to it; pressed Ctrl+Z by accident? Click the top row. Undone steps stay greyed until you do something new.`),
+      list.length ? rows : el('p', { class: 'note' }, 'Nothing yet — paint or change something and it shows up here.'),
+    );
+    const foot = el('div', { class: 'dock-foot' },
+      icon(I.undo, 'Undo (Ctrl+Z)', () => { this.undo(); this.buildHistory(); }),
+      icon(I.redo, 'Redo (Ctrl+Y)', () => { this.redo(); this.buildHistory(); }),
+      el('span', { class: 'grow' }),
+      el('button', { class: 'link', onclick: () => this.toggleHistory(false) }, 'Back to Assets'));
+    host.append(dock(el('span', {}, 'History'), body, 'grow'), foot);
+    rows.querySelector('.current')?.scrollIntoView({ block: 'nearest' });
+  }
+  private historyShownKey = '';
+
+  /** Put smart mask preset `id` on a layer (replaces its generator stack; painted mask strokes stay). */
+  applySmartMaskTo(layer: Layer | null | undefined, id: string) {
+    if (!layer) { toast('Select a layer first, then pick a smart mask', true); return; }
+    const p = findSmartMask(id);
+    if (!p) return;
+    const gen = smartMask(id);
+    if (layer.mask) {
+      this.ts.checkpoint(`Smart mask “${p.label}”`);
+      layer.mask.gen = gen;
+      this.ts.maskChanged(layer);
+    } else this.ts.addMask(layer, { base: 'black', gen });
+    this.ts.activeId = layer.id;
+    this.paintTarget = 'mask';
+    this.modified = true;
+    const need = new Set<string>();
+    for (const g of [gen, ...(gen.fx ?? [])]) {
+      if (g.type === 'edge' || g.type === 'curvature' || g.type === 'dirt') need.add('curv');
+      if (g.type === 'ao' || g.type === 'dirt') need.add('ao');
+      if (g.type === 'thick') need.add('thick');
+    }
+    const missing = [...need].filter((k) => !this.ts.baked.has(k as BakeKey));
+    toast(`Smart mask “${p.label}” on “${layer.name}”` + (missing.length ? ` — bake ${missing.map((k) => BAKE_ITEMS.find(([b]) => b === k)?.[1] ?? k).join(' + ')} in the Baking tab for it to show fully` : ''));
+    this.refresh();
+  }
+
+  deleteLayer(l: Layer) { this.deleteLayers([l]); }
+
+  /** Selected layers (outermost only: a folder's children go with it), bottom to top. */
+  selection(): Layer[] {
+    this.syncSel();
+    const all = this.ts.allLayers;
+    const picked = all.filter((l) => this.sel.has(l.id));
+    return picked.filter((l) => !picked.some((g) => g !== l && g.kind === 'group' && this.ts.isInside(l.id, g.id)));
+  }
+
+  private syncSel() {
+    const ids = new Set(this.ts.allLayers.map((l) => l.id));
+    for (const id of [...this.sel]) if (!ids.has(id)) this.sel.delete(id);
+    const a = this.ts.activeId;
+    if (a >= 0 && ids.has(a) && !this.sel.has(a)) this.sel = new Set([a]);
+  }
+
+  /** Click a layer row: plain = select, Ctrl = add / remove, Shift = range. */
+  private clickLayer(l: Layer, e: MouseEvent, target?: PaintTarget) {
+    const ts = this.ts;
+    this.syncSel();
+    if (e.ctrlKey || e.metaKey) {
+      if (this.sel.has(l.id) && this.sel.size > 1) {
+        this.sel.delete(l.id);
+        if (ts.activeId === l.id) ts.activeId = [...this.sel].pop()!;
+      } else { this.sel.add(l.id); ts.activeId = l.id; }
+      this.paintTarget = 'content';
+      this.refresh();
+      return;
+    }
+    if (e.shiftKey && ts.activeLayer) {
+      const a = this.rowOrder.indexOf(ts.activeId), b = this.rowOrder.indexOf(l.id);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        this.sel = new Set(this.rowOrder.slice(lo, hi + 1));
+        this.paintTarget = 'content';
+        this.refresh();
+        return;
+      }
+    }
+    const was = this.sel.size;
+    this.sel = new Set([l.id]);
+    const t = target ?? (this.paintTarget === 'mask' && l.id === ts.activeId ? 'mask' : 'content');
+    if (was > 1) { ts.activeId = l.id; this.paintTarget = t; this.refresh(); }
+    else this.selectLayer(l, t);
+  }
+
+  /** The layers an edit on row `l` applies to: the whole selection if `l` is in it. */
+  private targetsFor(l: Layer): Layer[] {
+    return this.sel.has(l.id) && this.sel.size > 1 ? this.selection() : [l];
+  }
+
+  async deleteLayers(list: Layer[]) {
+    if (!list.length) return;
+    const risky = list.some((l) => l.kind === 'paint' || l.kind === 'group');
+    if (list.length > 1 || risky) {
+      const r = await this.modal({
+        title: list.length > 1 ? `Delete ${list.length} layers?` : `Delete “${list[0].name}”?`,
+        text: list.length === 1 && list[0].kind === 'group' ? 'The folder and everything in it will be removed. Ctrl+Z brings it back.' : 'Ctrl+Z brings it back.',
+        icon: 'warn', buttons: [['Delete', 'ok', 'danger'], ['Cancel', 'cancel']],
+      });
+      if (r !== 'ok') return;
+    }
+    this.paintTarget = 'content';
+    this.ts.batchSync(list.length > 1 ? `Delete ${list.length} layers` : 'Delete layer', () => { for (const l of list) this.ts.removeLayer(l.id); });
+    this.sel.clear();
+    this.modified = true;
+    this.refresh();
+  }
+
+  /** Put layers in a new folder (Ctrl+G). */
+  groupLayers(list: Layer[]) {
+    if (!list.length) return;
+    const ts = this.ts;
+    const g = ts.batchSync(list.length > 1 ? `Group ${list.length} layers` : 'Put in a new folder', () => {
+      ts.activeId = list[list.length - 1].id;
+      const g = ts.addGroup(list.length === 1 ? list[0].name + ' folder' : undefined);
+      for (const l of list) ts.moveLayerTo(l.id, g.id, 'inside');
+      return g;
+    });
+    ts.activeId = g.id;
+    this.sel = new Set([g.id]);
+    this.paintTarget = 'content';
+    this.modified = true;
+    this.refresh();
+  }
+
+  /** Duplicate layers (Ctrl+D), each copy right above its original. */
+  private duplicating = false;
+  async duplicateLayers(list: Layer[]) {
+    if (!list.length || this.duplicating) return;
+    this.duplicating = true;
+    try { await this.duplicateNow(list); } finally { this.duplicating = false; }
+  }
+
+  private async duplicateNow(list: Layer[]) {
+    const ts = this.ts;
+    const copies: number[] = [];
+    await ts.batch(list.length > 1 ? `Duplicate ${list.length} layers` : 'Duplicate layer', async () => {
+      for (const l of list) {
+        const json = await serializeLayer(ts, l, true);
+        if (!json) continue;
+        ts.activeId = l.id;
+        const c = await restoreLayer(ts, json, ts.size, true);
+        c.name = l.name + ' copy';
+        copies.push(c.id);
+      }
+    });
+    if (!copies.length) return;
+    ts.activeId = copies[copies.length - 1];
+    this.sel = new Set(copies);
+    this.paintTarget = 'content';
+    this.modified = true;
+    ts.layerChanged();
+    toast(`Duplicated ${copies.length} layer${copies.length === 1 ? '' : 's'}`);
+  }
+
+  undo() {
+    if (this.pathLiveOn) { this.clearPath(); return; }
+    const label = this.ts.undo();
+    if (label) { this.modified = true; toast(`Undo: ${label}`); this.queueLayerThumbs(); } else toast('Nothing to undo');
+  }
+
+  redo() {
+    const label = this.ts.redo();
+    if (label) { this.modified = true; toast(`Redo: ${label}`); this.queueLayerThumbs(); } else toast('Nothing to redo');
+  }
+
+  /** Right-click menu on a layer (like Substance's layer context menu). */
+  private layerMenu(l: Layer, x: number, y: number) {
+    const ts = this.ts;
+    const m = this.ctxMenu;
+    m.innerHTML = '';
+    const item = (label: string, fn: () => void, disabled = false) => el('button', { disabled, onclick: () => { m.classList.remove('open'); fn(); } }, label);
+    const many = this.sel.has(l.id) && this.sel.size > 1 ? this.selection() : null;
+    if (many) {
+      m.append(
+        el('div', { class: 'ctx-title muted' }, `${many.length} layers selected`),
+        item('Put in a new folder  (Ctrl+G)', () => this.groupLayers(many)),
+        item('Duplicate  (Ctrl+D)', () => this.duplicateLayers(many)),
+        item(many.every((x) => x.visible) ? 'Hide all' : 'Show all', () => {
+          ts.checkpoint('Visibility'); const v = !many.every((x) => x.visible); many.forEach((x) => (x.visible = v)); ts.layerChanged(); this.modified = true;
+        }),
+        el('hr'),
+        item(`Delete ${many.length} layers`, () => this.deleteLayers(many)),
+      );
+    } else m.append(
+      item('Add black mask (paint to reveal)', () => this.addMaskTo(l, 'black', null)),
+      item('Add white mask', () => this.addMaskTo(l, 'white', null)),
+      el('div', { class: 'ctx-sub ctx-scroll' }, el('span', { class: 'muted' }, 'Smart mask presets'),
+        ...SMART_MASKS.map((p) => item(p.label, () => this.applySmartMaskTo(l, p.id)))),
+      el('div', { class: 'ctx-sub' }, el('span', { class: 'muted' }, 'Add smart mask (one generator)'),
+        ...GEN_TYPES.map((t) => item(GEN_LABEL[t], () => this.addMaskTo(l, 'black', t)))),
+      item('Remove mask', () => { ts.removeMask(l); this.paintTarget = 'content'; this.modified = true; }, !l.mask),
+      el('hr'),
+      item('New folder above', () => { ts.activeId = l.id; ts.addGroup(); this.modified = true; }),
+      item('Put in a new folder  (Ctrl+G)', () => this.groupLayers([l])),
+      item('Duplicate  (Ctrl+D)', () => this.duplicateLayers([l])),
+      el('hr'),
+      item('Rename', () => { this.renaming = l.id; this.refresh(); }),
+      item('Delete', () => this.deleteLayer(l)),
+    );
+    m.classList.add('open');
+    const r = m.getBoundingClientRect();
+    m.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
+    m.style.top = `${Math.min(y, innerHeight - r.height - 8)}px`;
+  }
+
+  private settingsBody() {
+    const ts = this.ts;
+    return el('div', { class: 'dock-body' },
+      group('Texture set',
+        el('div', { class: 'row' }, el('label', {}, 'Size'),
+          select<number>(RESOLUTIONS.map((r) => ({ value: r, label: `${r} × ${r}` })), ts.size, (v) => this.setResolution(v))),
+        el('div', { class: 'row' }, el('label', {}, 'Normal format'), el('span', {}, 'OpenGL (Y+)')),
+        slider('Height bump', { min: 0, max: 30, step: 0.5, value: ts.heightStrength, fmt: (v) => v.toFixed(1), onInput: (v) => ts.setHeightStrength(v) }).el,
+      ),
+      group('Mesh maps',
+        el('p', { id: 'bake-status', class: 'bp-result' }, ''),
+        this.mapGrid(),
+        el('div', { class: 'row' }, el('button', { class: 'grow primary', onclick: () => this.setMode('bake') }, 'Bake mesh maps…')),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------- layer thumbnails (real contents)
+
+  private lthumbCache = new Map<string, ImageData>();
+  private lthumbEls = new Map<string, { cv: HTMLCanvasElement; l: Layer; what: 'content' | 'mask' }>();
+  private lthumbTimer = 0;
+  private static LT = 40;
+  private layerThumbCanvas(host: HTMLElement, l: Layer, what: 'content' | 'mask') {
+    const n = App.LT;
+    const cv = el('canvas', { width: n, height: n, class: 'lthumb' }) as HTMLCanvasElement;
+    host.innerHTML = '';
+    host.classList.add('has-lthumb');
+    host.append(cv);
+    const key = `${l.id}:${what}`;
+    const cached = this.lthumbCache.get(key);
+    if (cached) cv.getContext('2d')!.putImageData(cached, 0, 0);
+    this.lthumbEls.set(key, { cv, l, what });
+    this.queueLayerThumbs();
+  }
+  /** Re-draw the layer thumbnails a moment after things settle (strokes, fills, undo…). */
+  queueLayerThumbs(ms = 220) {
+    clearTimeout(this.lthumbTimer);
+    this.lthumbTimer = window.setTimeout(() => {
+      if (this.ts.painting || this.ts.baking) { this.queueLayerThumbs(400); return; }
+      this.updateLayerThumbs();
+    }, ms);
+  }
+  private updateLayerThumbs() {
+    const n = App.LT;
+    for (const [key, { cv, l, what }] of this.lthumbEls) {
+      if (!cv.isConnected) { this.lthumbEls.delete(key); continue; }
+      const r = this.ts.layerThumb(l, what, n);
+      if (!r) continue;
+      const img = new ImageData(n, n);
+      const d = img.data, px = r.px;
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+        const s = ((n - 1 - y) * n + x) * 4, o = (y * n + x) * 4;
+        const chk = ((x >> 2) + (y >> 2)) & 1 ? 58 : 40; // checkerboard where the layer is empty
+        if (r.gray) { const v = px[s]; d[o] = d[o + 1] = d[o + 2] = v; }
+        else {
+          const a = px[s + 3] / 255;
+          for (let c = 0; c < 3; c++) d[o + c] = Math.round(px[s + c] * a + chk * (1 - a));
+        }
+        d[o + 3] = 255;
+      }
+      cv.getContext('2d')!.putImageData(img, 0, 0);
+      this.lthumbCache.set(key, img);
+    }
+  }
+
+  private selectLayer(l: Layer, target: PaintTarget) {
+    const changed = this.ts.activeId !== l.id || this.paintTarget !== target;
+    this.ts.activeId = l.id;
+    this.paintTarget = target;
+    if (changed) this.refresh();
+  }
+
+  private layerRow(l: Layer, depth = 0) {
+    const ts = this.ts;
+    const isActive = l.id === ts.activeId;
+    const eye = el('button', { class: 'eye' + (l.visible ? ' on' : ''), title: 'Show / hide', onclick: (e: Event) => {
+      e.stopPropagation();
+      const v = !l.visible;
+      ts.checkpoint(v ? 'Show layer' : 'Hide layer');
+      for (const t of this.targetsFor(l)) t.visible = v;
+      l.visible = v;
+      ts.layerChanged(); this.modified = true;
+    } });
+    eye.innerHTML = l.visible ? I.eye : I.eyeOff;
+    const kind = el('span', { class: 'thumb' + (l.kind === 'fill' ? ' fill' : '') + (isActive && this.paintTarget === 'content' ? ' sel' : ''),
+      title: (l.kind === 'fill' ? 'Fill layer' : 'Paint layer') + ' — click to edit its content',
+      onclick: (e: MouseEvent) => { e.stopPropagation(); this.clickLayer(l, e, 'content'); } });
+    if (l.kind === 'fill' && l.images && Object.keys(l.images).length) { kind.classList.remove('fill'); kind.classList.add('img'); kind.textContent = 'IMG'; }
+    else if (l.kind === 'fill') kind.style.setProperty('--swatch', rgbToHex(l.values.color));
+    else if (l.kind === 'group') { kind.classList.add('folder'); kind.innerHTML = I.folder; }
+    else this.layerThumbCanvas(kind, l, 'content');
+    const caret = l.kind === 'group'
+      ? el('button', { class: 'caret', title: l.open ? 'Collapse' : 'Expand', onclick: (e: Event) => { e.stopPropagation(); l.open = !l.open; this.refresh(); } })
+      : el('span', { class: 'caret' });
+    if (l.kind === 'group') caret.innerHTML = l.open ? I.caretD : I.caretR;
+    const chip = l.mask ? el('span', {
+      class: 'thumb mask' + (isActive && this.paintTarget === 'mask' ? ' sel' : ''),
+      title: `Mask${l.mask.gen ? ' · ' + GEN_LABEL[l.mask.gen.type] : ''} — click to edit / paint the mask`,
+      onclick: (e: MouseEvent) => { e.stopPropagation(); if (e.ctrlKey || e.metaKey || e.shiftKey) this.clickLayer(l, e); else { this.sel = new Set([l.id]); this.selectLayer(l, 'mask'); } },
+    }) : null;
+    if (chip) this.layerThumbCanvas(chip, l, 'mask');
+    const name = el('span', { class: 'name' });
+    if (this.renaming === l.id) {
+      const inp = el('input', { type: 'text', value: l.name }) as HTMLInputElement;
+      const done = () => {
+        if (this.renaming !== l.id) return;
+        const nv = inp.value.trim();
+        if (nv && nv !== l.name) { ts.checkpoint('Rename'); l.name = nv; this.modified = true; }
+        this.renaming = -1; this.refresh();
+      };
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(); if (e.key === 'Escape') { this.renaming = -1; this.refresh(); } });
+      inp.addEventListener('blur', done);
+      inp.addEventListener('click', (e) => e.stopPropagation());
+      name.append(inp);
+      setTimeout(() => { inp.focus(); inp.select(); });
+    } else name.textContent = l.name;
+    const blend = select<BlendMode>((Object.keys(BLEND_LABEL) as BlendMode[]).map((b) => ({ value: b, label: BLEND_LABEL[b].split(' ')[0] })), l.blend, (v) => {
+      ts.checkpoint('Blend mode');
+      const ts2 = this.targetsFor(l);
+      for (const t of ts2) t.blend = v;
+      l.blend = v;
+      ts.markDirty(); this.modified = true;
+      if (ts2.length > 1) this.refresh();
+    });
+    blend.classList.add('mini');
+    blend.title = 'Blend mode';
+    blend.addEventListener('click', (e) => e.stopPropagation());
+    const op = el('input', { type: 'number', min: 0, max: 100, step: 1, value: Math.round(l.opacity * 100), class: 'mini-num', title: 'Opacity %' }) as HTMLInputElement;
+    op.addEventListener('click', (e) => e.stopPropagation());
+    op.addEventListener('input', () => {
+      const targets = this.targetsFor(l);
+      ts.checkpoint('Opacity', 'opacity:' + targets.map((t) => t.id).join(','));
+      const v = Math.min(1, Math.max(0, (+op.value || 0) / 100));
+      for (const t of targets) { t.opacity = v; const r = this.layerRowEls.get(t.id); if (r && r !== this.layerRowEls.get(l.id)) r.op.value = String(Math.round(v * 100)); }
+      l.opacity = v;
+      ts.markDirty(); this.modified = true;
+    });
+    const row = el('div', {
+      class: 'layer' + (isActive ? ' active' : '') + (!isActive && this.sel.has(l.id) ? ' selected' : '') + (l.kind === 'group' ? ' group' : ''),
+      title: 'Ctrl+click / Shift+click to select several · double-click to rename · right-click for masks and folders · drag to reorder',
+      draggable: this.renaming !== l.id,
+      onclick: (e: MouseEvent) => this.clickLayer(l, e),
+      ondblclick: () => { this.renaming = l.id; this.refresh(); },
+      oncontextmenu: (e: MouseEvent) => {
+        e.preventDefault(); e.stopPropagation();
+        if (!this.sel.has(l.id)) { this.sel = new Set([l.id]); this.selectLayer(l, 'content'); }
+        this.layerMenu(l, e.clientX, e.clientY);
+      },
+    }, eye, caret, kind, chip, name, el('div', { class: 'layer-ctl' }, blend, op));
+    row.style.paddingLeft = `${8 + depth * 18}px`;
+    // drag to reorder / into folders
+    const zone = (e: DragEvent): 'above' | 'below' | 'inside' => {
+      const r = row.getBoundingClientRect();
+      const f = (e.clientY - r.top) / r.height;
+      if (l.kind === 'group' && f > 0.28 && f < 0.72) return 'inside';
+      return f < 0.5 ? 'above' : 'below'; // rows are listed top = highest, so "above" = on top of it
+    };
+    const clearMarks = () => row.classList.remove('drop-above', 'drop-below', 'drop-inside');
+    row.addEventListener('dragstart', (e) => {
+      this.dragLayer = l.id;
+      this.dragLayers = this.sel.has(l.id) && this.sel.size > 1 ? this.selection().map((x) => x.id) : [l.id];
+      e.dataTransfer!.effectAllowed = 'move';
+      e.dataTransfer!.setData('text/plain', l.name);
+    });
+    row.addEventListener('dragend', () => { this.dragLayer = -1; this.dragLayers = []; });
+    row.addEventListener('dragover', (e) => {
+      if (this.dragLayer < 0 && !this.dragItem) return;
+      e.preventDefault();
+      clearMarks();
+      if (this.dragItem) row.classList.add((this.dragItem.kind === 'material' && l.kind === 'fill') || this.dragItem.kind === 'mask' ? 'drop-inside' : 'drop-above');
+      else row.classList.add('drop-' + zone(e));
+    });
+    row.addEventListener('dragleave', clearMarks);
+    row.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clearMarks();
+      if (this.dragItem) {
+        const items = this.dragList(this.dragItem); this.dragItem = null;
+        const it = items[0];
+        if (it.kind === 'mask') { this.applySmartMaskTo(l, it.preset); return; }
+        if (items.length === 1 && it.kind === 'material' && l.kind === 'fill' && !Object.keys(l.images ?? {}).length) {
+          ts.checkpoint(`Apply “${it.name}”`);
+          l.values = structuredClone(it.preset.values);
+          l.enabled = { ...l.enabled, ...it.preset.enabled, normal: l.enabled.normal };
+          ts.activeId = l.id; ts.layerChanged(); this.modified = true;
+          toast(`Applied “${it.name}” to ${l.name}`);
+        } else {
+          ts.activeId = l.id;
+          await this.addAssets(items);
+        }
+        return;
+      }
+      if (this.dragLayer >= 0) {
+        const ids = this.dragLayers.length ? this.dragLayers : [this.dragLayer];
+        this.dragLayer = -1; this.dragLayers = [];
+        ts.moveLayersTo(ids, l.id, zone(e));
+        this.modified = true;
+      }
+    });
+    this.layerRowEls.set(l.id, { kind, op });
+    return row;
+  }
+
+  private updateLayerRow(l: Layer) {
+    const r = this.layerRowEls.get(l.id);
+    if (!r) return;
+    if (l.kind === 'fill' && !Object.keys(l.images ?? {}).length) r.kind.style.setProperty('--swatch', rgbToHex(l.values.color));
+  }
+
+  /** Properties dock: Paint / Fill / Mask depending on the selection (like Substance). */
+  buildProperties() {
+    const host = document.querySelector('#right .props-dock') as HTMLElement | null;
+    if (!host) return;
+    host.innerHTML = '';
+    if (this.mode === 'design') {
+      const inner = el('div', {});
+      host.append(el('div', { class: 'dock-head' }, this.designer.tab === 'shader' ? 'Shader preview' : 'Node'), inner);
+      this.designer.buildRight(inner);
+      return;
+    }
+    const layer = this.ts.activeLayer;
+    let title = 'Properties';
+    const body = el('div', { class: 'dock-body' });
+    if (layer && this.paintTarget === 'mask' && layer.mask) {
+      title = 'Properties — mask';
+      body.append(...this.maskProps(layer));
+    } else if (layer?.kind === 'group') {
+      title = 'Properties — folder';
+      body.append(group(`Folder · ${layer.name}`,
+        el('p', { class: 'note' }, `${layer.children.length} layer${layer.children.length === 1 ? '' : 's'} inside. A folder's mask, opacity and blend mode apply to everything in it — e.g. drop a smart material, add a black mask to its folder, then paint white to put the material only where you paint.`),
+        layer.mask
+          ? el('button', { class: 'grow', onclick: () => this.selectLayer(layer, 'mask') }, 'Edit folder mask')
+          : el('div', { class: 'seg' },
+            el('button', { class: 'primary', onclick: () => this.addMaskTo(layer, 'black', null) }, 'Add black mask & paint'),
+            el('button', { onclick: () => this.addMaskTo(layer, 'white', null) }, 'White mask')),
+      ));
+    } else if (layer?.kind === 'fill') {
+      title = 'Properties — fill';
+      if ((layer as FillLayer).note) body.append(group('Source', el('p', { class: 'note' }, (layer as FillLayer).note!)));
+      const fl = layer as FillLayer;
+      if (fl.graph) body.append(group('Material Designer', el('p', { class: 'note' }, `Driven by the node graph “${fl.graph.name}”.`),
+        el('button', { class: 'primary', onclick: () => this.editInDesigner(fl) }, 'Edit graph in Material Designer')));
+      body.append(this.materialProps(fl), ...this.procProps(fl), ...this.fillSettings(fl));
+      if (layer.mask) body.append(group('Mask', el('p', { class: 'note' }, `This layer has a mask${layer.mask.gen ? ' (' + GEN_LABEL[layer.mask.gen.type] + ')' : ''}.`),
+        el('button', { onclick: () => this.selectLayer(layer, 'mask') }, 'Edit mask')));
+      else body.append(group('Mask', el('p', { class: 'note' }, 'Paint this material only where you want it: add a black mask, then paint white.'),
+        el('div', { class: 'seg' },
+          el('button', { class: 'primary', onclick: () => this.addMaskTo(layer, 'black', null) }, 'Add black mask & paint'),
+          el('button', { onclick: () => this.addMaskTo(layer, 'white', null) }, 'White mask'))));
+    } else {
+      title = this.tool === 'picker' ? 'Properties — picker' : 'Properties — paint';
+      this.brushPreview = el('canvas', { width: 220, height: 110, class: 'brush-prev' }) as HTMLCanvasElement;
+      this.matPreview = el('img', { class: 'mat-prev', alt: '' }) as HTMLImageElement;
+      body.append(
+        el('div', { class: 'prop-preview' }, this.brushPreview, this.matPreview),
+        group('Brush',
+          this.brushSlider('Size', 'radius'), this.brushSlider('Flow', 'flow'), this.brushSlider('Stroke opacity', 'opacity'),
+          this.brushSlider('Hardness', 'hardness'), this.brushSlider('Spacing', 'spacing'),
+          this.smoothingSlider(), this.pressureRow(),
+          el('div', { class: 'row' }, el('label', {}, 'Symmetry'), this.symmetryButtons()),
+          ...this.symmetryOffsets(),
+          el('p', { class: 'note' }, 'Flow builds up with every stamp (low = see-through, layers up as you go over an area); Stroke opacity is the most one stroke can cover. Smoothing (lazy mouse) makes the brush trail the cursor for steady lines. Pen pressure works with drawing tablets. Symmetry mirrors strokes across the model\'s centre (X, Y, Z).')),
+        group('Brush tip', ...this.brushTipProps()),
+        this.materialProps(null),
+      );
+    }
+    host.append(el('div', { class: 'dock-head' }, title), body);
+    host.ondragover = (e) => { if (this.dragItem?.kind === 'material') e.preventDefault(); };
+    host.ondrop = (e) => {
+      const it = this.dragItem;
+      if (it?.kind !== 'material') return;
+      e.preventDefault(); this.dragItem = null;
+      const layer = this.ts.activeLayer;
+      if (layer?.kind === 'fill' && this.paintTarget === 'content' && !Object.keys(layer.images ?? {}).length) {
+        this.ts.checkpoint(`Apply “${it.name}”`);
+        layer.values = structuredClone(it.preset.values); layer.enabled = { ...layer.enabled, ...it.preset.enabled, normal: layer.enabled.normal };
+        this.ts.layerChanged();
+      } else { this.brush.values = structuredClone(it.preset.values); this.brush.channels = { ...it.preset.enabled, normal: false }; this.buildProperties(); }
+      toast(`Material: ${it.name}`);
+    };
+    this.drawBrushPreview();
+    this.updateMatPreview();
+  }
+
+  /** Material channels: the brush (fill = null) or a fill layer. */
+  private materialProps(fill: FillLayer | null) {
+    const values: ChannelValues = fill ? fill.values : this.brush.values;
+    const enabled: Record<Ch, boolean> = fill ? fill.enabled : this.brush.channels;
+    const changed = () => {
+      if (fill) { this.ts.markDirty(); this.modified = true; this.updateLayerRow(fill); }
+      else this.updateMatPreview();
+    };
+    /** Record an undo step before a fill-layer edit (slider drags merge into one). */
+    const pre = (k: string) => { if (fill) this.ts.checkpoint(`Edit ${fill.name}`, `fill:${fill.id}:${k}`); };
+    const checkRow = (ch: Ch, label: string, control: HTMLElement) => {
+      const box = el('input', { type: 'checkbox', checked: enabled[ch] }) as HTMLInputElement;
+      const row = el('div', { class: 'slider check' }, box, el('label', {}, label), control, el('span', { class: 'val' }, ''));
+      const sync = () => { (control as HTMLInputElement).disabled = !box.checked; row.classList.toggle('dim', !box.checked); };
+      box.addEventListener('change', () => { pre('on:' + ch); enabled[ch] = box.checked; sync(); changed(); });
+      sync();
+      return row;
+    };
+    const imageRow = (ch: Ch, label: string, img: FillImage) => {
+      const row = checkRow(ch, label, el('span', { class: 'img-name', title: img.name }, '🖼 ' + img.name));
+      if (fill && !img.name.startsWith('graph:')) row.append(
+        el('button', { class: 'img-btn', title: 'Replace the image', onclick: () => this.setFillChannelImage(fill, ch) }, '⟳'),
+        el('button', { class: 'img-btn', title: 'Remove the image (use a value)', onclick: () => this.removeFillChannelImage(fill, ch) }, '×'));
+      return row;
+    };
+    /** Fill layers: an image button on every channel row, and image files can be dropped on the row. */
+    const withImage = (ch: Ch, row: HTMLElement) => {
+      if (!fill || fill.images?.[ch]) return row;
+      row.append(el('button', { class: 'img-btn', title: `Use an image for ${CH_LABEL[ch]} (or drop one here)`, onclick: () => this.setFillChannelImage(fill, ch) }, '🖼'));
+      row.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); row.classList.add('drop-on'); } });
+      row.addEventListener('dragleave', () => row.classList.remove('drop-on'));
+      row.addEventListener('drop', (e) => {
+        const f = [...(e.dataTransfer?.files ?? [])].find((x) => /\.(png|jpe?g|webp|bmp)$/i.test(x.name));
+        row.classList.remove('drop-on');
+        if (!f) return;
+        e.preventDefault(); e.stopPropagation();
+        this.setFillChannelImage(fill, ch, f);
+      });
+      return row;
+    };
+    const colorRow = (ch: 'color' | 'emit', label: string) => {
+      const img = fill?.images?.[ch];
+      if (img) return imageRow(ch, label, img);
+      const input = el('input', { type: 'color', value: rgbToHex(values[ch]) }) as HTMLInputElement;
+      input.addEventListener('input', () => { pre(ch); values[ch] = hexToRgb(input.value); changed(); });
+      return withImage(ch, checkRow(ch, label, input));
+    };
+    const scalar = (ch: 'rough' | 'metal' | 'height', label: string) => {
+      const img = fill?.images?.[ch];
+      if (img) return imageRow(ch, label, img);
+      return withImage(ch, slider(label, {
+        min: 0, max: 1, step: 0.01, value: values[ch], onInput: (v) => { pre(ch); values[ch] = v; changed(); },
+        check: { value: enabled[ch], onChange: (v) => { pre('on:' + ch); enabled[ch] = v; changed(); } },
+      }).el);
+    };
+    const hasImages = !!fill && Object.keys(fill.images ?? {}).length > 0;
+    const nimg = fill?.images?.normal;
+    return group(fill ? `Material · ${fill.name}` : 'Material',
+      !fill && this.paintTarget === 'mask' ? el('p', { class: 'note warn' }, 'Painting the mask: the brush paints white (Paint) or black (Erase).') : null,
+      colorRow('color', 'Color'),
+      scalar('rough', 'Rough'), scalar('metal', 'Metal'), scalar('height', 'Height'),
+      colorRow('emit', 'Emissive'),
+      nimg ? imageRow('normal', 'Normal', nimg) : fill ? el('div', { class: 'row' }, el('label', {}, 'Normal'), el('button', { class: 'grow', onclick: () => this.setFillChannelImage(fill, 'normal') }, 'Load normal map…')) : null,
+      el('p', { class: 'note' }, fill
+        ? (hasImages ? 'Image fill from a texture set. Placement and adjustments are below.' : 'Covers the whole model (or only its mask). Tick the channels it affects.')
+        : 'Ticked channels are painted. Height 0.5 is flat; higher raises, lower carves. Emissive glows (black = none).'),
+    );
+  }
+
+  /** Substance-style fill settings for image materials: projection, UV transform, per-channel adjustments. */
+  private fillSettings(fill: FillLayer): HTMLElement[] {
+    const imgs = fill.images ?? {};
+    if (!Object.keys(imgs).length) return [];
+    const ts = this.ts;
+    const pre = (k: string) => ts.checkpoint(`Edit ${fill.name}`, `fillx:${fill.id}:${k}`);
+    const live = () => { ts.markDirty(); this.modified = true; };
+    const xf = () => (fill.xf ??= { ...DEFAULT_XF });
+    const adj = () => (fill.adj ??= structuredClone(DEFAULT_ADJ));
+    const x = fill.xf ?? DEFAULT_XF, a = fill.adj ?? DEFAULT_ADJ;
+    const sx = (label: string, key: 'rot' | 'offU' | 'offV' | 'sharp', min: number, max: number, step: number, fmt?: (v: number) => string) =>
+      slider(label, { min, max, step, value: x[key], fmt, onInput: (v) => { pre(key); xf()[key] = v; live(); } }).el;
+    type NumKey = { [K in keyof FillAdjust]: FillAdjust[K] extends number ? K : never }[keyof FillAdjust];
+    const sa = (label: string, key: NumKey, min: number, max: number, step: number, fmt?: (v: number) => string) =>
+      slider(label, { min, max, step, value: a[key], fmt, onInput: (v) => { pre(key); adj()[key] = v; live(); } }).el;
+    const proj = (p: 'uv' | 'tri', label: string) => el('button', { class: x.proj === p ? 'on' : '', onclick: () => { if (x.proj === p) return; pre('proj'); xf().proj = p; live(); this.buildProperties(); } }, label);
+    const placement = group('Projection',
+      el('div', { class: 'row' }, el('label', {}, 'Mode'), el('div', { class: 'seg grow' }, proj('uv', 'UV'), proj('tri', 'Tri-planar'))),
+      slider('Scale', { min: 0.25, max: 64, step: 0.25, value: fill.tiling, fmt: (v) => `${v}×`, onInput: (v) => { pre('tiling'); fill.tiling = v; live(); } }).el,
+      sx('Rotation', 'rot', 0, 360, 1, (v) => `${v.toFixed(0)}°`),
+      x.proj === 'uv' ? sx('Offset U', 'offU', -1, 1, 0.005, (v) => v.toFixed(3)) : null,
+      x.proj === 'uv' ? sx('Offset V', 'offV', -1, 1, 0.005, (v) => v.toFixed(3)) : null,
+      x.proj === 'tri' ? sx('Blend sharpness', 'sharp', 1, 24, 0.5, (v) => v.toFixed(1)) : null,
+      el('p', { class: 'note' }, x.proj === 'tri'
+        ? 'Tri-planar projects the material from 3 sides in 3D, so there are no visible UV seams and the scale is the same everywhere — like Substance\'s tri-planar fill.'
+        : 'Uses the model\'s UVs. Switch to Tri-planar if seams or stretching show.'),
+    );
+    const tint = el('input', { type: 'color', value: rgbToHex(a.tint) }) as HTMLInputElement;
+    tint.addEventListener('input', () => { pre('tint'); adj().tint = hexToRgb(tint.value); live(); });
+    const inv = el('input', { type: 'checkbox', checked: a.roughInv }) as HTMLInputElement;
+    inv.addEventListener('change', () => { pre('roughInv'); adj().roughInv = inv.checked; live(); });
+    const pct = (v: number) => Math.round(v * 100).toString();
+    const adjust = group('Adjustments',
+      imgs.color ? el('h5', {}, 'Base color') : null,
+      imgs.color ? sa('Hue', 'hue', -0.5, 0.5, 0.005, (v) => `${Math.round(v * 360)}°`) : null,
+      imgs.color ? sa('Saturation', 'sat', 0, 2, 0.01, pct) : null,
+      imgs.color ? sa('Brightness', 'bright', 0, 2, 0.01, pct) : null,
+      imgs.color ? sa('Contrast', 'contrast', 0, 2, 0.01, pct) : null,
+      imgs.color ? el('div', { class: 'row' }, el('label', {}, 'Tint'), tint) : null,
+      imgs.rough ? el('h5', {}, 'Roughness') : null,
+      imgs.rough ? sa('Min', 'roughMin', 0, 1, 0.01, pct) : null,
+      imgs.rough ? sa('Max', 'roughMax', 0, 1, 0.01, pct) : null,
+      imgs.rough ? el('label', { class: 'check-row', title: 'Use a glossiness map as roughness' }, inv, ' Invert (gloss → rough)') : null,
+      imgs.metal ? el('h5', {}, 'Metallic') : null,
+      imgs.metal ? sa('Min', 'metalMin', 0, 1, 0.01, pct) : null,
+      imgs.metal ? sa('Max', 'metalMax', 0, 1, 0.01, pct) : null,
+      imgs.height ? el('h5', {}, 'Height') : null,
+      imgs.height ? sa('Intensity', 'heightScale', -2, 4, 0.01, (v) => v.toFixed(2)) : null,
+      imgs.height ? sa('Offset', 'heightOff', -0.5, 0.5, 0.005, (v) => v.toFixed(3)) : null,
+      imgs.normal ? el('h5', {}, 'Normal') : null,
+      imgs.normal ? sa('Strength', 'normalStr', 0, 3, 0.01, (v) => v.toFixed(2)) : null,
+      imgs.emit ? el('h5', {}, 'Emissive') : null,
+      imgs.emit ? sa('Intensity', 'emitInt', 0, 10, 0.05, (v) => v.toFixed(2)) : null,
+      el('div', { class: 'row' }, el('label', {}, ''), el('button', { class: 'grow', onclick: () => {
+        pre('reset:' + Math.random()); fill.adj = structuredClone(DEFAULT_ADJ); fill.xf = { ...DEFAULT_XF }; fill.tiling = 1; live(); this.buildProperties();
+      } }, 'Reset placement & adjustments')),
+    );
+    return [placement, adjust];
+  }
+
+  /** Controls of one generator (the mask's main one or a stacked effect). */
+  private genControls(g: GenSettings, pre: (k: string) => void, live: () => void, kp: string): HTMLElement[] {
+    const out: HTMLElement[] = [];
+    const sl = (label: string, key: 'amount' | 'contrast', min: number, max: number, step: number) =>
+      slider(label, { min, max, step, value: g[key], onInput: (v) => { pre(kp + key); g[key] = v; live(); } }).el;
+    if (g.type === 'pattern') {
+      const ps = select<string>(PATTERNS.map((p) => ({ value: p, label: PATTERN_LABEL[p] })), g.pattern ?? 'grunge', (v) => { pre(kp + 'pat'); g.pattern = v as PatternType; live(); });
+      out.push(el('div', { class: 'row' }, el('label', {}, 'Pattern'), ps),
+        slider('Scale', { min: 0.25, max: 60, step: 0.25, value: g.scale ?? 3, fmt: (v) => v.toFixed(2), onInput: (v) => { pre(kp + 'scale'); g.scale = v; live(); } }).el,
+        sl('Balance', 'amount', 0, 1, 0.01), sl('Contrast', 'contrast', 0, 1, 0.01),
+        el('div', { class: 'row' }, el('label', {}, ''), el('button', { class: 'grow', onclick: () => { pre(kp + 'seed:' + Math.random()); g.seed = Math.round(Math.random() * 1000); live(); } }, 'New random seed')));
+    } else out.push(sl(g.type === 'gradient' ? 'Position' : 'Amount', 'amount', 0, 1, 0.01), sl('Contrast', 'contrast', 0, 1, 0.01));
+    if (g.type === 'gradient' || g.type === 'dust') {
+      const axes: Axis[] = ['x', 'y', 'z'];
+      const btns: HTMLButtonElement[] = axes.map((a) => el('button', { onclick: () => { pre(kp + 'axis'); g.axis = a; live(); btns.forEach((x, i) => x.classList.toggle('on', axes[i] === a)); } }, a.toUpperCase()));
+      btns.forEach((x, i) => x.classList.toggle('on', axes[i] === g.axis));
+      const flip = el('input', { type: 'checkbox', checked: g.flip }) as HTMLInputElement;
+      flip.addEventListener('change', () => { pre(kp + 'flip'); g.flip = flip.checked; live(); });
+      out.push(el('div', { class: 'row' }, el('label', {}, 'Direction'), el('div', { class: 'seg grow' }, ...btns), el('label', { class: 'inline' }, flip, ' Flip')));
+    }
+    const inv = el('input', { type: 'checkbox', checked: g.invert }) as HTMLInputElement;
+    inv.addEventListener('change', () => { pre(kp + 'invert'); g.invert = inv.checked; live(); });
+    out.push(el('label', { class: 'check-row' }, inv, ' Invert'));
+    return out;
+  }
+
+  private noiseControls(g: GenSettings, pre: (k: string) => void, live: () => void, kp: string): HTMLElement[] {
+    const sl = (label: string, key: 'noise' | 'noiseScale', min: number, max: number, step: number) =>
+      slider(label, { min, max, step, value: g[key], fmt: key === 'noiseScale' ? (v) => v.toFixed(1) : undefined, onInput: (v) => { pre(kp + key); g[key] = v; live(); } }).el;
+    return [sl('Noise', 'noise', 0, 1, 0.01), sl('Noise size', 'noiseScale', 0.5, 40, 0.5),
+      el('div', { class: 'row' }, el('label', {}, ''), el('button', { class: 'grow', onclick: () => { pre(kp + 'seed:' + Math.random()); g.seed = Math.round(Math.random() * 1000); live(); } }, 'New random seed'))];
+  }
+
+  private maskProps(layer: Layer): HTMLElement[] {
+    const ts = this.ts;
+    const m = layer.mask!;
+    const live = () => { ts.maskChanged(layer); this.modified = true; };
+    const pre = (k: string) => ts.checkpoint('Edit mask', `mask:${layer.id}:${k}`);
+    const out: HTMLElement[] = [];
+    const genSel = select<string>([{ value: '', label: 'None (paint only)' }, ...GEN_TYPES.map((t) => ({ value: t, label: GEN_LABEL[t] }))],
+      m.gen?.type ?? '', (v) => { pre('type'); const keep = m.gen ? { fx: m.gen.fx, outInvert: m.gen.outInvert } : {}; m.gen = v ? { ...defaultGen(v as GenType), ...keep } : null; live(); this.buildProperties(); });
+    const gen = group(`Generator · ${layer.name}`, el('div', { class: 'row' }, el('label', {}, 'Type'), genSel));
+    out.push(gen);
+    if (m.gen?.type === 'id') {
+      const g = m.gen;
+      const sw = el('div', { class: 'id-swatches' });
+      (g.colors ?? []).forEach((c, k) => {
+        const chip = el('span', { class: 'id-swatch', title: rgbToHex(c), style: { background: rgbToHex(c) } });
+        const x = el('button', { class: 'id-x', title: 'Remove this color', onclick: () => { pre('colors:' + Math.random()); g.colors = (g.colors ?? []).filter((_, i) => i !== k); live(); this.buildProperties(); } }, '×');
+        sw.append(el('span', { class: 'id-item' }, chip, x));
+      });
+      if (!(g.colors ?? []).length) sw.append(el('span', { class: 'muted' }, 'No colors picked yet'));
+      const inv = el('input', { type: 'checkbox', checked: g.invert }) as HTMLInputElement;
+      inv.addEventListener('change', () => { pre('invert'); g.invert = inv.checked; live(); });
+      const picking = this.idPick === layer.id;
+      gen.append(
+        sw,
+        el('div', { class: 'row' }, el('button', { class: 'grow' + (picking ? ' primary' : ''), onclick: () => {
+          if (this.idPick === layer.id) { this.idPick = -1; document.body.classList.remove('picking-id'); this.buildProperties(); return; }
+          this.idPick = layer.id; document.body.classList.add('picking-id');
+          if (this.view3 === 'material' && ts.baked.has('id')) { this.view2 = 'id'; this.applyViews(); }
+          toast('Click a part of the model (3D or 2D view) to add its ID color');
+          this.buildProperties();
+        } }, picking ? 'Click the model… (cancel)' : 'Pick color from model')),
+        slider('Tolerance', { min: 0.01, max: 0.5, step: 0.01, value: g.tolerance ?? 0.1, fmt: (v) => v.toFixed(2), onInput: (v) => { pre('tol'); g.tolerance = v; live(); } }).el,
+        el('label', { class: 'check-row' }, inv, ' Invert'),
+        el('p', { class: 'note' }, 'Shows the layer only where the ID map has the picked colors (like Substance\'s Color Selection). Bake the ID map in the Baking tab first; the 2D view can show it (ID map).'),
+      );
+      if (!ts.baked.has('id')) out.push(el('div', { class: 'note warn' }, 'The ID map isn\'t baked yet. ',
+        el('button', { class: 'link', onclick: () => { this.bakeItem = 'id'; this.setMode('bake'); } }, 'Go to Baking')));
+    } else if (m.gen) {
+      const g = m.gen;
+      gen.append(...this.genControls(g, pre, live, 'g'));
+      if (g.type !== 'pattern') out.push(group('Grunge breakup', ...this.noiseControls(g, pre, live, 'g')));
+      // Effect stack (Substance's mask layers / TextureCraft's effects): more generators and patterns blended on top.
+      const fxBox = group('Mask effects', el('p', { class: 'note' }, 'Stack more generators and patterns on the one above (bottom → top). Multiply cuts away, Lighten adds more.'));
+      (g.fx ?? []).forEach((e, k) => {
+        const kp = `fx${k}`;
+        const typeSel = select<string>([...GEN_TYPES.filter((t) => t !== 'id').map((t) => ({ value: t, label: GEN_LABEL[t] }))], e.type,
+          (v) => { pre(kp + 'type'); const ne: MaskFx = { ...defaultGen(v as GenType), blend: e.blend, opacity: e.opacity, on: e.on }; g.fx![k] = ne; live(); this.buildProperties(); });
+        const blendSel = select<string>(FX_BLENDS.map((b) => ({ value: b, label: FX_BLEND_LABEL[b] })), e.blend, (v) => { pre(kp + 'blend'); e.blend = v as MaskFx['blend']; live(); });
+        const on = el('input', { type: 'checkbox', checked: e.on !== false, title: 'Enabled' }) as HTMLInputElement;
+        on.addEventListener('change', () => { pre(kp + 'on'); e.on = on.checked; live(); });
+        const head = el('div', { class: 'fx-head' }, on, el('b', { class: 'grow' }, `${k + 1}. ${e.type === 'pattern' ? PATTERN_LABEL[e.pattern ?? 'grunge'] : GEN_LABEL[e.type]}`),
+          el('button', { title: 'Move up', disabled: k === g.fx!.length - 1, onclick: () => { pre('order:' + Math.random()); const f = g.fx!; [f[k], f[k + 1]] = [f[k + 1], f[k]]; live(); this.buildProperties(); } }, '▲'),
+          el('button', { title: 'Move down', disabled: k === 0, onclick: () => { pre('order:' + Math.random()); const f = g.fx!; [f[k], f[k - 1]] = [f[k - 1], f[k]]; live(); this.buildProperties(); } }, '▼'),
+          el('button', { title: 'Remove this effect', onclick: () => { pre('rm:' + Math.random()); g.fx!.splice(k, 1); if (!g.fx!.length) g.fx = undefined; live(); this.buildProperties(); } }, '×'));
+        const box = el('div', { class: 'fx-item' + (e.on === false ? ' dim' : '') }, head,
+          el('div', { class: 'row' }, el('label', {}, 'Type'), typeSel),
+          el('div', { class: 'row' }, el('label', {}, 'Blend'), blendSel),
+          slider('Opacity', { min: 0, max: 1, step: 0.01, value: e.opacity, fmt: (v) => Math.round(v * 100) + '%', onInput: (v) => { pre(kp + 'op'); e.opacity = v; live(); } }).el,
+          ...this.genControls(e, pre, live, kp),
+          ...(e.type !== 'pattern' && e.type !== 'noise' ? this.noiseControls(e, pre, live, kp) : []));
+        fxBox.append(box);
+      });
+      const addSel = select<string>([{ value: '', label: '+ Add effect…' },
+        ...PATTERNS.map((p) => ({ value: 'p:' + p, label: 'Pattern: ' + PATTERN_LABEL[p] })),
+        ...GEN_TYPES.filter((t) => t !== 'id' && t !== 'pattern').map((t) => ({ value: 'g:' + t, label: 'Generator: ' + GEN_LABEL[t] }))], '', (v) => {
+        if (!v) return;
+        pre('add:' + Math.random());
+        const base = v.startsWith('p:') ? { ...defaultGen('pattern'), pattern: v.slice(2) as PatternType } : defaultGen(v.slice(2) as GenType);
+        (g.fx ??= []).push({ ...base, blend: 'multiply', opacity: 1 });
+        live(); this.buildProperties();
+      });
+      const outInv = el('input', { type: 'checkbox', checked: !!g.outInvert }) as HTMLInputElement;
+      outInv.addEventListener('change', () => { pre('outInv'); g.outInvert = outInv.checked; live(); });
+      const presetSel = select<string>([{ value: '', label: 'Load a smart mask preset…' }, ...SMART_MASKS.map((p) => ({ value: p.id, label: p.label }))], '',
+        (v) => { if (v) this.applySmartMaskTo(layer, v); this.buildProperties(); });
+      fxBox.append(el('div', { class: 'row' }, addSel), el('label', { class: 'check-row' }, outInv, ' Invert the whole mask'), el('div', { class: 'row' }, presetSel));
+      out.push(fxBox);
+      const need: Partial<Record<GenType, BakeKey>> = { edge: 'curv', dirt: 'ao', ao: 'ao', curvature: 'curv', thick: 'thick', id: 'id' };
+      const nk = [g, ...(g.fx ?? [])].map((e) => need[e.type]).find((k) => k && !ts.baked.has(k));
+      if (ts.baking) out.push(el('p', { class: 'note warn' }, 'Mesh maps are baking — this mask updates when they finish.'));
+      else if (nk) out.push(el('div', { class: 'note warn' }, `This mask needs the ${BAKE_ITEMS.find(([k]) => k === nk)![1]} map, which isn't baked yet. `,
+        el('button', { class: 'link', onclick: () => { this.bakeItem = nk; this.setMode('bake'); } }, 'Go to Baking')));
+    } else {
+      const w = el('button', { onclick: () => { if (m.base === 'white') return; pre('base:' + Math.random()); m.base = 'white'; live(); w.classList.add('on'); bk.classList.remove('on'); } }, 'White');
+      const bk = el('button', { onclick: () => { if (m.base === 'black') return; pre('base:' + Math.random()); m.base = 'black'; live(); bk.classList.add('on'); w.classList.remove('on'); } }, 'Black');
+      (m.base === 'white' ? w : bk).classList.add('on');
+      gen.append(el('div', { class: 'row' }, el('label', {}, 'Start as'), el('div', { class: 'seg grow' }, w, bk)));
+    }
+    out.push(group('Mask paint',
+      el('p', { class: 'note' }, 'With the mask selected, the brush paints the mask: Paint shows the layer (white), Erase hides it (black).'),
+      el('div', { class: 'seg' },
+        el('button', { class: this.view3 === 'mask' ? 'on' : '', onclick: () => { const on = this.view3 !== 'mask'; this.view3 = on ? 'mask' : 'material'; this.view2 = on ? 'mask' : 'material'; this.applyViews(); this.buildProperties(); } }, 'View mask'),
+        el('button', { disabled: !m.painted, onclick: () => { ts.clearMaskPaint(layer); this.modified = true; this.buildProperties(); } }, 'Clear paint'),
+        el('button', { onclick: () => { ts.removeMask(layer); this.paintTarget = 'content'; this.modified = true; if (this.view3 === 'mask') this.setView('material'); } }, 'Remove mask'),
+      ),
+    ));
+    return out;
+  }
+
+  refresh() {
+    if (this.historyOpen) this.buildHistory();
+    const layer = this.ts.activeLayer;
+    if (this.paintTarget === 'mask' && !layer?.mask) this.paintTarget = 'content';
+    if (this.view3 === 'mask' || this.view2 === 'mask') this.applyViews();
+    if (this.mode === 'paint') this.buildRight();
+    this.buildToolstrip();
+    this.buildToolbar();
+    this.buildStatus();
+  }
+
+  // ================================================================ collapsible groups
+
+  private collapsed = new Set<string>(((): string[] => {
+    try { return JSON.parse(localStorage.getItem('tp-collapsed2') ?? '[]'); } catch { return []; }
+  })());
+
+  private initCollapsible() {
+    const key = (h: Element) => (h.textContent ?? '').trim().split(' · ')[0];
+    document.addEventListener('click', (e) => {
+      const h = (e.target as HTMLElement).closest('.group > h4');
+      if (!h) return;
+      const g = h.parentElement!;
+      g.classList.toggle('collapsed');
+      const k = key(h);
+      if (g.classList.contains('collapsed')) this.collapsed.add(k); else this.collapsed.delete(k);
+      try { localStorage.setItem('tp-collapsed2', JSON.stringify([...this.collapsed])); } catch { /* private mode */ }
+    });
+    const apply = (root: ParentNode) => root.querySelectorAll('.group > h4').forEach((h) => {
+      if (this.collapsed.has(key(h))) h.parentElement!.classList.add('collapsed');
+    });
+    const obs = new MutationObserver((muts) => { for (const m of muts) m.addedNodes.forEach((n) => { if (n instanceof HTMLElement) apply(n.parentElement ?? n); }); });
+    for (const id of ['shelf', 'right', 'viewport']) obs.observe(document.getElementById(id)!, { childList: true, subtree: true });
+  }
+
+  // ================================================================ export
+
+  openExport() {
+    const dlg = document.getElementById('export-dialog') as HTMLDialogElement;
+    dlg.innerHTML = '';
+    let preset = PRESETS.find((p) => p.id === this.exportPreset) ?? PRESETS[0];
+    let size = this.ts.size;
+    let base = this.model.name.replace(/[^\w\-]+/g, '_') || 'texture';
+    const note = el('p', { class: 'note' });
+    const sizeNote = el('p', { class: 'note' });
+    const updNotes = () => {
+      note.textContent = preset.note ?? '';
+      const eff = preset.maxSize ? Math.min(size, preset.maxSize) : size;
+      sizeNote.textContent = eff !== size ? `Will export at ${eff} px (preset limit).` : '';
+    };
+    const nameInput = el('input', { type: 'text', value: base, class: 'grow' }) as HTMLInputElement;
+    nameInput.addEventListener('input', () => (base = nameInput.value.trim() || 'texture'));
+    const go = el('button', { class: 'primary' }, 'Export to folder…');
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      try {
+        const files = await exportMaps(this.ts, preset, base, size, this.ts.heightStrength);
+        const msg = await saveFiles(files);
+        if (msg !== 'cancelled') { dlg.close(); toast(msg); }
+      } catch (e: any) {
+        console.error(e); toast('Export failed: ' + (e?.message ?? e), true);
+      } finally { go.disabled = false; }
+    });
+    dlg.append(
+      el('header', {}, 'Export textures'),
+      el('div', { class: 'body' },
+        el('div', { class: 'row' }, el('label', {}, 'Output template'), select(PRESETS.map((p) => ({ value: p.id, label: p.label })), preset.id, (v) => {
+          preset = PRESETS.find((p) => p.id === v)!; this.exportPreset = v; updNotes();
+        })),
+        note,
+        el('div', { class: 'row' }, el('label', {}, 'Size'), select([512, 1024, 2048, 4096].map((r) => ({ value: r, label: `${r} × ${r}` })), size, (v) => { size = v; updNotes(); })),
+        sizeNote,
+        el('div', { class: 'row' }, el('label', {}, 'File name'), nameInput),
+        slider('Height → normal', { min: 0, max: 30, step: 0.5, value: this.ts.heightStrength, fmt: (v) => v.toFixed(1), onInput: (v) => this.ts.setHeightStrength(v) }).el,
+      ),
+      el('footer', {}, el('button', { onclick: () => dlg.close() }, 'Cancel'), go),
+    );
+    updNotes();
+    dlg.showModal();
+  }
+
+  // ================================================================ test hooks
+
+  async exportForTest(presetId: string, size?: number) {
+    const p = PRESETS.find((x) => x.id === presetId)!;
+    const files = await exportMaps(this.ts, p, 'test', size ?? this.ts.size, this.ts.heightStrength);
+    const out: Record<string, string> = {};
+    for (const f of files) out[f.name] = toB64(new Uint8Array(await f.blob.arrayBuffer()));
+    return out;
+  }
+  async projectForTest() {
+    const blob = await serializeProject(this.ts, this.model.name, this.model.source, this.projectSettings());
+    return await blob.text();
+  }
+  /** Render one view flat to a PNG (base64). */
+  async viewForTest(v: ViewMode, size = 512) {
+    this.ts.compositeDirty();
+    const src = this.viewSource(v) ?? { tex: this.ts.final.color.texture, mode: 0 as const };
+    const rt = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false });
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: 'uniform sampler2D t; uniform int m; varying vec2 vUv; void main(){ vec3 c = texture2D(t, vUv).rgb; if (m==3) c = mix(vec3(0.92,0.18,0.12), vec3(0.16,0.42,0.95), step(0.5, c.g)); gl_FragColor = vec4(m==1?vec3(c.r):m==2?vec3(c.g):m==4?vec3(c.b):c, 1.0); }',
+      uniforms: { t: { value: src.tex }, m: { value: src.mode } },
+      depthTest: false, depthWrite: false,
+    });
+    this.gpu.run(mat, rt);
+    const px = this.gpu.readPixels(rt);
+    rt.dispose(); mat.dispose();
+    return toB64(new Uint8Array(await (await pixelsToPng(px, size)).arrayBuffer()));
+  }
+}
+
+const app = new App();
+app.newDefaultLayers();
+(window as any).__tp = app;

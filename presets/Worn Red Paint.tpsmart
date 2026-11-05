@@ -1,0 +1,131 @@
+{
+  "format": "texpaint-smart",
+  "version": 1,
+  "name": "Worn Red Paint",
+  "layers": [
+    {
+      "kind": "fill",
+      "name": "Bare steel",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.56,
+          0.57,
+          0.58
+        ],
+        "rough": 0.38,
+        "metal": 1,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {}
+    },
+    {
+      "kind": "fill",
+      "name": "Red paint",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.62,
+          0.08,
+          0.06
+        ],
+        "rough": 0.45,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "edge",
+          "amount": 0.42,
+          "contrast": 0.75,
+          "noise": 0.5,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": true,
+          "seed": 41
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Grime",
+      "visible": true,
+      "opacity": 0.8,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.17,
+          0.13,
+          0.1
+        ],
+        "rough": 0.9,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "dirt",
+          "amount": 0.42,
+          "contrast": 0.4,
+          "noise": 0.45,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 5
+        }
+      }
+    }
+  ]
+}

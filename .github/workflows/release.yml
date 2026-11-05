@@ -1,0 +1,82 @@
+# Builds the Windows app on GitHub's servers and publishes it as a Release.
+# Runs when the app changes on main, or by hand (Actions > Build LMP release > Run workflow).
+name: Build LMP release
+
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'presets/**', 'source/src/version.ts', 'tools/**', '.github/workflows/release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ELECTRON_VERSION: '33.2.1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Read version
+        id: ver
+        run: |
+          V=$(grep -oP "VERSION = '\K[0-9.]+" source/src/version.ts)
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+          echo "LMP version $V"
+
+      - name: Download Electron
+        run: |
+          curl -fsSL -o electron.zip "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-win32-x64.zip"
+          mkdir -p build/LMP
+          unzip -q electron.zip -d build/LMP
+
+      - name: Put LMP together
+        run: |
+          L=build/LMP
+          mv "$L/electron.exe" "$L/LMP.exe"
+          rm -f "$L/resources/default_app.asar"
+          mkdir -p "$L/resources/app" "$L/licenses"
+          cp app/* "$L/resources/app/"
+          mv "$L/LICENSE" "$L/licenses/LICENSE-Electron.txt"
+          mv "$L/LICENSES.chromium.html" "$L/licenses/LICENSES-Chromium.html"
+          cp licenses/* "$L/licenses/"
+          cp lmp.ico lmp-file.ico README.md "$L/"
+          cp -r presets "$L/presets"
+          cp -r source "$L/source"
+
+      - name: Set the LMP icon and file info (owned by H9_zy)
+        run: |
+          cd tools && npm ci --silent && cd ..
+          node tools/seticon.mjs build/LMP/LMP.exe lmp.ico build/LMP/LMP.exe "${{ steps.ver.outputs.v }}"
+
+      - name: Zip
+        run: |
+          V="${{ steps.ver.outputs.v }}"
+          cd build
+          zip -qr -9 "../LMP-v$V.zip" LMP
+          zip -qr -9 "../LMP-v$V-update.zip" LMP/resources/app LMP/README.md LMP/source
+          cd ..
+          ls -lh LMP-v*.zip
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.ver.outputs.v }}"
+          NOTES="LMP (Leo's Material Painter) v$V for Windows 10/11, 64-bit. Owned by H9_zy.
+
+          **New install:** download LMP-v$V.zip, extract it anywhere (for example D:\\LMP) and open LMP.exe. Nothing needs installing.
+
+          **Already have LMP:** download the small LMP-v$V-update.zip, extract it into the folder that holds your LMP folder and replace files when Windows asks."
+          if gh release view "v$V" >/dev/null 2>&1; then
+            gh release upload "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" --clobber
+          else
+            gh release create "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" --title "LMP v$V" --notes "$NOTES" --latest
+          fi

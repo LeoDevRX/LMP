@@ -1,0 +1,24 @@
+{
+  "name": "texpaint",
+  "version": "0.1.0",
+  "description": "",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "7z-wasm": "^1.2.0",
+    "jsfive": "^0.4.2",
+    "three": "^0.187.0",
+    "three-mesh-bvh": "^0.9.17"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vite-plugin-singlefile": "^2.3.4"
+  },
+  "private": true,
+  "type": "module"
+}

@@ -1,0 +1,2 @@
+Texture sets and HDRIs from Poly Haven (https://polyhaven.com), released under CC0 (public domain).
+Texture maps downscaled to 1024 x 1024 for TexPaint. Picked from the asset set bundled with Material Painter.

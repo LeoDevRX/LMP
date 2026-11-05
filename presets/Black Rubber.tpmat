@@ -1,0 +1,27 @@
+{
+  "format": "texpaint-material",
+  "version": 1,
+  "name": "Black Rubber",
+  "values": {
+    "color": [
+      0.07,
+      0.07,
+      0.07
+    ],
+    "rough": 0.9,
+    "metal": 0,
+    "height": 0.5,
+    "emit": [
+      0,
+      0,
+      0
+    ]
+  },
+  "enabled": {
+    "color": true,
+    "rough": true,
+    "metal": true,
+    "height": false,
+    "emit": true
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "format": "texpaint-smart",
+  "version": 1,
+  "name": "Rusty Iron",
+  "layers": [
+    {
+      "kind": "fill",
+      "name": "Iron",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.45,
+          0.45,
+          0.46
+        ],
+        "rough": 0.55,
+        "metal": 1,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {}
+    },
+    {
+      "kind": "fill",
+      "name": "Rust patches",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.42,
+          0.2,
+          0.09
+        ],
+        "rough": 0.88,
+        "metal": 0,
+        "height": 0.46,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": true,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "noise",
+          "amount": 0.5,
+          "contrast": 0.55,
+          "noise": 0,
+          "noiseScale": 4.5,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 88
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Rust in cavities",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.33,
+          0.15,
+          0.06
+        ],
+        "rough": 0.95,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "dirt",
+          "amount": 0.5,
+          "contrast": 0.45,
+          "noise": 0.4,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 12
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Polished edges",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.72,
+          0.72,
+          0.74
+        ],
+        "rough": 0.22,
+        "metal": 1,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "edge",
+          "amount": 0.35,
+          "contrast": 0.8,
+          "noise": 0.35,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 3
+        }
+      }
+    }
+  ]
+}

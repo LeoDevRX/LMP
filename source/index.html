@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LMP — Leo's Material Painter</title>
+</head>
+<body>
+  <div id="splash">
+    <div class="splash-card">
+      <div class="splash-logo"></div>
+      <div class="splash-title">LMP</div>
+      <div class="splash-sub">Leo's Material Painter</div>
+      <div class="splash-track"><div id="splash-bar"></div></div>
+      <div id="splash-text">Starting…</div>
+      <div id="splash-ver"></div>
+    </div>
+  </div>
+  <div id="app" class="mode-paint">
+    <header id="menubar">
+      <div class="brand" title="Leo's Material Painter"><span class="logo"></span>LMP<span class="ver" id="brand-ver"></span></div>
+      <nav class="menus" id="menus"></nav>
+      <span class="spacer"></span>
+      <div class="mode-tabs" id="mode-tabs"></div>
+    </header>
+    <nav id="toolstrip"></nav>
+    <aside id="shelf" class="dock-col"></aside>
+    <div id="toolbar"></div>
+    <main id="viewport">
+      <div id="drop-hint">Drop a model (GLB, FBX, OBJ), an .hdr, a .tpaint project, or preset files</div>
+      <div id="toast"></div>
+    </main>
+    <aside id="right" class="dock-col"></aside>
+    <nav id="sidestrip"></nav>
+    <footer id="status">
+      <span id="status-model"></span>
+      <span id="status-bake"></span>
+      <span id="status-hints"></span>
+    </footer>
+  </div>
+  <dialog id="export-dialog"></dialog>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

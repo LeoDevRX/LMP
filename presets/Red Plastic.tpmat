@@ -1,0 +1,27 @@
+{
+  "format": "texpaint-material",
+  "version": 1,
+  "name": "Red Plastic",
+  "values": {
+    "color": [
+      0.75,
+      0.1,
+      0.08
+    ],
+    "rough": 0.35,
+    "metal": 0,
+    "height": 0.5,
+    "emit": [
+      0,
+      0,
+      0
+    ]
+  },
+  "enabled": {
+    "color": true,
+    "rough": true,
+    "metal": true,
+    "height": false,
+    "emit": true
+  }
+}

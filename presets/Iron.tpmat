@@ -1,0 +1,27 @@
+{
+  "format": "texpaint-material",
+  "version": 1,
+  "name": "Iron",
+  "values": {
+    "color": [
+      0.56,
+      0.57,
+      0.58
+    ],
+    "rough": 0.48,
+    "metal": 1,
+    "height": 0.5,
+    "emit": [
+      0,
+      0,
+      0
+    ]
+  },
+  "enabled": {
+    "color": true,
+    "rough": true,
+    "metal": true,
+    "height": false,
+    "emit": true
+  }
+}

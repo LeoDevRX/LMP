@@ -1,0 +1,27 @@
+{
+  "format": "texpaint-material",
+  "version": 1,
+  "name": "Gold",
+  "values": {
+    "color": [
+      1.0,
+      0.86,
+      0.57
+    ],
+    "rough": 0.28,
+    "metal": 1,
+    "height": 0.5,
+    "emit": [
+      0,
+      0,
+      0
+    ]
+  },
+  "enabled": {
+    "color": true,
+    "rough": true,
+    "metal": true,
+    "height": false,
+    "emit": true
+  }
+}

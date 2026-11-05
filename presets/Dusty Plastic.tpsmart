@@ -1,0 +1,131 @@
+{
+  "format": "texpaint-smart",
+  "version": 1,
+  "name": "Dusty Plastic",
+  "layers": [
+    {
+      "kind": "fill",
+      "name": "Blue plastic",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.15,
+          0.35,
+          0.6
+        ],
+        "rough": 0.4,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {}
+    },
+    {
+      "kind": "fill",
+      "name": "Scuffs",
+      "visible": true,
+      "opacity": 0.6,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.3,
+          0.48,
+          0.7
+        ],
+        "rough": 0.65,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "edge",
+          "amount": 0.3,
+          "contrast": 0.6,
+          "noise": 0.6,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 7
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Dust",
+      "visible": true,
+      "opacity": 0.85,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.72,
+          0.7,
+          0.66
+        ],
+        "rough": 0.95,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "dust",
+          "amount": 0.4,
+          "contrast": 0.45,
+          "noise": 0.55,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 33
+        }
+      }
+    }
+  ]
+}

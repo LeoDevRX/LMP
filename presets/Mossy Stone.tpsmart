@@ -1,0 +1,131 @@
+{
+  "format": "texpaint-smart",
+  "version": 1,
+  "name": "Mossy Stone",
+  "layers": [
+    {
+      "kind": "fill",
+      "name": "Stone",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.45,
+          0.43,
+          0.4
+        ],
+        "rough": 0.85,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {}
+    },
+    {
+      "kind": "fill",
+      "name": "Dirt",
+      "visible": true,
+      "opacity": 0.7,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.16,
+          0.13,
+          0.1
+        ],
+        "rough": 0.95,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "ao",
+          "amount": 0.35,
+          "contrast": 0.4,
+          "noise": 0.3,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 2
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Moss",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.2,
+          0.34,
+          0.1
+        ],
+        "rough": 0.95,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "dust",
+          "amount": 0.42,
+          "contrast": 0.55,
+          "noise": 0.6,
+          "noiseScale": 7,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 77
+        }
+      }
+    }
+  ]
+}
