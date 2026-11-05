@@ -1,17 +1,232 @@
 {
-  "note": "Which CC0 scans LMP offers (ambientCG, sorted by popularity). Edit and push to rebuild the materials release.",
+  "note": "Which CC0 scans and grunges LocalPaint offers (ambientCG, sorted by popularity). Edit and push to rebuild the materials release. \"build\" picks what to rebuild.",
   "size": "2K-JPG",
   "categories": [
-    { "cat": "Metal", "queries": ["metal"], "count": 14 },
-    { "cat": "Rust", "queries": ["rust"], "count": 8 },
-    { "cat": "Painted metal", "queries": ["painted metal"], "count": 10 },
-    { "cat": "Metal plates & sci-fi", "queries": ["metal plates", "diamond plate", "sheet metal", "corrugated steel"], "count": 14 },
-    { "cat": "Wood", "queries": ["wood", "planks"], "count": 12 },
-    { "cat": "Stone & concrete", "queries": ["concrete", "rock", "marble"], "count": 12 },
-    { "cat": "Bricks & tiles", "queries": ["bricks", "tiles", "paving stones"], "count": 12 },
-    { "cat": "Ground", "queries": ["ground", "gravel", "snow"], "count": 8 },
-    { "cat": "Fabric & leather", "queries": ["fabric", "leather", "carpet"], "count": 12 },
-    { "cat": "Plastic & rubber", "queries": ["plastic", "rubber"], "count": 6 },
-    { "cat": "Paint & plaster", "queries": ["painted plaster", "paint"], "count": 6 }
+    {
+      "cat": "Metal",
+      "queries": [
+        "metal"
+      ],
+      "count": 14
+    },
+    {
+      "cat": "Rust",
+      "queries": [
+        "rust"
+      ],
+      "count": 8
+    },
+    {
+      "cat": "Painted metal",
+      "queries": [
+        "painted metal"
+      ],
+      "count": 10
+    },
+    {
+      "cat": "Metal plates & sci-fi",
+      "queries": [
+        "metal plates",
+        "diamond plate",
+        "sheet metal",
+        "corrugated steel"
+      ],
+      "count": 14
+    },
+    {
+      "cat": "Wood",
+      "queries": [
+        "wood",
+        "planks"
+      ],
+      "count": 12
+    },
+    {
+      "cat": "Stone & concrete",
+      "queries": [
+        "concrete",
+        "rock",
+        "marble"
+      ],
+      "count": 12
+    },
+    {
+      "cat": "Bricks & tiles",
+      "queries": [
+        "bricks",
+        "tiles",
+        "paving stones"
+      ],
+      "count": 12
+    },
+    {
+      "cat": "Ground",
+      "queries": [
+        "ground",
+        "gravel",
+        "snow"
+      ],
+      "count": 8
+    },
+    {
+      "cat": "Fabric & leather",
+      "queries": [
+        "fabric",
+        "leather",
+        "carpet"
+      ],
+      "count": 12
+    },
+    {
+      "cat": "Plastic & rubber",
+      "queries": [
+        "plastic",
+        "rubber"
+      ],
+      "count": 6
+    },
+    {
+      "cat": "Paint & plaster",
+      "queries": [
+        "painted plaster",
+        "paint"
+      ],
+      "count": 6
+    }
+  ],
+  "build": [
+    "grunges"
+  ],
+  "grunge_size": "2K-JPG",
+  "grunges": [
+    {
+      "cat": "spots",
+      "queries": [
+        "surface imperfections spots",
+        "surface imperfections"
+      ],
+      "prefix": [
+        "SurfaceImperfections"
+      ],
+      "count": 8
+    },
+    {
+      "cat": "soft",
+      "queries": [
+        "surface imperfections",
+        "imperfections"
+      ],
+      "prefix": [
+        "SurfaceImperfections"
+      ],
+      "count": 12
+    },
+    {
+      "cat": "stains",
+      "queries": [
+        "stains",
+        "water stains",
+        "surface imperfections"
+      ],
+      "prefix": [
+        "SurfaceImperfections",
+        "Smear",
+        "Leaking"
+      ],
+      "count": 8
+    },
+    {
+      "cat": "scratches",
+      "queries": [
+        "scratches"
+      ],
+      "prefix": [
+        "Scratches",
+        "SurfaceImperfections"
+      ],
+      "count": 8
+    },
+    {
+      "cat": "fingerprints",
+      "queries": [
+        "fingerprints"
+      ],
+      "prefix": [
+        "Fingerprints"
+      ],
+      "count": 6
+    },
+    {
+      "cat": "smear",
+      "queries": [
+        "smear"
+      ],
+      "prefix": [
+        "Smear"
+      ],
+      "count": 8
+    },
+    {
+      "cat": "leaks",
+      "queries": [
+        "leaking",
+        "leak"
+      ],
+      "prefix": [
+        "Leaking"
+      ],
+      "count": 8
+    },
+    {
+      "cat": "chips",
+      "queries": [
+        "chip",
+        "chipped paint",
+        "paint peeling"
+      ],
+      "prefix": [
+        "Chip",
+        "PaintedMetal",
+        "PaintedPlaster"
+      ],
+      "count": 6
+    },
+    {
+      "cat": "rust",
+      "queries": [
+        "rust"
+      ],
+      "prefix": [
+        "Rust",
+        "Metal"
+      ],
+      "count": 6
+    },
+    {
+      "cat": "concrete",
+      "queries": [
+        "concrete",
+        "plaster"
+      ],
+      "prefix": [
+        "Concrete",
+        "Plaster"
+      ],
+      "count": 6
+    },
+    {
+      "cat": "dust",
+      "queries": [
+        "dust",
+        "dirt",
+        "surface imperfections"
+      ],
+      "prefix": [
+        "SurfaceImperfections",
+        "Ground",
+        "Smear"
+      ],
+      "count": 6
+    }
   ]
 }

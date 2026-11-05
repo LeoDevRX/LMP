@@ -30,7 +30,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="Scanned materials for LocalPaint. LocalPaint downloads these by itself when you use one, so you don't need to download anything here. All materials are CC0 from ambientCG.com."
+          NOTES="Scanned materials and grunge maps for LocalPaint. LocalPaint downloads these by itself when you use one, so you don't need to download anything here. Everything here is CC0 from ambientCG.com."
           if ! gh release view materials >/dev/null 2>&1; then
             gh release create materials --title "Scanned materials (used by LocalPaint)" --notes "$NOTES" --target "$GITHUB_SHA" --latest=false
           fi
