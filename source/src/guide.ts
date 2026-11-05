@@ -85,6 +85,8 @@ export const GUIDES: Guide[] = [
       { p: `LMP (Leo's Material Painter), version ${VERSION}.` },
       { p: 'This program is owned by **H9_zy**.' },
       { p: 'A personal and free alternative to paid material painting programs. Made with three.js and Electron.' },
+      { p: 'LMP isn\'t made by, affiliated with or endorsed by Adobe. Substance, Substance 3D Painter and Substance 3D Designer are trademarks of Adobe; they\'re named only to say which files LMP can open. LMP doesn\'t include any Adobe software or Substance materials.' },
+      { p: 'Scanned materials come from ambientCG and the HDR environments from Poly Haven, both CC0. Open-source licenses are in the licenses folder next to LMP.exe.' },
     ],
   },
 

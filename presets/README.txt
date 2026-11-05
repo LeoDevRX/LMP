@@ -14,5 +14,5 @@ What goes here
   "HDRI (Poly Haven)" has 10 free CC0 HDRIs.
 - Material Designer graphs (.tpgraph) and custom nodes (.tpnode): made in the Material Designer tab.
 - Brushes (.tpbrush), and pictures inside a "brushes" folder become brush tips.
-- Substance files: .sbsar and .spsm are translated into TexPaint materials when you click them
-  (see the "Substance" folder for samples). .spp / .sppr can't be read.
+- Substance files: put your own .sbsar / .spsm files here and they show up under Substance materials.
+  Only use files you have the rights to. .spp / .sppr can't be read.

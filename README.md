@@ -25,3 +25,12 @@ I built LMP with help from Claude Opus 5.5, an AI model by Anthropic, to make my
 
 - **New install:** download `LMP-vX.XX.zip`, extract it anywhere (for example `D:\LMP`) and open `LMP.exe`. Nothing needs installing.
 - **Already have LMP:** click **Update** in LMP when it tells you there's a new version. You can also download the small `LMP-vX.XX-update.zip`, extract it into the folder that holds your LMP folder and replace files when Windows asks.
+
+## Notes
+
+LMP is an independent project. It isn't made by, affiliated with or endorsed by Adobe. Substance, Substance 3D Painter and Substance 3D Designer are trademarks of Adobe; they're mentioned only to say which files LMP can open.
+
+LMP doesn't include any Adobe software or Substance materials. If you open your own .sbsar files and have Substance 3D Designer installed, LMP uses the copy of Adobe's renderer that's already on your PC.
+
+The scanned materials (ambientCG) and HDR environments (Poly Haven) are CC0. Other open-source parts and their licenses are listed in the `licenses` folder.
+
