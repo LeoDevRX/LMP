@@ -1,6 +1,6 @@
 /**
  * Export templates (like Substance Painter's "Output templates"): each output map is a file whose
- * channels are filled from LMP's channels, the baked mesh maps or converted maps
+ * channels are filled from LocalPaint's channels, the baked mesh maps or converted maps
  * (glossiness, diffuse, specular, DirectX normal…). Built-in templates cover the usual engines and
  * renderers; users can make their own.
  */

@@ -1,7 +1,7 @@
 /**
- * LMP's own versions of Substance graphs, run on the GPU with the baked mesh maps.
+ * LocalPaint's own versions of Substance graphs, run on the GPU with the baked mesh maps.
  *
- *  - Graphs LMP knows (matched by name / parameters) get a shader written for them,
+ *  - Graphs LocalPaint knows (matched by name / parameters) get a shader written for them,
  *    so every slider does what it does in Painter.
  *  - Any other graph gets a live approximation: its parameters are sorted into roles
  *    (base color, edge wear, dirt, roughness, scale …) by name, and drive a layered

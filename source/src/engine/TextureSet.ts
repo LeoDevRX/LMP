@@ -129,7 +129,7 @@ interface LayerCommon {
 export interface PaintLayer extends LayerCommon { kind: 'paint'; rts: Record<Ch, RT> }
 /** An image (from a texture set) that drives one channel of a fill layer. */
 export interface FillImage { name: string; bytes: ArrayBuffer; tex: THREE.Texture; flipG?: boolean; /** Graph outputs render into this. */ rt?: THREE.WebGLRenderTarget }
-/** A scanned material (LMP's materials release) used by a fill layer; `use` = which of its maps to take. */
+/** A scanned material (LocalPaint's materials release) used by a fill layer; `use` = which of its maps to take. */
 export interface ScanRef { file: string; name: string; cat: string; use?: Ch[] }
 export interface FillLayer extends LayerCommon {
   kind: 'fill';

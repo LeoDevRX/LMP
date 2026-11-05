@@ -1,6 +1,6 @@
 # Builds the Windows app on GitHub's servers and publishes it as a Release.
-# Runs when the app changes on main, or by hand (Actions > Build LMP release > Run workflow).
-name: Build LMP release
+# Runs when the app changes on main, or by hand (Actions > Build LocalPaint release > Run workflow).
+name: Build LocalPaint release
 
 on:
   push:
@@ -29,43 +29,43 @@ jobs:
         run: |
           V=$(grep -oP "VERSION = '\K[0-9.]+" source/src/version.ts)
           echo "v=$V" >> "$GITHUB_OUTPUT"
-          echo "LMP version $V"
+          echo "LocalPaint version $V"
 
       - name: Download Electron
         run: |
           curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o electron.zip "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-win32-x64.zip"
-          mkdir -p build/LMP
-          unzip -q electron.zip -d build/LMP
+          mkdir -p build/LocalPaint
+          unzip -q electron.zip -d build/LocalPaint
 
-      - name: Put LMP together
+      - name: Put LocalPaint together
         run: |
-          L=build/LMP
-          mv "$L/electron.exe" "$L/LMP.exe"
+          L=build/LocalPaint
+          mv "$L/electron.exe" "$L/LocalPaint.exe"
           rm -f "$L/resources/default_app.asar"
           mkdir -p "$L/resources/app" "$L/licenses"
           cp app/* "$L/resources/app/"
           mv "$L/LICENSE" "$L/licenses/LICENSE-Electron.txt"
           mv "$L/LICENSES.chromium.html" "$L/licenses/LICENSES-Chromium.html"
           cp licenses/* "$L/licenses/"
-          cp lmp.ico lmp-file.ico README.md "$L/"
+          cp localpaint.ico localpaint-file.ico README.md "$L/"
           cp -r presets "$L/presets"
-          # The scanned-materials catalog, so the shelf shows them even before LMP goes online.
+          # The scanned-materials catalog, so the shelf shows them even before LocalPaint goes online.
           curl -sfL -o "$L/presets/materials-catalog.json" "https://github.com/$GITHUB_REPOSITORY/releases/download/materials/materials-catalog.json" || echo "no materials catalog yet"
           cp -r source "$L/source"
 
-      - name: Set the LMP icon and file info (owned by LeoDevRX)
+      - name: Set the LocalPaint icon and file info (owned by LeoDevRX)
         run: |
           cd tools && npm ci --silent && cd ..
-          node tools/seticon.mjs build/LMP/LMP.exe lmp.ico build/LMP/LMP.exe "${{ steps.ver.outputs.v }}"
+          node tools/seticon.mjs build/LocalPaint/LocalPaint.exe localpaint.ico build/LocalPaint/LocalPaint.exe "${{ steps.ver.outputs.v }}"
 
       - name: Zip
         run: |
           V="${{ steps.ver.outputs.v }}"
           cd build
-          zip -qr -9 "../LMP-v$V.zip" LMP
-          zip -qr -9 "../LMP-v$V-update.zip" LMP/resources/app LMP/README.md LMP/source
+          zip -qr -9 "../LocalPaint-v$V.zip" LocalPaint
+          zip -qr -9 "../LocalPaint-v$V-update.zip" LocalPaint/resources/app LocalPaint/README.md LocalPaint/source
           cd ..
-          ls -lh LMP-v*.zip
+          ls -lh LocalPaint-v*.zip
 
       - name: Publish the release
         env:
@@ -75,11 +75,11 @@ jobs:
           {
             echo "## Download"
             echo
-            echo "**[Download LMP-v$V.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/v$V/LMP-v$V.zip)** is the whole program (Windows 10/11, 64-bit). Extract it anywhere, for example D:\\LMP, and open LMP.exe. Nothing needs installing."
+            echo "**[Download LocalPaint-v$V.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/v$V/LocalPaint-v$V.zip)** is the whole program (Windows 10/11, 64-bit). Extract it anywhere, for example D:\\LocalPaint, and open LocalPaint.exe. Nothing needs installing."
             echo
-            echo "Already using LMP? You don't need to download anything. LMP tells you about this update when it starts and installs it when you click Update now."
+            echo "Already using LocalPaint (or LMP)? You don't need to download anything. LocalPaint tells you about this update when it starts and installs it when you click Update now."
             echo
-            echo "LMP-v$V-update.zip is for updating by hand: extract it into the folder that holds your LMP folder and replace the files."
+            echo "LocalPaint-v$V-update.zip is for updating by hand: extract it into the folder that holds your LocalPaint folder and replace the files."
             echo
             echo "## What's new"
             echo
@@ -89,4 +89,4 @@ jobs:
           if gh release view "v$V" >/dev/null 2>&1; then
             gh release delete "v$V" --cleanup-tag --yes
           fi
-          gh release create "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" --target "$GITHUB_SHA" --title "LMP v$V" --notes-file release-notes.md --latest
+          gh release create "v$V" "LocalPaint-v$V.zip" "LocalPaint-v$V-update.zip" --target "$GITHUB_SHA" --title "LocalPaint v$V" --notes-file release-notes.md --latest

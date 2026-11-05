@@ -1,4 +1,4 @@
-// Bridge between LMP.html and the app: presets folder, .lmp project files, importing files.
+// Bridge between LocalPaint.html and the app: presets folder, .lmp project files, importing files.
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('texpaintNative', {

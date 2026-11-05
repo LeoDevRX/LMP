@@ -33,8 +33,8 @@ import { VERSION } from './version';
 import { Settings, loadSettings, saveSettings, weakComputer } from './settings';
 import { GUIDES, CATS, Guide, GuideShow, searchGuides, guideById, fmt as guideFmt, TOURS, TourStep } from './guide';
 import { loadThumbs, saveThumb, flush as flushThumbs } from './thumbCache';
-import iconSmall from './assets/lmp-32.png?inline';
-import iconBig from './assets/lmp-256.png?inline';
+import iconSmall from './assets/localpaint-32.png?inline';
+import iconBig from './assets/localpaint-256.png?inline';
 import { Designer } from './designer/DesignerUI';
 import { GraphRunner, GraphJSON, OUTPUT_CHANNELS, presetGraphs } from './designer/Graph';
 import { translateSpsm, Translation, SpNode } from './engine/SubstanceReader';
@@ -374,7 +374,7 @@ class App {
   }
 
   /**
-   * LMP's own dialog (instead of the plain Windows / browser box).
+   * LocalPaint's own dialog (instead of the plain Windows / browser box).
    * Buttons: [label, value, style]; resolves with the clicked value ('cancel' for Esc / clicking outside).
    */
   modal(o: { title: string; text: string; icon?: 'warn' | 'info' | 'question'; buttons: [string, string, ('primary' | 'danger' | '')?][]; content?: HTMLElement; wide?: boolean }): Promise<string> {
@@ -384,7 +384,7 @@ class App {
       const btns = o.buttons.map(([label, value, style]) => el('button', { class: 'lmp-btn ' + (style ?? ''), onclick: () => done(value) }, label));
       const icon = el('div', { class: 'lmp-modal-icon ' + (o.icon ?? 'question') }, o.icon === 'warn' ? '!' : o.icon === 'info' ? 'i' : '?');
       const box = el('div', { class: 'lmp-modal' + (o.wide ? ' wide' : ''), role: 'dialog' },
-        el('div', { class: 'lmp-modal-head' }, el('span', { class: 'lmp-modal-logo' }), el('span', {}, 'LMP')),
+        el('div', { class: 'lmp-modal-head' }, el('span', { class: 'lmp-modal-logo' }), el('span', {}, 'LocalPaint')),
         el('div', { class: 'lmp-modal-body' }, icon, el('div', { class: 'grow' }, el('h3', {}, o.title), el('p', {}, o.text))),
         o.content ? el('div', { class: 'lmp-modal-content' }, o.content) : null,
         el('div', { class: 'lmp-modal-foot' }, ...btns));
@@ -414,12 +414,12 @@ class App {
     return true;
   }
 
-  /** The window is closing (desktop app): ask about unsaved work in LMP's own dialog. */
+  /** The window is closing (desktop app): ask about unsaved work in LocalPaint's own dialog. */
   private async onCloseRequest() {
     const native = (window as any).texpaintNative;
     if (!this.modified) { native.quit(); return; }
     const r = await this.modal({
-      title: 'Quit LMP?',
+      title: 'Quit LocalPaint?',
       text: `“${this.projectName()}.lmp” has unsaved changes. Save them before quitting?`, icon: 'warn',
       buttons: [['Save now', 'save', 'primary'], ['Quit without saving', 'discard', 'danger'], ['Cancel', 'cancel']],
     });
@@ -485,7 +485,7 @@ class App {
   }
   async checkForUpdates(manual = false) {
     const native = this.native;
-    if (!native?.updateCheck) { if (manual) toast('Updates are checked in the LMP app'); return; }
+    if (!native?.updateCheck) { if (manual) toast('Updates are checked in the LocalPaint app'); return; }
     if (manual) toast('Checking for updates…');
     const r = await native.updateCheck();
     if (!r || r.error) { if (manual) toast('Couldn\'t reach GitHub. Check your internet connection and try again.', true); return; }
@@ -499,7 +499,7 @@ class App {
     document.getElementById('update-btn')?.remove();
     const u = this.updateInfo;
     if (!u) return;
-    const b = el('button', { id: 'update-btn', class: 'update-top', title: `LMP v${u.version} is out (you have v${VERSION}). Click to update.`, onclick: (e: Event) => { e.stopPropagation(); this.showUpdatePopup(); } },
+    const b = el('button', { id: 'update-btn', class: 'update-top', title: `LocalPaint v${u.version} is out (you have v${VERSION}). Click to update.`, onclick: (e: Event) => { e.stopPropagation(); this.showUpdatePopup(); } },
       el('span', { class: 'arrow' }, '↑'), `Update to v${u.version}`);
     const guide = document.getElementById('guide-btn');
     if (guide) guide.after(b); else document.getElementById('menus')?.append(b);
@@ -514,8 +514,8 @@ class App {
     const lines = (wn >= 0 ? all.slice(wn + 1) : all).map((x) => x.trim()).filter((x) => x && !/^#|^\*\*(new install|already have)|download/i.test(x)).slice(0, 8);
     for (const l of lines) { const p = el('p', {}); p.innerHTML = guideFmt(l.replace(/^[-*]\s*/, '')); notes.append(p); }
     const r = await this.modal({
-      title: `LMP v${u.version} is out`,
-      text: `You have v${VERSION}. Updating downloads only the changed files (a few MB) and restarts LMP. Your projects, autosaves and presets stay as they are.`,
+      title: `LocalPaint v${u.version} is out`,
+      text: `You have v${VERSION}. Updating downloads only the changed files (a few MB) and restarts LocalPaint. Your projects, autosaves and presets stay as they are.`,
       icon: 'info', wide: true, content: lines.length ? notes : undefined,
       buttons: [['Update now', 'update', 'primary'], ['Later', 'later']],
     });
@@ -525,9 +525,9 @@ class App {
     const u = this.updateInfo, native = this.native;
     if (!u || !native) return;
     if (!u.hasUpdateFiles) { native.openUrl(u.url); toast('Opened the download page in your browser'); return; }
-    if (!(await this.confirmUnsaved('Update and restart LMP?'))) return;
+    if (!(await this.confirmUnsaved('Update and restart LocalPaint?'))) return;
     const box = el('div', { class: 'lmp-modal-wrap' }, el('div', { class: 'lmp-modal' },
-      el('div', { class: 'lmp-modal-body' }, el('span', { class: 'spin big' }), el('div', {}, el('h3', {}, `Updating to v${u.version}…`), el('p', {}, 'Downloading the new files. LMP restarts by itself when it\'s done.')))));
+      el('div', { class: 'lmp-modal-body' }, el('span', { class: 'spin big' }), el('div', {}, el('h3', {}, `Updating to v${u.version}…`), el('p', {}, 'Downloading the new files. LocalPaint restarts by itself when it\'s done.')))));
     document.body.append(box);
     const res = await native.updateInstall();
     box.remove();
@@ -609,7 +609,7 @@ class App {
     }
     body.append(start);
     body.append(el('button', { class: 'tour-start', onclick: () => this.startTour('getting-started') },
-      el('span', { class: 'play' }, '▶'), el('span', {}, el('b', {}, 'Show me around LMP'), el('small', {}, 'A quick tour of the screen'))));
+      el('span', { class: 'play' }, '▶'), el('span', {}, el('b', {}, 'Show me around LocalPaint'), el('small', {}, 'A quick tour of the screen'))));
     body.append(el('div', { class: 'guide-try' }, 'Try: ',
       ...['make my brush smooth', 'go back after Ctrl+Z', 'rusty metal', 'export for Roblox', 'it’s laggy'].map((t) =>
         el('button', { class: 'chip', onclick: () => { this.guideQuery = t; this.renderGuide(); } }, t))));
@@ -620,7 +620,7 @@ class App {
       body.append(el('h4', {}, c), ...list.map((g) => this.guideRow(g, false)));
     }
     body.append(el('h4', {}, 'About'), this.guideRow(guideById('about')!, true));
-    body.append(el('div', { class: 'guide-credit' }, `LMP v${VERSION} · owned by LeoDevRX`));
+    body.append(el('div', { class: 'guide-credit' }, `LocalPaint v${VERSION} · owned by LeoDevRX`));
   }
 
   private renderGuideResults(body: HTMLElement, q: string) {
@@ -640,14 +640,14 @@ class App {
     });
     const tourHit = hits.find((h) => TOURS[h.g.id]);
     if (tourHit) body.append(el('button', { class: 'tour-start under', onclick: () => this.startTour(tourHit.g.id) },
-      el('span', { class: 'play' }, '▶'), el('span', {}, el('b', {}, `Walk me through: ${tourHit.g.title}`), el('small', {}, 'Need help doing it? LMP points at each step and tells you what to click.'))));
+      el('span', { class: 'play' }, '▶'), el('span', {}, el('b', {}, `Walk me through: ${tourHit.g.title}`), el('small', {}, 'Need help doing it? LocalPaint points at each step and tells you what to click.'))));
   }
 
   private renderGuidePage(body: HTMLElement, g: Guide) {
     const back = el('button', { class: 'guide-back', onclick: () => this.guideBack() }, this.guideStack.length > 1 ? '← Back' : this.guideQuery.trim() ? '← Results' : '← All guides');
     body.append(back, el('div', { class: 'guide-cat' }, g.cat), el('h2', {}, g.title), el('p', { class: 'guide-sum' }, g.sum));
     if (TOURS[g.id]) body.append(el('button', { class: 'tour-start', onclick: () => this.startTour(g.id) },
-      el('span', { class: 'play' }, '▶'), el('span', {}, el('b', {}, 'Walk me through it'), el('small', {}, `LMP points at each step (${TOURS[g.id].length} steps)`))));
+      el('span', { class: 'play' }, '▶'), el('span', {}, el('b', {}, 'Walk me through it'), el('small', {}, `LocalPaint points at each step (${TOURS[g.id].length} steps)`))));
     if (g.show?.length) body.append(el('div', { class: 'guide-acts' }, ...g.show.map((s) => el('button', { class: 'lmp-btn small', onclick: () => this.guideShow(s) }, 'Show me: ' + s.label))));
     for (const b of g.body) {
       if (b.h) body.append(el('h4', {}, b.h));
@@ -662,7 +662,7 @@ class App {
     }
     const rel = (g.related ?? []).map(guideById).filter(Boolean) as Guide[];
     if (rel.length) body.append(el('h4', {}, 'Related'), ...rel.map((r) => this.guideRow(r)));
-    if (g.id === 'about' || g.id === 'getting-started') body.append(el('div', { class: 'guide-credit' }, `LMP v${VERSION} · owned by LeoDevRX`));
+    if (g.id === 'about' || g.id === 'getting-started') body.append(el('div', { class: 'guide-credit' }, `LocalPaint v${VERSION} · owned by LeoDevRX`));
   }
 
   /** "Show me": do the thing (switch tool, open a panel…) and point at it. */
@@ -870,7 +870,7 @@ class App {
 
   // ================================================================ start / open window
 
-  /** LMP's own Open window: new file, recent projects, autosaves, browse. */
+  /** LocalPaint's own Open window: new file, recent projects, autosaves, browse. */
   async openWindow(tab: 'recent' | 'autosave' = 'recent', crashed = false) {
     const native = this.native;
     document.querySelectorAll('.lmp-start-wrap').forEach((x) => x.remove());
@@ -901,10 +901,10 @@ class App {
           close(); if (await this.confirmUnsaved('Open this project anyway?')) this.openProjectFromPath(r.path);
         }));
       } else {
-        if (crashed && autos[0]) pane.append(el('div', { class: 'start-crash' }, el('b', {}, 'LMP didn\'t close properly last time.'),
+        if (crashed && autos[0]) pane.append(el('div', { class: 'start-crash' }, el('b', {}, 'LocalPaint didn\'t close properly last time.'),
           el('span', {}, ` The newest autosave is “${autos[0].name}” from ${when(autos[0].time)}.`),
           el('button', { class: 'lmp-btn primary', onclick: () => openAuto(autos[0]) }, 'Restore it')));
-        if (!autos.length) pane.append(el('p', { class: 'note' }, 'No autosaves yet. LMP saves a backup every few minutes while you work (Settings).'));
+        if (!autos.length) pane.append(el('p', { class: 'note' }, 'No autosaves yet. LocalPaint saves a backup every few minutes while you work (Settings).'));
         for (const a of autos) pane.append(card(a.thumb, a.name, `Autosave · ${when(a.time)}`, () => openAuto(a)));
         if (native) pane.append(el('button', { class: 'link', onclick: () => native.autosaveFolder() }, 'Open the autosave folder'));
       }
@@ -929,14 +929,14 @@ class App {
     const logo = el('div', { class: 'start-logo' });
     logo.style.backgroundImage = `url(${iconBig})`;
     const box = el('div', { class: 'lmp-modal start' },
-      el('div', { class: 'lmp-modal-head' }, el('span', { class: 'lmp-modal-logo', style: { backgroundImage: `url(${iconSmall})` } }), el('span', {}, 'LMP'), el('span', { class: 'grow' }),
+      el('div', { class: 'lmp-modal-head' }, el('span', { class: 'lmp-modal-logo', style: { backgroundImage: `url(${iconSmall})` } }), el('span', {}, 'LocalPaint'), el('span', { class: 'grow' }),
         el('button', { class: 'start-x', title: 'Close (Esc)', onclick: close }, '×')),
       el('div', { class: 'start-body' },
-        el('div', { class: 'start-left' }, logo, el('h2', {}, "Leo's Material Painter"), el('div', { class: 'start-ver' }, `v${VERSION} · owned by LeoDevRX`),
+        el('div', { class: 'start-left' }, logo, el('h2', {}, "LocalPaint"), el('div', { class: 'start-ver' }, `v${VERSION} · owned by LeoDevRX`),
           el('h4', {}, 'New file'), models,
           el('button', { class: 'lmp-btn guide-btn', onclick: () => { close(); this.openGuide('getting-started'); } }, 'Getting started')),
         el('div', { class: 'start-right' }, tabs, pane)),
-      el('div', { class: 'start-foot' }, el('label', { class: 'check-row' }, startBox, ' Show this when LMP starts')));
+      el('div', { class: 'start-foot' }, el('label', { class: 'check-row' }, startBox, ' Show this when LocalPaint starts')));
     const wrap = el('div', { class: 'lmp-modal-wrap lmp-start-wrap' }, box);
     wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) close(); });
     window.addEventListener('keydown', onKey, true);
@@ -968,8 +968,8 @@ class App {
       el('h4', {}, 'Autosave'), check('Autosave while I work', 'autosave'), num('Every', 'autosaveMinutes', 1, 30, ' min'), num('Keep', 'autosaveKeep', 1, 20, ' copies'),
       el('h4', {}, 'New files'),
       el('div', { class: 'row' }, el('label', {}, 'Texture size'), select<number>([512, 1024, 2048, 4096].map((v) => ({ value: v, label: `${v} × ${v}` })), st.defaultSize, (v) => { st.defaultSize = v; })),
-      check('Show the start screen when LMP opens', 'startScreen'),
-      check('Check for updates when LMP starts', 'checkUpdates'),
+      check('Show the start screen when LocalPaint opens', 'startScreen'),
+      check('Check for updates when LocalPaint starts', 'checkUpdates'),
       el('h4', {}, 'Layers'),
       check('Ask before deleting folders and paint layers', 'confirmDelete', 'Off: they\'re deleted right away. Ctrl+Z brings them back either way.'),
       el('h4', {}, 'Performance'),
@@ -984,7 +984,7 @@ class App {
           c.addEventListener('change', () => { st.sbsAdobe = c.checked; });
           return el('label', { class: 'check-row' }, c, ' Use Adobe\'s engine when it\'s installed (exact look)');
         })(),
-        el('p', { class: 'note' }, this.sbsExe ? `Found: ${this.sbsExe}` : 'Adobe\'s renderer (sbsrender.exe, comes with Substance 3D Designer) wasn\'t found. Without it LMP uses its own version of each material.'),
+        el('p', { class: 'note' }, this.sbsExe ? `Found: ${this.sbsExe}` : 'Adobe\'s renderer (sbsrender.exe, comes with Substance 3D Designer) wasn\'t found. Without it LocalPaint uses its own version of each material.'),
         el('div', { class: 'row' }, el('label', {}, ''), el('button', { class: 'grow', onclick: async () => { await this.pickSbsEngine(); st.sbsPath = this.settings.sbsPath; st.sbsAdobe = this.settings.sbsAdobe; } }, 'Find sbsrender.exe…')),
       ] : []),
     );
@@ -1001,8 +1001,8 @@ class App {
     const w = weakComputer(this.vp.renderer.getContext());
     if (!w.weak) return;
     const r = await this.modal({
-      title: 'Your device may be too weak to run LMP smoothly',
-      text: `LMP found ${w.why.join(', ')}. Would you like to run it in low performance mode? You can change this later in File → Settings.`,
+      title: 'Your device may be too weak to run LocalPaint smoothly',
+      text: `LocalPaint found ${w.why.join(', ')}. Would you like to run it in low performance mode? You can change this later in File → Settings.`,
       icon: 'warn', buttons: [['Use low performance mode', 'low', 'primary'], ['Run normally', 'normal']],
     });
     this.settings.lowPerf = r === 'low';
@@ -1014,7 +1014,7 @@ class App {
   projectPath = '';
   private projectName() { return this.projectPath ? this.projectPath.split(/[\\/]/).pop()!.replace(/\.(lmp|tpaint)$/i, '') : (this.model?.name || 'Untitled'); }
   updateTitle() {
-    document.title = `${this.modified ? '• ' : ''}${this.projectName()}.lmp — LMP — Leo's Material Painter`;
+    document.title = `${this.modified ? '• ' : ''}${this.projectName()}.lmp — LocalPaint`;
   }
 
   /** Save the project as a .lmp file (Ctrl+S); `saveAs` always asks where (Ctrl+Shift+S). */
@@ -1038,7 +1038,7 @@ class App {
       if (picker) {
         const h = await picker({
           suggestedName: fileName, id: 'lmp-project',
-          types: [{ description: 'LMP project', accept: { 'application/json': ['.lmp'] } }],
+          types: [{ description: 'LocalPaint project', accept: { 'application/json': ['.lmp'] } }],
         });
         const w = await h.createWritable();
         await w.write(blob); await w.close();
@@ -3002,7 +3002,7 @@ class App {
   private buildStatus() {
     const m = this.model;
     document.getElementById('status-model')!.textContent =
-      `LMP v${VERSION} · ${m.name} · ${m.triangles.toLocaleString()} tris · ${this.ts.size}×${this.ts.size}`;
+      `LocalPaint v${VERSION} · ${m.name} · ${m.triangles.toLocaleString()} tris · ${this.ts.size}×${this.ts.size}`;
     document.getElementById('status-hints')!.textContent = this.mode === 'bake'
       ? 'Baking mode · RMB orbit · MMB pan · Wheel zoom · Esc back to painting'
       : 'LMB paint · RMB / Alt+LMB orbit · MMB pan · Wheel zoom · [ ] size · B/E/P tools · F2/F3/F4 layout · 1–0 views · hold ~ camera views · M mask · F1 Guide';
@@ -3102,8 +3102,8 @@ class App {
     (body.querySelector('.si') as HTMLElement).innerHTML = I.search;
     const foot = el('div', { class: 'dock-foot' },
       isDesktopApp
-        ? icon(I.folder, 'Open the presets folder (next to LMP.exe) — put materials, textures, brushes and HDRIs there, then Rescan', () => { openNativePresets(); })
-        : icon(I.folder, sh.state === 'ready' ? 'Choose another folder' : 'Link a presets folder (e.g. D:\\LMP\\presets)', async () => { try { if (await sh.link()) this.buildShelf(); } catch (e: any) { toast(e?.message ?? 'Could not open folder', true); } }),
+        ? icon(I.folder, 'Open the presets folder (next to LocalPaint.exe) — put materials, textures, brushes and HDRIs there, then Rescan', () => { openNativePresets(); })
+        : icon(I.folder, sh.state === 'ready' ? 'Choose another folder' : 'Link a presets folder (e.g. D:\\LocalPaint\\presets)', async () => { try { if (await sh.link()) this.buildShelf(); } catch (e: any) { toast(e?.message ?? 'Could not open folder', true); } }),
       icon(I.refresh, 'Rescan the folder', async () => { await sh.scan(); this.buildShelf(); toast('Assets refreshed'); }),
       el('span', { class: 'grow' }, folder),
       icon(I.save, 'Save the brush material (or selected fill layer) as a material preset', () => this.saveMaterialPreset()),
@@ -3325,7 +3325,7 @@ class App {
       badge = it.file.split('.').pop()!.toUpperCase();
       if (/\.sbsar$/i.test(it.file)) { badge = 'SBSAR'; img.classList.remove('adobe'); }
       tip = /\.sbsar$/i.test(it.file) ? `${it.file} — ${it.reason}. Click (or drag onto the model) to add it as a layer with all its settings`
-        : /\.spsm$/i.test(it.file) ? `${it.file} — ${it.reason}. Click (or drag onto the model) to translate it into an LMP smart material` : `${it.file} — ${it.reason}. Can't be translated`;
+        : /\.spsm$/i.test(it.file) ? `${it.file} — ${it.reason}. Click (or drag onto the model) to translate it into an LocalPaint smart material` : `${it.file} — ${it.reason}. Can't be translated`;
     }
     const tile = el('button', {
       class: 'tile' + (it.kind === 'unsupported' ? ' unsupported' : '') + (this.shelfPick.has(it) ? ' picked' : ''),
@@ -3422,7 +3422,7 @@ class App {
     const hit = this.cloudCache.get(it.file);
     if (hit) return hit;
     const native = this.native;
-    if (!native?.cloudGet) { toast('Scanned materials download in the LMP app', true); return null; }
+    if (!native?.cloudGet) { toast('Scanned materials download in the LocalPaint app', true); return null; }
     if (!it.downloaded) toast(`Downloading “${it.name}” (${(it.size / 1e6).toFixed(1)} MB)…`);
     const r = await native.cloudGet({ file: it.file, name: it.name, cat: it.cat });
     if (!r?.ok) { toast(`Couldn't download “${it.name}”: ${r?.error ?? 'no connection'}. Check your internet connection and try again.`, true); return null; }
@@ -3554,7 +3554,7 @@ class App {
           const info = fl ? this.sbsInfo.get(fl) : undefined;
           toast(info?.engine === 'adobe' ? `Added “${(fl as FillLayer | null)?.name}” — rendered by Adobe's engine ✓`
             : info?.engine === 'lmp' ? `Added “${(fl as FillLayer | null)?.name}” with all its settings ✓`
-              : `Added “${(fl as FillLayer | null)?.name}”. Its settings are in Properties (LMP approximation: Adobe's engine isn't installed).`, info?.engine === 'approx');
+              : `Added “${(fl as FillLayer | null)?.name}”. Its settings are in Properties (LocalPaint approximation: Adobe's engine isn't installed).`, info?.engine === 'approx');
         }
         this.paintTarget = 'content';
         this.modified = true;
@@ -3570,7 +3570,7 @@ class App {
   //
   // A dropped .sbsar becomes a fill layer that keeps the material's own parameters (presets, seed,
   // groups, colors, toggles, image inputs) like Painter's "Substance material mode". What the images
-  // show comes from Adobe's own renderer when it's installed (exact), else LMP's version of the graph.
+  // show comes from Adobe's own renderer when it's installed (exact), else LocalPaint's version of the graph.
 
   /** Adobe's renderer (sbsrender.exe): undefined = not looked for yet, null = not on this PC. */
   private sbsExe: string | null | undefined;
@@ -3580,7 +3580,7 @@ class App {
   private sbsDone = new WeakMap<FillLayer, string>();
   private sbsBusy = new WeakMap<FillLayer, { want: string; since: number; running: boolean }>();
   private sbsInfo = new WeakMap<FillLayer, { engine: 'adobe' | 'lmp' | 'approx'; error?: string; rendering?: boolean; ms?: number }>();
-  /** Materials Adobe's renderer couldn't run (they use LMP's version for the rest of the session). */
+  /** Materials Adobe's renderer couldn't run (they use LocalPaint's version for the rest of the session). */
   private sbsAdobeFailed = new Set<string>();
   private sbsMeshStamp = 0;
   private sbsTsIds = new WeakMap<TextureSet, string>();
@@ -3632,7 +3632,7 @@ class App {
       if (b?.running) continue;
       if (!b || b.want !== key) {
         this.sbsBusy.set(l, { want: key, since: now, running: false });
-        if (!this.adobeFor(l.sbs)) void this.renderSbs(l, key); // LMP's version is instant
+        if (!this.adobeFor(l.sbs)) void this.renderSbs(l, key); // LocalPaint's version is instant
         continue;
       }
       if (now - b.since > 380) void this.renderSbs(l, key);
@@ -3661,7 +3661,7 @@ class App {
           info.error = r.error;
           this.sbsAdobeFailed.add(st.key);
           console.warn('sbsrender', r.error);
-          toast(`Adobe's engine couldn't render “${g.label}”, so LMP's own version is used. Details in Properties.`, true);
+          toast(`Adobe's engine couldn't render “${g.label}”, so LocalPaint's own version is used. Details in Properties.`, true);
         }
       }
       if (!images) { images = this.nativeSbs(fl, st, g); info.engine = nativeFor(g) ? 'lmp' : 'approx'; }
@@ -3731,7 +3731,7 @@ class App {
         r = await native.sbsRender(req);
       }
     } catch (e: any) { return { error: String(e?.message ?? e) }; }
-    if (!r?.files?.length) return { error: r?.error || (r?.need ? 'LMP couldn\'t hand the material to Adobe\'s engine.' : 'Adobe\'s engine gave no pictures back.') };
+    if (!r?.files?.length) return { error: r?.error || (r?.need ? 'LocalPaint couldn\'t hand the material to Adobe\'s engine.' : 'Adobe\'s engine gave no pictures back.') };
     const images: Partial<Record<Ch, FillImage>> = {};
     for (const f of r.files as { name: string; data: Uint8Array }[]) {
       const id = f.name.replace(/\.[^.]+$/, '');
@@ -3772,8 +3772,8 @@ class App {
     box.dataset.layer = String(fl.id);
     const engine = info?.rendering ? 'Rendering with Adobe\'s engine…'
       : info?.engine === 'adobe' ? 'Adobe\'s engine — exact, like in Painter'
-        : info?.engine === 'lmp' ? 'LMP\'s version of this material'
-          : SBS_LOADED.get(fl) && !info ? 'Saved render (from when the project was saved)' : 'LMP approximation';
+        : info?.engine === 'lmp' ? 'LocalPaint\'s version of this material'
+          : SBS_LOADED.get(fl) && !info ? 'Saved render (from when the project was saved)' : 'LocalPaint approximation';
     box.append(el('span', { class: 'sbs-badge ' + (info?.engine ?? 'saved') + (info?.rendering ? ' busy' : '') }, engine));
     if (info?.ms && !info.rendering) box.append(el('span', { class: 'muted' }, ` ${info.ms < 1000 ? Math.round(info.ms) + ' ms' : (info.ms / 1000).toFixed(1) + ' s'}`));
     if (info?.error) {
@@ -3781,11 +3781,11 @@ class App {
         el('button', { onclick: () => { this.sbsAdobeFailed.delete(st.key); info.error = undefined; this.sbsDone.delete(fl); this.buildProperties(); } }, 'Try Adobe\'s engine again'));
     } else if (info?.engine === 'approx' || (info?.engine === 'lmp' && !this.sbsExe)) {
       box.append(el('p', { class: 'note' }, info.engine === 'approx'
-        ? 'This material\'s graph is compiled for Adobe\'s engine. LMP sorts its sliders into base color, wear, dirt, roughness and scale so they still do something, but it won\'t look exactly like Painter.'
-        : 'LMP has its own version of this material, so every slider works.'));
+        ? 'This material\'s graph is compiled for Adobe\'s engine. LocalPaint sorts its sliders into base color, wear, dirt, roughness and scale so they still do something, but it won\'t look exactly like Painter.'
+        : 'LocalPaint has its own version of this material, so every slider works.'));
     }
     if (this.sbsExe === null && this.native?.sbsPick) {
-      box.append(el('p', { class: 'note' }, 'For the exact look of any Substance material, LMP can use Adobe\'s renderer from Substance 3D Designer. It wasn\'t found on this PC.'),
+      box.append(el('p', { class: 'note' }, 'For the exact look of any Substance material, LocalPaint can use Adobe\'s renderer from Substance 3D Designer. It wasn\'t found on this PC.'),
         el('button', { onclick: () => this.pickSbsEngine() }, 'Find sbsrender.exe…'));
     } else if (this.sbsExe && !this.settings.sbsAdobe) {
       box.append(el('p', { class: 'note' }, 'Adobe\'s engine is installed but turned off in Settings.'));

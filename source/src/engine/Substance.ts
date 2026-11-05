@@ -6,7 +6,7 @@
  * Rendering itself happens in one of three places (see main.ts):
  *  - Adobe's engine (sbsrender from Substance 3D Designer / Automation Toolkit), when it's
  *    installed on this PC: the real graph runs with the chosen values, so it looks exact.
- *  - LMP's own version of the graph (SbsNative.ts) for graphs LMP knows.
+ *  - LocalPaint's own version of the graph (SbsNative.ts) for graphs LocalPaint knows.
  *  - A live approximation built from the parameter names, for everything else.
  */
 import type { Ch } from './TextureSet';
@@ -281,7 +281,7 @@ export function cliValue(p: SbsParam | undefined, v: number[]): string {
 
 // ------------------------------------------------------------------ live approximation
 
-/** Roles a parameter can play in LMP's approximation of an unknown graph. */
+/** Roles a parameter can play in LocalPaint's approximation of an unknown graph. */
 export interface ApproxRoles {
   base?: string; second?: string; edge?: string; dirt?: string; emit?: string;
   rough?: string; gloss?: string; metal?: string; scale?: string; edgeAmt?: string; dirtAmt?: string; bump?: string; varAmt?: string;

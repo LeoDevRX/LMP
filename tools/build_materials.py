@@ -1,4 +1,4 @@
-"""Builds LMP's scanned-materials release from ambientCG (all CC0).
+"""Builds LocalPaint's scanned-materials release from ambientCG (all CC0).
 
 For each category in materials/config.json it takes the most popular scans that have colour, roughness
 and normal maps, repacks the maps into one small zip per material (Name_Color.jpg, Name_Roughness.jpg …)
@@ -8,8 +8,8 @@ import base64, io, json, os, re, sys, time, urllib.parse, urllib.request, zipfil
 from PIL import Image
 
 API = 'https://ambientcg.com/api/v2/full_json'
-UA = {'User-Agent': 'LMP-materials-builder (github.com/LeoDevRX/LMP)'}
-MAPS = {  # ambientCG suffix -> name LMP understands
+UA = {'User-Agent': 'LocalPaint-materials-builder (github.com/LeoDevRX/LocalPaint)'}
+MAPS = {  # ambientCG suffix -> name LocalPaint understands
     'Color': 'Color', 'Roughness': 'Roughness', 'Metalness': 'Metalness', 'NormalGL': 'NormalGL',
     'Displacement': 'Displacement', 'AmbientOcclusion': 'AmbientOcclusion', 'Opacity': None, 'NormalDX': None,
 }

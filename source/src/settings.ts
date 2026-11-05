@@ -1,4 +1,4 @@
-/** LMP settings (File → Settings), kept between sessions. */
+/** LocalPaint settings (File → Settings), kept between sessions. */
 export interface Settings {
   autosave: boolean;
   autosaveMinutes: number;
@@ -14,15 +14,15 @@ export interface Settings {
   perfAsked: boolean;
   /** Guide shown once on first start. */
   welcomed: boolean;
-  /** Show the start screen when LMP opens. */
+  /** Show the start screen when LocalPaint opens. */
   startScreen: boolean;
-  /** Ask GitHub for a newer LMP when it starts. */
+  /** Ask GitHub for a newer LocalPaint when it starts. */
   checkUpdates: boolean;
   /** Lighting environment shown in the 3D view (an HDR on the shelf; '' = built-in studio). */
   envName: string;
   /** Render Substance materials with Adobe's engine (sbsrender) when it's installed. */
   sbsAdobe: boolean;
-  /** Where sbsrender.exe is, if the user pointed LMP at it ('' = look in the usual places). */
+  /** Where sbsrender.exe is, if the user pointed LocalPaint at it ('' = look in the usual places). */
   sbsPath: string;
   /** Ask before deleting folders / paint layers (Ctrl+Z always brings them back). */
   confirmDelete: boolean;

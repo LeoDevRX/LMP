@@ -1,5 +1,5 @@
-// LMP (Leo's Material Painter) desktop app (Electron). Runs LMP.html in its own window with the fast GPU,
-// direct access to the presets folder next to LMP.exe, and .lmp project files (open / save / save as,
+// LocalPaint desktop app (Electron). Runs LocalPaint.html in its own window with the fast GPU,
+// direct access to the presets folder next to LocalPaint.exe, and .lmp project files (open / save / save as,
 // double-click a .lmp in Explorer to open it).
 const { app, BrowserWindow, ipcMain, session, shell, dialog, net } = require('electron');
 const crypto = require('crypto');
@@ -17,13 +17,18 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=8192');
 
 const exeDir = path.dirname(process.execPath);
+// LocalPaint used to be called LMP: keep using the old settings folder (settings, recent files, caches) if it's there.
+{
+  const old = path.join(app.getPath('appData'), 'LMP');
+  app.setPath('userData', fs.existsSync(old) ? old : path.join(app.getPath('appData'), 'LocalPaint'));
+}
 /** Scanned materials downloaded on first use live in presets/<SCANS>/<category>/<name>/. */
 const SCANS = 'Scanned materials';
 const PROJECT_EXTS = ['.lmp', '.tpaint'];
 
-// presets folder: next to LMP.exe, else the user's documents.
+// presets folder: next to LocalPaint.exe, else the user's documents.
 function presetsDir() {
-  const candidates = [path.join(exeDir, 'presets'), path.join(exeDir, '..', 'presets'), path.join(app.getPath('documents'), 'LMP', 'presets')];
+  const candidates = [path.join(exeDir, 'presets'), path.join(exeDir, '..', 'presets'), path.join(app.getPath('documents'), 'LocalPaint', 'presets')];
   for (const c of candidates) if (fs.existsSync(c)) return c;
   const d = candidates[0];
   try { fs.mkdirSync(d, { recursive: true }); return d; } catch { return candidates[2]; }
@@ -60,7 +65,7 @@ ipcMain.handle('presets:open', () => shell.openPath(presetsDir()));
 let lastDir = '';
 function projectsDir() {
   if (lastDir && fs.existsSync(lastDir)) return lastDir;
-  const d = path.join(app.getPath('documents'), 'LMP Projects');
+  const d = path.join(app.getPath('documents'), 'LocalPaint Projects');
   try { fs.mkdirSync(d, { recursive: true }); } catch { /* fine */ }
   return d;
 }
@@ -73,8 +78,8 @@ ipcMain.handle('project:save', async (e, name, data, filePath, saveAs) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     const def = filePath ? filePath.replace(/\.(tpaint)$/i, '.lmp') : path.join(projectsDir(), `${safeName(name)}.lmp`);
     const r = await dialog.showSaveDialog(win, {
-      title: saveAs ? 'Save LMP project as' : 'Save LMP project', defaultPath: def,
-      filters: [{ name: 'LMP project', extensions: ['lmp'] }],
+      title: saveAs ? 'Save LocalPaint project as' : 'Save LocalPaint project', defaultPath: def,
+      filters: [{ name: 'LocalPaint project', extensions: ['lmp'] }],
     });
     if (r.canceled || !r.filePath) return null;
     target = r.filePath.toLowerCase().endsWith('.lmp') ? r.filePath : r.filePath + '.lmp';
@@ -91,8 +96,8 @@ ipcMain.handle('project:save', async (e, name, data, filePath, saveAs) => {
 ipcMain.handle('project:open', async (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   const r = await dialog.showOpenDialog(win, {
-    title: 'Open LMP project', defaultPath: projectsDir(), properties: ['openFile'],
-    filters: [{ name: 'LMP project', extensions: ['lmp', 'tpaint'] }, { name: 'All files', extensions: ['*'] }],
+    title: 'Open LocalPaint project', defaultPath: projectsDir(), properties: ['openFile'],
+    filters: [{ name: 'LocalPaint project', extensions: ['lmp', 'tpaint'] }, { name: 'All files', extensions: ['*'] }],
   });
   if (r.canceled || !r.filePaths[0]) return null;
   return readProject(r.filePaths[0]);
@@ -109,9 +114,9 @@ function readProject(p) {
 ipcMain.handle('file:import', async (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   const r = await dialog.showOpenDialog(win, {
-    title: 'Import into LMP', properties: ['openFile', 'multiSelections'],
+    title: 'Import into LocalPaint', properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'Everything LMP can open', extensions: ['lmp', 'tpaint', 'glb', 'gltf', 'fbx', 'obj', 'hdr', 'sbsar', 'spsm', 'tpsmart', 'tpmat', 'tptex', 'tpbrush', 'tpgraph', 'png', 'jpg', 'jpeg', 'webp'] },
+      { name: 'Everything LocalPaint can open', extensions: ['lmp', 'tpaint', 'glb', 'gltf', 'fbx', 'obj', 'hdr', 'sbsar', 'spsm', 'tpsmart', 'tpmat', 'tptex', 'tpbrush', 'tpgraph', 'png', 'jpg', 'jpeg', 'webp'] },
       { name: 'All files', extensions: ['*'] },
     ],
   });
@@ -119,19 +124,19 @@ ipcMain.handle('file:import', async (e) => {
   return r.filePaths.map((p) => { const b = fs.readFileSync(p); return { path: p, name: path.basename(p), data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }; });
 });
 
-/** Make .lmp files open in LMP and show the LMP icon in Explorer (current user only, no admin needed). */
+/** Make .lmp files open in LocalPaint and show its icon in Explorer (current user only, no admin needed). */
 function registerFileType() {
   if (process.platform !== 'win32' || process.env.LMP_NO_ASSOC) return;
   const exe = process.execPath;
   if (/electron\.exe$/i.test(exe)) return; // not when running from a dev copy
-  const icon = path.join(exeDir, 'lmp-file.ico');
+  const icon = path.join(exeDir, 'localpaint-file.ico');
   const iconRef = fs.existsSync(icon) ? `"${icon}"` : `"${exe}",0`;
   const keys = [
     ['HKCU\\Software\\Classes\\.lmp', '', 'LMP.Project'],
     ['HKCU\\Software\\Classes\\.lmp', 'Content Type', 'application/x-lmp-project'],
-    ['HKCU\\Software\\Classes\\LMP.Project', '', "LMP Project (Leo's Material Painter)"],
+    ['HKCU\\Software\\Classes\\LMP.Project', '', 'LocalPaint project'],
     ['HKCU\\Software\\Classes\\LMP.Project\\DefaultIcon', '', iconRef],
-    ['HKCU\\Software\\Classes\\LMP.Project\\shell\\open', 'FriendlyAppName', 'LMP'],
+    ['HKCU\\Software\\Classes\\LMP.Project\\shell\\open', 'FriendlyAppName', 'LocalPaint'],
     ['HKCU\\Software\\Classes\\LMP.Project\\shell\\open\\command', '', `"${exe}" "%1"`],
   ];
   let i = 0;
@@ -148,7 +153,7 @@ function registerFileType() {
 
 function autosaveDir() {
   const tries = [];
-  if (process.platform === 'win32' && fs.existsSync('D:\\')) tries.push('D:\\LMP\\autosave');
+  if (process.platform === 'win32' && fs.existsSync('D:\\')) tries.push('D:\\LocalPaint\\autosave');
   tries.push(path.join(exeDir, 'autosave'), path.join(app.getPath('userData'), 'autosave'));
   for (const d of tries) {
     try { fs.mkdirSync(d, { recursive: true }); fs.accessSync(d, fs.constants.W_OK); return d; } catch { /* next */ }
@@ -211,17 +216,17 @@ ipcMain.handle('recent:remove', (_e, p) => { try { fs.writeFileSync(recentFile()
 const REPO = 'LeoDevRX/LMP';
 const RELEASES = `https://github.com/${REPO}/releases/latest`;
 async function getJSON(url) {
-  const r = await net.fetch(url, { headers: { 'User-Agent': 'LMP-updater', Accept: 'application/vnd.github+json' } });
+  const r = await net.fetch(url, { headers: { 'User-Agent': 'LocalPaint-updater', Accept: 'application/vnd.github+json' } });
   if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
   return r.json();
 }
 async function getBytes(url) {
-  const r = await net.fetch(url, { headers: { 'User-Agent': 'LMP-updater' } });
+  const r = await net.fetch(url, { headers: { 'User-Agent': 'LocalPaint-updater' } });
   if (!r.ok) throw new Error(`Download failed (${r.status})`);
   return Buffer.from(await r.arrayBuffer());
 }
-/** The small update zip of a release (LMP-vX.XX-update.zip). */
-const updateAsset = (rel) => (rel.assets || []).find((a) => /^LMP-v[\d.]+-update\.zip$/i.test(a.name));
+/** The small update zip of a release (LocalPaint-vX.XX-update.zip; LMP-… before the rename). */
+const updateAsset = (rel) => (rel.assets || []).find((a) => /^(LocalPaint|LMP)-v[\d.]+-update\.zip$/i.test(a.name));
 /** The newest release: { version, notes, url, hasUpdateFiles } or { error } when offline. */
 ipcMain.handle('update:check', async () => {
   try {
@@ -230,7 +235,7 @@ ipcMain.handle('update:check', async () => {
   } catch (e) { return { error: String(e.message || e) }; }
 });
 
-/** Read the files of a zip (stored or deflated entries; enough for LMP's own update zips). */
+/** Read the files of a zip (stored or deflated entries; enough for LocalPaint's own update zips). */
 function unzip(buf) {
   const zlib = require('zlib');
   let eocd = -1;
@@ -264,9 +269,9 @@ ipcMain.handle('update:install', async () => {
     if (asset.size && zip.length !== asset.size) throw new Error('The download was cut off');
     const want = String(asset.digest || '').replace(/^sha256:/i, '');
     if (want && crypto.createHash('sha256').update(zip).digest('hex') !== want) throw new Error('The update didn\'t download correctly');
-    // Only the app's own files (LMP/resources/app/*), never anything outside that folder.
-    const files = [...unzip(zip)].filter(([n, b]) => b && /^LMP\/resources\/app\/[\w.-]+$/.test(n)).map(([n, b]) => [n.split('/').pop(), b]);
-    if (!files.some(([n]) => n === 'LMP.html')) throw new Error('The update file is missing LMP.html');
+    // Only the app's own files (LocalPaint/resources/app/*), never anything outside that folder.
+    const files = [...unzip(zip)].filter(([n, b]) => b && /^(LocalPaint|LMP)\/resources\/app\/[\w.-]+$/.test(n)).map(([n, b]) => [n.split('/').pop(), b]);
+    if (!files.some(([n]) => n === 'LocalPaint.html' || n === 'LMP.html')) throw new Error('The update file is missing the app page');
     fs.accessSync(appDir, fs.constants.W_OK);
     for (const [name, b] of files) fs.writeFileSync(path.join(appDir, name + '.new'), b);
     for (const [name] of files) {
@@ -277,7 +282,7 @@ ipcMain.handle('update:install', async () => {
     return { ok: true, version: String(rel.tag_name || '').replace(/^v/i, '') };
   } catch (e) {
     const msg = String(e.message || e);
-    return { ok: false, error: /EACCES|EPERM|EROFS/.test(msg) ? 'LMP can\'t write to its own folder (it may be in a protected place like Program Files).' : msg, url: RELEASES };
+    return { ok: false, error: /EACCES|EPERM|EROFS/.test(msg) ? 'LocalPaint can\'t write to its own folder (it may be in a protected place like Program Files).' : msg, url: RELEASES };
   }
 });
 // ---------------------------------------------------------------- scanned materials (download on first use)
@@ -292,7 +297,7 @@ ipcMain.handle('cloud:catalog', async (_e, online) => {
   let cat = null;
   if (online) {
     try {
-      const r = await net.fetch(MAT_BASE + 'materials-catalog.json', { headers: { 'User-Agent': 'LMP' } });
+      const r = await net.fetch(MAT_BASE + 'materials-catalog.json', { headers: { 'User-Agent': 'LocalPaint' } });
       if (r.ok) { const txt = await r.text(); cat = JSON.parse(txt); if (cat?.materials) fs.writeFileSync(catalogCache(), txt); }
     } catch { /* offline */ }
   }
@@ -328,8 +333,8 @@ ipcMain.handle('shell:open', (_e, url) => {
 // ---------------------------------------------------------------- Substance materials
 //
 // .sbsar files are compiled graphs. If Adobe's own renderer (sbsrender.exe, part of Substance 3D
-// Designer and the Automation Toolkit) is on this PC, LMP runs the real graph with it, so materials
-// look exactly like they do in Painter. LMP never ships Adobe's engine; it only calls the copy the
+// Designer and the Automation Toolkit) is on this PC, LocalPaint runs the real graph with it, so materials
+// look exactly like they do in Painter. LocalPaint never ships Adobe's engine; it only calls the copy the
 // user already has installed.
 
 const os = require('os');
@@ -380,7 +385,7 @@ ipcMain.handle('sbs:pick', async (e) => {
   return isSbsrender(p) ? { path: p } : (p ? { error: 'That file isn\'t sbsrender.exe.' } : null);
 });
 
-const sbsTmp = () => { const d = path.join(os.tmpdir(), 'LMP-substance'); fs.mkdirSync(path.join(d, 'mesh'), { recursive: true }); return d; };
+const sbsTmp = () => { const d = path.join(os.tmpdir(), 'LocalPaint-substance'); fs.mkdirSync(path.join(d, 'mesh'), { recursive: true }); return d; };
 const sbsSafe = (s) => String(s).replace(/[^\w.-]+/g, '_').slice(0, 120);
 const ID_RE = /^[$A-Za-z_][\w$]*$/;
 /**
@@ -455,10 +460,10 @@ ipcMain.handle('sbs:read', (_e, p) => {
 
 // ---------------------------------------------------------------- texture export (output directory)
 
-/** Default output folder: D:\LMP\export when there is a D: drive, else Documents\LMP\export. */
+/** Default output folder: D:\LocalPaint\export when there is a D: drive, else Documents\LocalPaint\export. */
 function defaultExportDir() {
-  if (process.platform === 'win32' && fs.existsSync('D:\\')) return 'D:\\LMP\\export';
-  return path.join(app.getPath('documents'), 'LMP', 'export');
+  if (process.platform === 'win32' && fs.existsSync('D:\\')) return 'D:\\LocalPaint\\export';
+  return path.join(app.getPath('documents'), 'LocalPaint', 'export');
 }
 ipcMain.handle('export:defaultDir', () => defaultExportDir());
 ipcMain.handle('export:pickDir', async (e, current) => {
@@ -501,7 +506,7 @@ function sendOpen(p) {
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1600, height: 960, show: false, backgroundColor: '#17181a', icon: path.join(__dirname, 'lmp.ico'), title: "LMP — Leo's Material Painter",
+    width: 1600, height: 960, show: false, backgroundColor: '#17181a', icon: path.join(__dirname, 'localpaint.ico'), title: 'LocalPaint',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -514,7 +519,7 @@ function createWindow() {
   win.removeMenu();
   win.maximize();
   win.once('ready-to-show', () => win.show());
-  win.loadFile(path.join(__dirname, 'LMP.html'));
+  win.loadFile(path.join(__dirname, 'LocalPaint.html'));
   win.webContents.on('did-finish-load', () => { if (pendingOpen) { const p = pendingOpen; pendingOpen = null; win.webContents.send('project:open-path', p); } });
   // F12 = developer tools (for reporting problems), F11 = full screen.
   win.webContents.on('before-input-event', (e, input) => {
@@ -524,7 +529,7 @@ function createWindow() {
   });
   // Links open in the normal browser.
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
-  // Closing: LMP shows its own "unsaved changes" dialog (Save now / Quit without saving / Cancel).
+  // Closing: LocalPaint shows its own "unsaved changes" dialog (Save now / Quit without saving / Cancel).
   let allowClose = false;
   win.on('close', (e) => {
     if (allowClose) return;
@@ -537,14 +542,14 @@ function createWindow() {
     setTimeout(() => {
       ipcMain.removeListener('app:close-ack', onAck);
       if (acked || allowClose) return;
-      const r = dialog.showMessageBoxSync(win, { type: 'question', buttons: ['Quit', 'Cancel'], defaultId: 1, message: 'LMP is not responding. Quit anyway?' });
+      const r = dialog.showMessageBoxSync(win, { type: 'question', buttons: ['Quit', 'Cancel'], defaultId: 1, message: 'LocalPaint is not responding. Quit anyway?' });
       if (r === 0) { allowClose = true; win.destroy(); }
     }, 2500);
   });
   ipcMain.on('app:quit', (ev) => { if (ev.sender === win.webContents) { allowClose = true; win.close(); } });
 }
 
-// One LMP at a time: double-clicking another .lmp opens it in the running window.
+// One LocalPaint at a time: double-clicking another .lmp opens it in the running window.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -552,7 +557,7 @@ if (!app.requestSingleInstanceLock()) {
     if (mainWin) { if (mainWin.isMinimized()) mainWin.restore(); mainWin.focus(); }
     sendOpen(projectArg(argv));
   });
-  app.setAppUserModelId('Leo.LMP');
+  app.setAppUserModelId('LeoDevRX.LocalPaint');
   app.whenReady().then(() => {
     // Folder / file pickers (File System Access API) and clipboard without prompts.
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(true));

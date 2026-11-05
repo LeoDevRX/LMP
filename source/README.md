@@ -1,30 +1,30 @@
-# LMP — Leo's Material Painter
+# LocalPaint
 
 A personal and free alternative to paid material painting programs like Substance Painter, for Windows.
 
-**Owned by [LeoDevRX](https://github.com/LeoDevRX/LMP/commits?author=LeoDevRX).**
+**Owned by [LeoDevRX](https://github.com/LeoDevRX/LocalPaint/commits?author=LeoDevRX).**
 
 ## Version
 
-The version is shown next to **LMP** in the menu bar. A small update adds 0.01 (v0.01 → v0.02). A big update goes to the next whole number (v1.00, v2.00 …).
+The version is shown next to **LocalPaint** in the menu bar. A small update adds 0.01 (v0.01 → v0.02). A big update goes to the next whole number (v1.00, v2.00 …).
 
 ## Open it
 
-Double-click **LMP.exe**. It runs in its own window on your fast graphics card, and nothing needs installing. On laptops with two GPUs it picks the dedicated one, which browsers often don't.
+Double-click **LocalPaint.exe**. It runs in its own window on your fast graphics card, and nothing needs installing. On laptops with two GPUs it picks the dedicated one, which browsers often don't.
 
-- The **presets** folder next to LMP.exe loads automatically, so there's no "Link folder" step.
+- The **presets** folder next to LocalPaint.exe loads automatically, so there's no "Link folder" step.
 - Saved materials, brushes and graphs go into that folder too.
 - **Projects are .lmp files.**
   - **File → Save** (Ctrl+S) suggests the model's name, e.g. `Test vase.lmp`. After the first save, Ctrl+S just overwrites that file.
   - **Save as…** (Ctrl+Shift+S) asks where to save a copy, and **Open project…** (Ctrl+O) opens one. Old `.tpaint` projects open too.
   - **Import…** (Ctrl+I) brings in models, HDRIs, Substance files, presets and textures.
-  - In File Explorer, `.lmp` files show the LMP icon. Double-click one to open it in LMP; if LMP is already open, the file opens in that window.
+  - In File Explorer, `.lmp` files show the LocalPaint icon. Double-click one to open it in LocalPaint; if LocalPaint is already open, the file opens in that window.
 - **F11** switches to full screen. **F12** opens developer tools, which help when reporting a problem.
 
 
 Performance:
 
-- The viewport only redraws while something is happening, so an idle LMP barely uses the GPU.
+- The viewport only redraws while something is happening, so an idle LocalPaint barely uses the GPU.
 - Shelf thumbnails are made only when they scroll into view.
 - Smart masks keep their generator result cached, so painting on a mask doesn't recompute the noise stack every frame.
 
@@ -38,7 +38,7 @@ Performance:
 - **Scanned materials.** 114 CC0 photo scans from ambientCG (metal, rust, painted metal, sci-fi plates, wood, stone, bricks, ground, fabric, leather, plastic, plaster) with colour, roughness, metal, normal and height maps. They're on the shelf with previews and download the first time you use one (about 4 MB each), then stay on your PC in `presets/Scanned materials`.
 - **Realistic smart materials** built from the scans the way Substance builds them (a scanned base, then scanned rust or paint, dirt, grunge and edge wear placed by smart masks): Rusty Metal, Heavy Rust, Chipped Red Paint, Worn Green Paint, Industrial White Paint, Sci-Fi Panels, Scratched Gunmetal, Tarnished Gold, Worn Chrome, Worn Diamond Plate, Old Wood Planks, Mossy Rock, Dirty Concrete, Worn Leather and Dusty Rubber.
 - **Studio photo lighting** by default (an HDR from Poly Haven), so metals reflect properly. Pick another in Display settings.
-- **Bringing Substance materials in.** Substance materials only run in Adobe's engine; the Guide shows how to export one from Substance Painter and use it in LMP with the exact same look.
+- **Bringing Substance materials in.** Substance materials only run in Adobe's engine; the Guide shows how to export one from Substance Painter and use it in LocalPaint with the exact same look.
 
 ## New in v1.04
 
@@ -50,7 +50,7 @@ Performance:
 
 ## New in v1.02
 
-- **Updates.** LMP checks GitHub when it starts. If a new version is out it tells you, and **Update now** downloads only the changed files and restarts LMP. Pick **Later** and an orange **Update** button stays in the top bar until you update. **File → Check for updates** checks any time.
+- **Updates.** LocalPaint checks GitHub when it starts. If a new version is out it tells you, and **Update now** downloads only the changed files and restarts LocalPaint. Pick **Later** and an orange **Update** button stays in the top bar until you update. **File → Check for updates** checks any time.
 - **Shape generator.** Right-click a layer → **Add generator → Shape**. Pick a circle, square, star, heart and more, then drag it on the model to move it. Size, stretch, rotation and edge hardness are in Properties.
 
 ## New in v1.01
@@ -59,16 +59,16 @@ Performance:
 
 ## New in v1.00
 
-- **Autosave and crash recovery.** A backup is saved every few minutes while you work (D:\LMP\autosave if you have a D: drive). If LMP closes by accident, it offers to restore the backup next time.
+- **Autosave and crash recovery.** A backup is saved every few minutes while you work (D:\LocalPaint\autosave if you have a D: drive). If LocalPaint closes by accident, it offers to restore the backup next time.
 - **Start window.** New file, recent projects, autosaves and Browse in one place. Ctrl+O opens it too.
 - **History panel (H).** Your last 25 changes. Click one to go back to it; click the top row to come back.
 - **Settings** (File → Settings): autosave, texture size for new files, render scale, undo steps, low performance mode, start screen.
-- **Low performance mode.** On a weak device LMP asks before loading whether to use it.
+- **Low performance mode.** On a weak device LocalPaint asks before loading whether to use it.
 - **Guide (F1).** The purple Guide button replaces Help. It has short how-tos with "Show me" buttons, and a search that understands normal questions and typos. The 3D + 2D layout key moved from F1 to F4.
 - **Smoothing (lazy mouse)** for steady strokes, and **pen pressure** (size and flow) for drawing tablets.
 - **Layer thumbnails** show what is really painted on each layer and mask.
 - **Real smart material previews.** The previews are made by running the real layers on a test box with baked edges and cavities.
-- **UV overlap check.** Press **O** (or the button next to the wireframe button). Places where UV pieces overlap show as dark spots in the 2D view and on the 3D model, so you can find the faces and fix them in Blender. LMP also warns you when you open a model that has them.
+- **UV overlap check.** Press **O** (or the button next to the wireframe button). Places where UV pieces overlap show as dark spots in the 2D view and on the 3D model, so you can find the faces and fix them in Blender. LocalPaint also warns you when you open a model that has them.
 - **Gubby brush.** Stamps Gubby onto your model (Assets → Brushes → Gubby).
 - **18 more brushes:** leaks, rust blotches, hair/fur, wood grain, torn tape, pencil, bubbles, skin pores, gravel, cloth weave, cross hatch, hexagons, dry cracks, sea sponge, dents, smudge, dust and chipped paint.
 
@@ -89,7 +89,7 @@ Ported from **TextureCraft**, which is open source under MIT/Apache:
   - The new **Opacity** slider caps how much one stroke can cover.
   - **Symmetry X / Y / Z** mirrors strokes across the model's centre. It's in the top bar, and **X** toggles it.
 
-The **Material Designer** tab (top right) is inspired by Material Painter. The code is LMP's own, because Material Painter's licence is GPL.
+The **Material Designer** tab (top right) is inspired by Material Painter. The code is LocalPaint's own, because Material Painter's licence is GPL.
 
 - **Graph.** Build tileable materials from nodes: generators, adjust, blend, filters and outputs.
   - Drag from a node's output dot to another node's input to connect them.
@@ -164,7 +164,7 @@ Click a group title in a panel to collapse it.
 
 ## Importing images (like Substance)
 
-**Drag PNG / JPG images onto LMP**, or use **File → Import…**. A dialog asks what each image is: Base color, Roughness, Metallic, Height, Normal (OpenGL or DirectX), Emissive, a **mask** for the selected layer, a **brush tip**, or Assets shelf only. Names like `_BaseColor`, `_Normal`, `_Roughness` and `_Height` are picked automatically. Choose **New fill layer** or **Selected fill layer**, then **Import**.
+**Drag PNG / JPG images onto LocalPaint**, or use **File → Import…**. A dialog asks what each image is: Base color, Roughness, Metallic, Height, Normal (OpenGL or DirectX), Emissive, a **mask** for the selected layer, a **brush tip**, or Assets shelf only. Names like `_BaseColor`, `_Normal`, `_Roughness` and `_Height` are picked automatically. Choose **New fill layer** or **Selected fill layer**, then **Import**.
 
 On any fill layer, every channel row in Properties has an image button: click it, or drop an image on the row, to use a picture for that channel. **⟳** replaces the image and **×** removes it.
 
@@ -258,7 +258,7 @@ You can drag files onto the viewport: a model (in Baking mode it becomes the hig
 - **Paint on masks.** Click a layer's **M** chip (or press **M**). The brush now paints the mask: Paint = white (show), Erase = black (hide). This works on fill layers too, the same as in Substance.
 - **Blend modes.** Normal, Multiply, Screen, Overlay, Add, Subtract, Darken, Lighten, and Offset (good for height).
 - **Normal channel.** Texture sets with a normal map (OpenGL or DirectX, detected by name) feed a normal channel. It's combined with height into the final normal, which shows in the viewport and exports.
-- **Smart materials (.tpsmart).** A smart material is a stack of fill layers plus smart masks, so it adapts to any model. Six come with LMP: Worn Red Paint, Rusty Iron, Worn Gold, Dusty Plastic, Glowing Cracks and Mossy Stone. To make your own, build layers, then click **Presets → Save smart**.
+- **Smart materials (.tpsmart).** A smart material is a stack of fill layers plus smart masks, so it adapts to any model. Six come with LocalPaint: Worn Red Paint, Rusty Iron, Worn Gold, Dusty Plastic, Glowing Cracks and Mossy Stone. To make your own, build layers, then click **Presets → Save smart**.
 - **Baked AO** shades the viewport (AO shading slider) and exports as an AO map and in Unreal's ORM.
 
 ## Baking high poly → low poly
@@ -286,16 +286,16 @@ Baked maps are saved inside the `.tpaint` project, so you don't need the high po
 
 ## Substance materials (.sbsar / .spsm)
 
-**Drag a .sbsar or .spsm onto LMP**, or click one in Assets → Substance. LMP opens the file and translates it into layers. Substance Painter isn't needed.
+**Drag a .sbsar or .spsm onto LocalPaint**, or click one in Assets → Substance. LocalPaint opens the file and translates it into layers. Substance Painter isn't needed.
 
-- **.sbsar**: LMP reads the file's name, description, outputs and sliders. A procedural one becomes a small look-alike folder: Base, a Variation layer with a noise mask, and a glowing layer for emissive materials like lava.
+- **.sbsar**: LocalPaint reads the file's name, description, outputs and sliders. A procedural one becomes a small look-alike folder: Base, a Variation layer with a noise mask, and a glowing layer for emissive materials like lava.
   - **If texture pictures are stored inside** (common for scanned materials), they become the layer's color, roughness, normal and other maps.
-  - **If the material is procedural**, its pattern is a compiled program that only Adobe's engine can run. LMP then makes an **approximation**: a fill layer with the right kind of color, roughness and metal, taken from its sliders and its name or category (stone, gold, wood…).
-- **.spsm** (smart material): LMP reads the whole layer stack. You get a folder with the same layers, names, order, opacities and blend modes.
+  - **If the material is procedural**, its pattern is a compiled program that only Adobe's engine can run. LocalPaint then makes an **approximation**: a fill layer with the right kind of color, roughness and metal, taken from its sliders and its name or category (stone, gold, wood…).
+- **.spsm** (smart material): LocalPaint reads the whole layer stack. You get a folder with the same layers, names, order, opacities and blend modes.
   - **Colors and values** set in each layer (base color, roughness, metal, height, emissive) come over exactly.
   - **Materials inside it** (e.g. Granite Rock Mossy) use the texture previews Substance stored in the file. That's the material at its default settings, 512 px.
   - **Grunge maps** become real picture masks.
-  - **Mask generators** become LMP smart masks: MG Dirt → Dirt, edge wear → Edge wear, Mask Builder / Mask Editor → the closest one. Bake mesh maps in the Baking tab so they show.
+  - **Mask generators** become LocalPaint smart masks: MG Dirt → Dirt, edge wear → Edge wear, Mask Builder / Mask Editor → the closest one. Bake mesh maps in the Baking tab so they show.
   - **Not carried over:** filters (blur, sharpen), hand-painted strokes, and extra generators beyond the first on a mask. The message after translating lists what was skipped.
 - The layer's **Properties → Source** shows what was read and what was guessed.
 - Refine the result with the fill settings (projection, scale, adjustments) and smart masks, then **Save material** to keep it.
@@ -303,7 +303,7 @@ Baked maps are saved inside the `.tpaint` project, so you don't need the high po
 
 ## Presets folder
 
-LMP loads the **presets** folder next to LMP.exe automatically. The folder icon under the Assets shelf opens it; after adding files, click Rescan.
+LocalPaint loads the **presets** folder next to LocalPaint.exe automatically. The folder icon under the Assets shelf opens it; after adding files, click Rescan.
 
 - **Image materials (.tptex):** one file holding all the maps plus placement and adjustments. **Save material** with an image fill layer selected makes one.
 - **Material presets (.tpmat):** click to load into the brush, or into the selected fill layer. **Save material** adds your own.
@@ -314,14 +314,14 @@ LMP loads the **presets** folder next to LMP.exe automatically. The folder icon 
 
 - One texture set: all meshes share one UV space, and UVs must be in 0–1 without overlaps.
 - The Material Designer makes tileable 2D textures; mesh-map driven wear goes in smart masks. Graph edits aren't part of Ctrl+Z (layer changes are).
-- TextureCraft's extra lobes (clear coat, sheen, transmission, subsurface) aren't in LMP, so glass, velvet and car paint use their base look.
+- TextureCraft's extra lobes (clear coat, sheen, transmission, subsurface) aren't in LocalPaint, so glass, velvet and car paint use their base look.
 - High-poly baking runs on the CPU. Very dense high polys (several million triangles) at 2048 px can take a minute.
-- Smart materials converted from Substance keep only their flat look; rebuild the wear with LMP's smart masks.
+- Smart materials converted from Substance keep only their flat look; rebuild the wear with LocalPaint's smart masks.
 
 ## Source code
 
-The `source` folder has the full project (TypeScript + three.js). Opening .sbsar / .spsm uses 7-Zip (7z-wasm, LGPL), built into LMP.html. Its licence is in `THIRD-PARTY-7zip.txt`.
+The `source` folder has the full project (TypeScript + three.js). Opening .sbsar / .spsm uses 7-Zip (7z-wasm, LGPL), built into LocalPaint.html. Its licence is in `THIRD-PARTY-7zip.txt`.
 Bakers, noise, patterns, smart masks, materials and brush alphas are ported from TextureCraft (MIT / Apache-2.0); see `THIRD-PARTY-TextureCraft.txt`. The Poly Haven textures and HDRIs are CC0 (public domain).
 To rebuild after changes: install Node.js, then in `source` run `npm install` and `npm run build`.
-The desktop app is Electron 33. Its code is in `source/desktop` (main.js, preload.js). To update the app, copy `dist/index.html` to `resources/app/LMP.html`.
+The desktop app is Electron 33. Its code is in `source/desktop` (main.js, preload.js). To update the app, copy `dist/index.html` to `resources/app/LocalPaint.html`.
 The result is `source/dist/index.html`.

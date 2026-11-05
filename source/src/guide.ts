@@ -1,5 +1,5 @@
 /**
- * LMP Guide: short how-to guides plus an offline "smart" search that understands
+ * LocalPaint Guide: short how-to guides plus an offline "smart" search that understands
  * everyday wording ("how do i make my brush go smoothly like guiding a path"),
  * synonyms and typos.
  */
@@ -28,7 +28,7 @@ export const GUIDES: Guide[] = [
   // ------------------------------------------------------------------ start here
   {
     id: 'getting-started', title: 'Getting started', cat: 'Start here',
-    sum: 'What LMP is, how it works and how to set it up.',
+    sum: 'What LocalPaint is, how it works and how to set it up.',
     tags: ['start', 'basics', 'tutorial', 'new', 'setup', 'substance'],
     words: 'begin beginner first time intro introduction learn welcome overview how works familiar controls',
     body: [
@@ -61,10 +61,10 @@ export const GUIDES: Guide[] = [
   },
   {
     id: 'whats-new', title: `What's new in v${VERSION}`, cat: 'Start here',
-    sum: 'What LMP can do in this version.',
+    sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
-      { h: 'New in v1.01', steps: ['Bug fixes.'] },
+      { h: 'New in v1.01', steps: ['LMP is now called LocalPaint (LP for short), with a new logo. Your .lmp projects, settings and presets carry over.', 'Bug fixes.'] },
       { h: 'In v1.00', steps: [
         'Paint colour, roughness, metal, height and glow in one stroke, with brushes, layers, folders and masks.',
         'Smart materials and smart masks (edge wear, dirt, rust) that follow the shape of your model, with anchor points for micro details.',
@@ -73,21 +73,21 @@ export const GUIDES: Guide[] = [
         'Bake normal, AO, curvature, thickness and other mesh maps, including from a high poly.',
         'Hold ~ for Blender-style camera views (front, top, left…).',
         'Autosave, history, UV overlap check, and this Guide with walk-throughs.',
-        'LMP checks for updates and can install them for you.',
+        'LocalPaint checks for updates and can install them for you.',
       ] },
     ],
     related: ['autosave', 'history', 'lazy-mouse', 'pen-pressure'],
   },
   {
-    id: 'about', title: 'About LMP', cat: 'Start here',
-    sum: `Leo's Material Painter v${VERSION}, owned by LeoDevRX.`,
+    id: 'about', title: 'About LocalPaint', cat: 'Start here',
+    sum: `LocalPaint v${VERSION}, owned by LeoDevRX.`,
     tags: ['about', 'credits'], words: 'owner author made creator who license version leodevrx leo dev github copyright',
     body: [
-      { p: `LMP (Leo's Material Painter), version ${VERSION}.` },
-      { p: 'This program is owned by **[LeoDevRX](https://github.com/LeoDevRX/LMP/commits?author=LeoDevRX)**.' },
+      { p: `LocalPaint, version ${VERSION}.` },
+      { p: 'This program is owned by **[LeoDevRX](https://github.com/LeoDevRX/LocalPaint/commits?author=LeoDevRX)**.' },
       { p: 'A personal and free alternative to paid material painting programs. Made with three.js and Electron.' },
-      { p: 'LMP isn\'t made by, affiliated with or endorsed by Adobe. Substance, Substance 3D Painter and Substance 3D Designer are trademarks of Adobe; they\'re named only to say which files LMP can open. LMP doesn\'t include any Adobe software or Substance materials.' },
-      { p: 'Scanned materials come from ambientCG and the HDR environments from Poly Haven, both CC0. Open-source licenses are in the licenses folder next to LMP.exe.' },
+      { p: 'LocalPaint isn\'t made by, affiliated with or endorsed by Adobe. Substance, Substance 3D Painter and Substance 3D Designer are trademarks of Adobe; they\'re named only to say which files LocalPaint can open. LocalPaint doesn\'t include any Adobe software or Substance materials.' },
+      { p: 'Scanned materials come from ambientCG and the HDR environments from Poly Haven, both CC0. Open-source licenses are in the licenses folder next to LocalPaint.exe.' },
     ],
   },
 
@@ -134,23 +134,23 @@ export const GUIDES: Guide[] = [
         'Ctrl+O opens a window with your recent projects and autosaves, plus a Browse button.',
         'You can also double click an .lmp file in Windows to open it.',
       ] },
-      { tips: ['If you close LMP with unsaved changes it asks if you want to save first.'] },
+      { tips: ['If you close LocalPaint with unsaved changes it asks if you want to save first.'] },
     ],
     show: [{ label: 'Recent projects', act: 'open' }],
     related: ['autosave'],
   },
   {
     id: 'autosave', title: 'Autosave and getting lost work back', cat: 'Basics',
-    sum: 'LMP keeps backups while you work.',
+    sum: 'LocalPaint keeps backups while you work.',
     tags: ['autosave', 'recover', 'crash', 'save'], words: 'backup lost work closed crashed freeze restore auto saved rescue',
     body: [
       { steps: [
-        'Every few minutes LMP saves a backup if something changed. You\'ll see "Autosaved" at the bottom for a moment.',
-        'If LMP closed without you quitting it, it offers to restore the latest backup when you start it again.',
+        'Every few minutes LocalPaint saves a backup if something changed. You\'ll see "Autosaved" at the bottom for a moment.',
+        'If LocalPaint closed without you quitting it, it offers to restore the latest backup when you start it again.',
         'You can open any backup yourself with Ctrl+O > Autosaves.',
         'How often it saves and how many backups it keeps can be changed in File > Settings.',
       ] },
-      { tips: ['Backups go in D:\\LMP\\autosave if you have a D: drive, otherwise next to LMP.', 'Opening a backup opens a copy, so your original file stays as it was until you save.'] },
+      { tips: ['Backups go in D:\\LocalPaint\\autosave if you have a D: drive, otherwise next to LocalPaint.', 'Opening a backup opens a copy, so your original file stays as it was until you save.'] },
     ],
     show: [{ label: 'Autosaves', act: 'autosaves' }, { label: 'Settings', act: 'settings' }],
     related: ['history', 'settings'],
@@ -266,7 +266,7 @@ export const GUIDES: Guide[] = [
     tags: ['pressure', 'brush'], words: 'pen tablet wacom huion xp-pen stylus pressure sensitivity draw hard soft surface ipad',
     body: [
       { steps: [
-        'Plug in your tablet. LMP picks up the pressure by itself.',
+        'Plug in your tablet. LocalPaint picks up the pressure by itself.',
         'In Properties > Brush, turn on Size and/or Flow next to Pen pressure.',
         'Press lightly for thin, light strokes and harder for big, strong ones.',
       ] },
@@ -284,7 +284,7 @@ export const GUIDES: Guide[] = [
         'Press P or click the picker on the left.',
         'In the toolbar choose Material (everything) or Color only.',
         'Click on the model or the 2D view. A small swatch next to the cursor shows what you\'re about to pick.',
-        'After picking, LMP switches back to the tool you were using.',
+        'After picking, LocalPaint switches back to the tool you were using.',
       ] },
     ],
     show: [{ label: 'Picker', act: 'tool:picker', hl: '#toolbar' }],
@@ -350,7 +350,7 @@ export const GUIDES: Guide[] = [
     sum: 'Find the places where UV pieces sit on top of each other.',
     tags: ['uv', 'model'], words: 'overlap overlapping overlaps uv uvs stacked dark black spots spot error problem paints twice both places mirrored seams blender unwrap fix wrong bad',
     body: [
-      { p: 'If two parts of the model use the same spot on the texture, painting one also paints the other, and baking can look wrong there. LMP checks this when you open a model.' },
+      { p: 'If two parts of the model use the same spot on the texture, painting one also paints the other, and baking can look wrong there. LocalPaint checks this when you open a model.' },
       { steps: [
         'Press O (or the overlap button next to the wireframe button at the top right).',
         'Overlapping parts show as dark spots on the model and in the 2D view. The more pieces stack up, the darker it gets.',
@@ -492,8 +492,8 @@ export const GUIDES: Guide[] = [
     tags: ['import', 'image', 'material'], words: 'image png jpg jpeg photo picture texture drag drop import basecolor albedo diffuse normal map height roughness metallic decal sticker logo',
     body: [
       { steps: [
-        'Drag image files into LMP, or press Ctrl+I.',
-        'For each image choose Color, Normal, Height, Roughness, Metallic and so on. LMP guesses from the file name.',
+        'Drag image files into LocalPaint, or press Ctrl+I.',
+        'For each image choose Color, Normal, Height, Roughness, Metallic and so on. LocalPaint guesses from the file name.',
         'Then choose where it goes: a new fill layer, the selected fill layer, a brush tip, or just the shelf.',
       ] },
     ],
@@ -510,23 +510,23 @@ export const GUIDES: Guide[] = [
     related: ['poly-fill', 'masks'],
   },
   {
-    id: 'from-substance', title: 'Bring a Substance material into LMP as pictures', cat: 'Layers & materials',
+    id: 'from-substance', title: 'Bring a Substance material into LocalPaint as pictures', cat: 'Layers & materials',
     sum: 'No Substance Designer? Export the material from Painter as pictures and drop those in.',
     tags: ['substance', 'import', 'material', 'image', 'export'],
     words: 'substance painter sbsar spsm smart material exact same look identical copy convert bake export textures adobe my own',
     body: [
-      { p: 'If you have Substance 3D Designer, you don\'t need this: just drop the .sbsar in (see "Substance materials"). Without it, LMP uses its own version of the material. When that isn\'t close enough, let Painter make the pictures and give those to LMP.' },
+      { p: 'If you have Substance 3D Designer, you don\'t need this: just drop the .sbsar in (see "Substance materials"). Without it, LocalPaint uses its own version of the material. When that isn\'t close enough, let Painter make the pictures and give those to LocalPaint.' },
       { h: 'In Substance Painter', steps: [
         'Make a new project with a flat plane (a 1 × 1 plane from Blender works) and a texture size like 2048.',
         'Drag the material or smart material onto it.',
         'File > Export Textures. Pick the "PBR Metallic Roughness" preset, choose a folder and click Export.',
       ] },
-      { h: 'In LMP', steps: [
-        'Drag all the exported pictures onto LMP at once (or Ctrl+I and pick them).',
-        'LMP recognises Base Color, Roughness, Metallic, Normal and Height from the names. Choose "New fill layer".',
+      { h: 'In LocalPaint', steps: [
+        'Drag all the exported pictures onto LocalPaint at once (or Ctrl+I and pick them).',
+        'LocalPaint recognises Base Color, Roughness, Metallic, Normal and Height from the names. Choose "New fill layer".',
         'In Properties set the tiling and switch Projection to Tri-planar so it wraps around your model without seams.',
       ] },
-      { tips: ['Choose "Add to Assets shelf only" instead, and the material stays on your shelf to use again.', 'Want smart-material wear on top? Add LMP\'s smart masks (edge wear, dirt) to the layer afterwards.'] },
+      { tips: ['Choose "Add to Assets shelf only" instead, and the material stays on your shelf to use again.', 'Want smart-material wear on top? Add LocalPaint\'s smart masks (edge wear, dirt) to the layer afterwards.'] },
     ],
     show: [{ label: 'Import pictures', act: 'import' }],
     related: ['import-images', 'materials'],
@@ -538,7 +538,7 @@ export const GUIDES: Guide[] = [
     body: [
       { steps: [
         'Open Scanned materials on the Assets shelf. The ones marked with a download size aren\'t on your PC yet.',
-        'Click one or drag it onto the model. The first time, LMP downloads it (a few MB) and keeps it for next time.',
+        'Click one or drag it onto the model. The first time, LocalPaint downloads it (a few MB) and keeps it for next time.',
         'It comes in as a fill layer with real colour, roughness, metal, normal and height maps. Add masks to wear it in.',
       ] },
       { tips: ['These are free CC0 scans from ambientCG.com.', 'The "Realistic" smart materials are built from these scans.'] },
@@ -552,22 +552,22 @@ export const GUIDES: Guide[] = [
     tags: ['substance', 'import', 'material'], words: 'sbsar spsm substance painter designer adobe sbsrender engine material mode preset seed parameters sliders simple diffuse stylized hand painted exact same look',
     body: [
       { steps: [
-        'Drag an .sbsar onto LMP, or click one under Substance materials on the shelf. Your Substance Painter materials are listed there already.',
+        'Drag an .sbsar onto LocalPaint, or click one under Substance materials on the shelf. Your Substance Painter materials are listed there already.',
         'It becomes a fill layer. Properties shows its settings the way Painter does: Preset, Seed, then its groups (open one to see its sliders).',
         'Pick a preset or move the sliders. The model updates as you go.',
-        'If the material uses mesh maps (ambient occlusion, curvature, world normals, position), bake them in the Baking tab first. LMP plugs them in for you.',
+        'If the material uses mesh maps (ambient occlusion, curvature, world normals, position), bake them in the Baking tab first. LocalPaint plugs them in for you.',
       ] },
       { h: 'Exact or close?', steps: [
         'The coloured tag under the name tells you. Green, "Adobe\'s engine": it looks exactly like in Painter.',
-        'Purple, "LMP\'s version": LMP has its own copy of this material (Simple Diffuse, for example), so every slider works.',
-        'Orange, "approximation": LMP builds a stand-in from the material\'s name and sliders. Close, not identical.',
+        'Purple, "LocalPaint\'s version": LocalPaint has its own copy of this material (Simple Diffuse, for example), so every slider works.',
+        'Orange, "approximation": LocalPaint builds a stand-in from the material\'s name and sliders. Close, not identical.',
       ] },
       { h: 'Using Adobe\'s engine', steps: [
-        'Adobe\'s renderer (sbsrender.exe) comes with Substance 3D Designer. If Designer is installed, LMP finds it on its own.',
+        'Adobe\'s renderer (sbsrender.exe) comes with Substance 3D Designer. If Designer is installed, LocalPaint finds it on its own.',
         'If it\'s somewhere unusual, go to File > Settings > Substance materials and click Find sbsrender.exe.',
         'Each change takes a second or two to render, since Adobe\'s program runs in the background.',
       ] },
-      { tips: ['Tiling materials are put on with tri-planar projection so there are no seams. Switch to UV in Projection if you want Painter\'s default.', 'Channels at the bottom of Properties says which output goes where. Set one to "Not used" to leave that channel alone.', '.spsm smart materials are rebuilt as LMP layers with masks.'] },
+      { tips: ['Tiling materials are put on with tri-planar projection so there are no seams. Switch to UV in Projection if you want Painter\'s default.', 'Channels at the bottom of Properties says which output goes where. Set one to "Not used" to leave that channel alone.', '.spsm smart materials are rebuilt as LocalPaint layers with masks.'] },
     ],
     show: [{ label: 'Substance materials', act: 'shelf:unsupported', hl: '.shelf-sec', text: 'Substance materials' }],
     related: ['from-substance', 'baking', 'materials'],
@@ -618,7 +618,7 @@ export const GUIDES: Guide[] = [
         'Press Ctrl+Shift+E, or the export button on the right edge.',
         'Output template: pick where the textures are going. There are templates for Unity (Built-in, URP, HDRP), Unreal, Godot, Roblox, Blender, Maya / 3ds Max (Arnold), V-Ray, Redshift, glTF, Sketchfab, USD and more.',
         'Pick the file type (png, jpg, tga; png can be 16 bits), the size and the padding.',
-        'Check the output directory (on the desktop app it starts as D:\\LMP\\export when you have a D: drive) and click Export.',
+        'Check the output directory (on the desktop app it starts as D:\\LocalPaint\\export when you have a D: drive) and click Export.',
         'List of exports shows each file and a console with what happened.',
       ] },
       { h: 'Your own template', steps: [
@@ -638,7 +638,7 @@ export const GUIDES: Guide[] = [
     body: [
       { steps: [
         'Press Ctrl+Shift+E and choose Roblox (SurfaceAppearance) as the output template.',
-        'Roblox only allows textures up to 1024 x 1024, so LMP keeps the size at or below that.',
+        'Roblox only allows textures up to 1024 x 1024, so LocalPaint keeps the size at or below that.',
         'In Roblox Studio, put a SurfaceAppearance inside your MeshPart and set ColorMap, NormalMap, RoughnessMap and MetalnessMap to the exported files.',
         'If you painted glow, use the EmissiveMask file and set EmissiveStrength and EmissiveTint.',
       ] },
@@ -667,7 +667,7 @@ export const GUIDES: Guide[] = [
     related: ['performance'],
   },
   {
-    id: 'performance', title: 'LMP is slow or laggy', cat: 'Help & settings',
+    id: 'performance', title: 'LocalPaint is slow or laggy', cat: 'Help & settings',
     sum: 'Things you can turn down to make it run better.',
     tags: ['performance'], words: 'slow lag laggy lagging stutter freeze fps weak computer device laptop old pc fast faster speed performance low end crash memory',
     body: [
@@ -682,17 +682,17 @@ export const GUIDES: Guide[] = [
     related: ['settings'],
   },
   {
-    id: 'updates', title: 'Updating LMP', cat: 'Help & settings',
-    sum: 'LMP checks for new versions and can update itself.',
+    id: 'updates', title: 'Updating LocalPaint', cat: 'Help & settings',
+    sum: 'LocalPaint checks for new versions and can update itself.',
     tags: ['update', 'settings'], words: 'update updates upgrade new version newer latest outdated out of date download github release check',
     body: [
       { steps: [
-        'When LMP starts it asks GitHub if there is a newer version. If there is, a window tells you what\'s new.',
-        'Click Update now. LMP downloads only the changed files (a few MB), then restarts. Your projects and autosaves aren\'t touched.',
+        'When LocalPaint starts it asks GitHub if there is a newer version. If there is, a window tells you what\'s new.',
+        'Click Update now. LocalPaint downloads only the changed files (a few MB), then restarts. Your projects and autosaves aren\'t touched.',
         'If you click Later, an orange Update button stays in the top bar next to the Guide button until you update.',
         'You can check yourself any time with File > Check for updates, and turn the start check off in File > Settings.',
       ] },
-      { tips: ['The full download page is github.com/LeoDevRX/LMP/releases.'] },
+      { tips: ['The full download page is github.com/LeoDevRX/LocalPaint/releases.'] },
     ],
     show: [{ label: 'Check for updates', act: 'updates' }],
   },
@@ -768,7 +768,7 @@ const SYN: Record<string, string[]> = {
   substance: ['substance', 'sbsar', 'spsm', 'adobe', 'painter'],
   start: ['start', 'started', 'begin', 'beginner', 'tutorial', 'intro', 'learn', 'basics', 'first', 'howto', 'help', 'welcome'],
   setup: ['setup', 'set', 'install', 'configure'],
-  about: ['about', 'credits', 'credit', 'owner', 'owned', 'author', 'made', 'creator', 'version', 'leodevrx', 'leo', 'github'],
+  about: ['about', 'credits', 'credit', 'owner', 'owned', 'author', 'made', 'creator', 'version', 'leodevrx', 'leo', 'github', 'localpaint', 'lmp'],
   update: ['update', 'updates', 'updating', 'upgrade', 'changelog', 'changes', 'whats', 'latest', 'release', 'outdated', 'version', 'newer'],
   tip: ['tip', 'tips'],
 };
@@ -985,11 +985,11 @@ export const TOURS: Record<string, TourStep[]> = {
   ],
   'roblox': [
     { at: '#sidestrip button[title^="Export"]', t: 'Click Export (or press Ctrl+Shift+E).', wait: 'state:export' },
-    { at: '#export-dialog .exp-template', t: 'Choose Roblox (SurfaceAppearance). LMP keeps the size at 1024 for Roblox.' },
+    { at: '#export-dialog .exp-template', t: 'Choose Roblox (SurfaceAppearance). LocalPaint keeps the size at 1024 for Roblox.' },
     { at: '#export-dialog .exp-go', t: 'Click Export. In Roblox Studio, put a SurfaceAppearance in your MeshPart and set its maps to these files.', wait: 'click' },
   ],
   'import-images': [
-    { at: '#viewport', t: 'Drag your PNG or JPG files onto LMP now, or press Ctrl+I.', wait: 'state:import' },
+    { at: '#viewport', t: 'Drag your PNG or JPG files onto LocalPaint now, or press Ctrl+I.', wait: 'state:import' },
     { at: '.imp-list', t: 'For each picture choose what it is: Color, Normal, Height and so on.' },
     { at: '.lmp-modal-foot button.primary', t: 'Choose where it goes, then click to add it.', wait: 'click' },
   ],

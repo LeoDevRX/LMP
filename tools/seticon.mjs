@@ -14,7 +14,7 @@ const id = groups.length ? groups[0].id : 1;
 ResEdit.Resource.IconGroupEntry.replaceIconsForResource(res.entries, id, lang, iconFile.icons.map((i) => i.data));
 const vi = ResEdit.Resource.VersionInfo.fromEntries(res.entries);
 for (const v of vi) {
-  v.setStringValues({ lang: 1033, codepage: 1200 }, { FileDescription: "LMP - Leo's Material Painter", ProductName: "LMP - Leo's Material Painter", CompanyName: 'LeoDevRX', LegalCopyright: 'Owned by LeoDevRX', OriginalFilename: 'LMP.exe', InternalName: 'LMP' });
+  v.setStringValues({ lang: 1033, codepage: 1200 }, { FileDescription: 'LocalPaint', ProductName: 'LocalPaint', CompanyName: 'LeoDevRX', LegalCopyright: 'Owned by LeoDevRX', OriginalFilename: 'LocalPaint.exe', InternalName: 'LocalPaint' });
   v.setFileVersion(...vv, 1033);
   v.setProductVersion(...vv, 1033);
   v.outputToResourceEntries(res.entries);

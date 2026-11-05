@@ -1,4 +1,4 @@
-# Builds the scanned-materials release (CC0 scans from ambientCG) that LMP downloads materials from.
+# Builds the scanned-materials release (CC0 scans from ambientCG) that LocalPaint downloads materials from.
 # Runs when materials/config.json or the builder changes, or by hand.
 name: Build scanned materials
 
@@ -30,8 +30,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="Scanned materials for LMP. LMP downloads these by itself when you use one, so you don't need to download anything here. All materials are CC0 from ambientCG.com."
+          NOTES="Scanned materials for LocalPaint. LocalPaint downloads these by itself when you use one, so you don't need to download anything here. All materials are CC0 from ambientCG.com."
           if ! gh release view materials >/dev/null 2>&1; then
-            gh release create materials --title "Scanned materials (used by LMP)" --notes "$NOTES" --target "$GITHUB_SHA" --latest=false
+            gh release create materials --title "Scanned materials (used by LocalPaint)" --notes "$NOTES" --target "$GITHUB_SHA" --latest=false
           fi
           gh release upload materials out/* --clobber

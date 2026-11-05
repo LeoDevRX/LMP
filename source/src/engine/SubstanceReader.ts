@@ -483,7 +483,7 @@ export async function translateSpsm(bytes: Uint8Array, file: string): Promise<{ 
     const best = procs.find((p: any) => /\/mg_/.test(p?.urlToSbsRes ?? '')) ?? procs[0];
     const base: 'white' | 'black' = it.maskInitial === 0 ? 'black' : 'white';
     if (flat.some((a) => /Paint/.test(a._class))) skipped.push(`hand-painted mask on “${name}”`);
-    if (procs.length > 1) skipped.push(`${procs.length - 1} extra mask generator(s) on “${name}” (LMP uses one per mask)`);
+    if (procs.length > 1) skipped.push(`${procs.length - 1} extra mask generator(s) on “${name}” (LocalPaint uses one per mask)`);
     if (flat.some((a) => /Filter/.test(a._class))) skipped.push(`mask filter on “${name}”`);
     if (best?.urlToSbsRes) {
       const g = genFrom(best.urlToSbsRes, tweaks(best));
@@ -556,13 +556,13 @@ export async function translateSpsm(bytes: Uint8Array, file: string): Promise<{ 
         }
       }
     }
-    if (!Object.values(enabled).some(Boolean)) { if (actions.length) skipped.push(`“${name}” (nothing LMP can show)`); return null; }
+    if (!Object.values(enabled).some(Boolean)) { if (actions.length) skipped.push(`“${name}” (nothing LocalPaint can show)`); return null; }
     const { blend, opacity } = blendOf(it, used || 1);
     let mask = maskOf(it, name);
     if (patterned && !mask) { const g = defaultGen('noise'); g.amount = 0.5; g.contrast = 0.5; mask = { base: 'black', gen: g }; }
     return {
       kind: 'fill', name, visible: it.enabled !== false, opacity, blend, mask, values, enabled, maps, tri, glossInv,
-      note: `From ${file}: layer “${name}”${notes.length ? ' — ' + notes.join(', ') : ''}. Uniform colors and values are exact; materials and grunges use the previews stored in the file; mask generators become LMP smart masks.`,
+      note: `From ${file}: layer “${name}”${notes.length ? ' — ' + notes.join(', ') : ''}. Uniform colors and values are exact; materials and grunges use the previews stored in the file; mask generators become LocalPaint smart masks.`,
     };
   };
 
@@ -580,7 +580,7 @@ export async function translateSpsm(bytes: Uint8Array, file: string): Promise<{ 
   };
 
   const root = await nodeOf(tree.layerGroup);
-  if (!root) throw new Error(`${file}: no layers LMP can use.`);
+  if (!root) throw new Error(`${file}: no layers LocalPaint can use.`);
   if (root.kind === 'group' && (!root.name || root.name === 'Folder')) root.name = file.replace(/\.[^.]+$/, '');
   return { root, skipped };
 }
