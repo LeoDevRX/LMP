@@ -5,7 +5,7 @@ name: Build LocalPaint release
 on:
   push:
     branches: [main]
-    paths: ['app/**', 'presets/**', 'source/src/version.ts', 'tools/seticon.mjs', 'tools/package.json', 'notes/**', '.github/workflows/release.yml']
+    paths: ['app/**', 'presets/**', 'source/**', 'tools/seticon.mjs', 'tools/package.json', 'notes/**', 'README.md', '.github/workflows/release.yml']
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,17 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+
+      - name: Test and build the app from source
+        working-directory: source
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run typecheck
+          npm run build
+          cp dist/index.html ../app/LocalPaint.html
+          cp desktop/main.js desktop/preload.js desktop/package.json ../app/
 
       - name: Read version
         id: ver

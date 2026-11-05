@@ -21,7 +21,7 @@ I built LocalPaint with help from Claude Opus 5.5, an AI model by Anthropic, to 
 
 ## Download
 
-**[Download the latest version](https://github.com/LeoDevRX/LocalPaint/releases/latest)** (Windows 10/11, 64-bit)
+**[Download the latest version](https://github.com/LeoDevRX/LMP/releases/latest)** (Windows 10/11, 64-bit)
 
 - **New install:** download `LocalPaint-vX.XX.zip`, extract it anywhere (for example `D:\LocalPaint`) and open `LocalPaint.exe`. Nothing needs installing.
 - **Already have LocalPaint:** click **Update** in LocalPaint when it tells you there's a new version. You can also download the small `LocalPaint-vX.XX-update.zip`, extract it into the folder that holds your LocalPaint folder and replace files when Windows asks.

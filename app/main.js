@@ -100,7 +100,9 @@ ipcMain.handle('project:open', async (e) => {
     filters: [{ name: 'LocalPaint project', extensions: ['lmp', 'tpaint'] }, { name: 'All files', extensions: ['*'] }],
   });
   if (r.canceled || !r.filePaths[0]) return null;
-  return readProject(r.filePaths[0]);
+  // The renderer checks the file type before requesting the contents. An accidental
+  // .spp selection can be several GB and must not be read as a JSON project.
+  return { path: r.filePaths[0] };
 });
 ipcMain.handle('project:read', (_e, p) => readProject(p));
 function readProject(p) {
@@ -121,7 +123,11 @@ ipcMain.handle('file:import', async (e) => {
     ],
   });
   if (r.canceled) return [];
-  return r.filePaths.map((p) => { const b = fs.readFileSync(p); return { path: p, name: path.basename(p), data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }; });
+  return r.filePaths.map((p) => {
+    // Retain the filename so the renderer can explain this unsupported format.
+    const b = /\.spp$/i.test(p) ? Buffer.alloc(0) : fs.readFileSync(p);
+    return { path: p, name: path.basename(p), data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) };
+  });
 });
 
 /** Make .lmp files open in LocalPaint and show its icon in Explorer (current user only, no admin needed). */

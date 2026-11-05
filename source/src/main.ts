@@ -25,6 +25,7 @@ import {
 import {
   parseProject, restoreLayers, restoreLayer, serializeLayer, serializeProject, toB64, fromB64, makeSmartMaterial, applySmartMaterial, restoreMeshMaps,
 } from './engine/Project';
+import { checkProjectFileName } from './engine/ProjectFormat';
 import { STARTER } from './starter';
 import { SCAN_SMART } from './smartScans';
 import SCAN_PREVIEWS from './assets/scanPreviews.json';
@@ -1071,6 +1072,7 @@ class App {
   async openProjectFromPath(path: string, data?: ArrayBuffer) {
     const native = (window as any).texpaintNative;
     try {
+      checkProjectFileName(path);
       if (!data) data = (await native.readProject(path)).data as ArrayBuffer;
       await this.openProjectText(new TextDecoder().decode(data));
       this.projectPath = /\.lmp$/i.test(path) ? path : '';
@@ -1130,6 +1132,7 @@ class App {
   }
 
   async openProjectFile(file: File) {
+    try { checkProjectFileName(file.name); } catch (e) { this.projectOpenFailed(e); return; }
     if (!(await this.confirmUnsaved('Open this project anyway?'))) return;
     try {
       await this.openProjectText(await file.text());
@@ -1140,6 +1143,7 @@ class App {
   }
 
   async openAny(file: File) {
+    try { checkProjectFileName(file.name); } catch (e) { this.projectOpenFailed(e); return; }
     const ext = file.name.split('.').pop()!.toLowerCase();
     if (MODEL_EXTS.includes(ext)) {
       if (this.mode === 'bake') return this.loadHighPoly(file);
@@ -1742,7 +1746,13 @@ class App {
 
   /** Files dropped from the computer: Substance files are translated, the rest opened / added to Assets. */
   async dropFiles(all: File[]) {
-    let files = all;
+    // Report unsupported projects even in a mixed drop, before adding the other assets.
+    const projects = all.filter((f) => /\.spp$/i.test(f.name));
+    if (projects.length) {
+      try { checkProjectFileName(projects[0].name); } catch (e) { this.projectOpenFailed(e); }
+    }
+    let files = all.filter((f) => !projects.includes(f));
+    if (!files.length) return;
     const sub = files.filter((f) => /\.(sbsar|spsm)$/i.test(f.name));
     if (sub.length) { await this.translateSubstance(sub); files = files.filter((f) => !sub.includes(f)); if (!files.length) return; }
     const imgs = files.filter((f) => /\.(png|jpe?g|webp|bmp|tga|tiff?)$/i.test(f.name));

@@ -64,6 +64,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.03', steps: ['Fixed download links, consistent handling of unsupported .spp files, and clearer messages for damaged projects.'] },
       { h: 'New in v1.02', steps: ['Bug fixes: opening a Substance Painter project (.spp) or another file that isn\'t a LocalPaint project now says what it is and what to do, instead of a confusing error.'] },
       { h: 'New in v1.01', steps: ['LMP is now called LocalPaint (LP for short), with a new logo. Your .lmp projects, settings and presets carry over.', 'Bug fixes.'] },
       { h: 'In v1.00', steps: [
@@ -85,7 +86,7 @@ export const GUIDES: Guide[] = [
     tags: ['about', 'credits'], words: 'owner author made creator who license version leodevrx leo dev github copyright',
     body: [
       { p: `LocalPaint, version ${VERSION}.` },
-      { p: 'This program is owned by **[LeoDevRX](https://github.com/LeoDevRX/LocalPaint/commits?author=LeoDevRX)**.' },
+      { p: 'This program is owned by **[LeoDevRX](https://github.com/LeoDevRX/LMP/commits?author=LeoDevRX)**.' },
       { p: 'A personal and free alternative to paid material painting programs. Made with three.js and Electron.' },
       { p: 'LocalPaint isn\'t made by, affiliated with or endorsed by Adobe. Substance, Substance 3D Painter and Substance 3D Designer are trademarks of Adobe; they\'re named only to say which files LocalPaint can open. LocalPaint doesn\'t include any Adobe software or Substance materials.' },
       { p: 'Scanned materials come from ambientCG and the HDR environments from Poly Haven, both CC0. Open-source licenses are in the licenses folder next to LocalPaint.exe.' },
@@ -693,7 +694,7 @@ export const GUIDES: Guide[] = [
         'If you click Later, an orange Update button stays in the top bar next to the Guide button until you update.',
         'You can check yourself any time with File > Check for updates, and turn the start check off in File > Settings.',
       ] },
-      { tips: ['The full download page is github.com/LeoDevRX/LocalPaint/releases.'] },
+      { tips: ['The full download page is github.com/LeoDevRX/LMP/releases.'] },
     ],
     show: [{ label: 'Check for updates', act: 'updates' }],
   },

@@ -202,25 +202,7 @@ export async function serializeProject(
   return new Blob([JSON.stringify(file)], { type: 'application/json' });
 }
 
-/** A file that isn't a LocalPaint project, with what it most likely is (shown to the user). */
-export class NotProjectError extends Error {
-  constructor(public title: string, message: string) { super(message); this.name = 'NotProjectError'; }
-}
-
-export async function parseProject(text: string): Promise<ProjectFile> {
-  const head = text.slice(0, 16);
-  if (/^\uFFFD?HDF/.test(head) || head.includes('HDF\r\n')) {
-    throw new NotProjectError('That\'s a Substance Painter project (.spp)',
-      'LocalPaint can\'t open Substance Painter projects: Adobe keeps that format closed. To carry your work over, open it in Substance Painter and use File > Export Textures (and File > Export Mesh if you don\'t have the model). Then open the model in LocalPaint and drag the textures onto it.');
-  }
-  if (head.startsWith('PK')) throw new NotProjectError('That\'s a zip file', 'Extract it first, then open the .lmp project (or the model / pictures) inside it.');
-  let f: ProjectFile;
-  try { f = JSON.parse(text) as ProjectFile; } catch {
-    throw new NotProjectError('That isn\'t a LocalPaint project', 'LocalPaint projects are .lmp files saved with File > Save. To bring in a model, textures or Substance materials, use File > Import (Ctrl+I) or drag them onto LocalPaint.');
-  }
-  if (f.format !== 'texpaint-project') throw new NotProjectError('That isn\'t a LocalPaint project', 'This file has data in it, but not a LocalPaint project.');
-  return f;
-}
+export { NotProjectError, parseProject } from './ProjectFormat';
 
 export async function restoreMeshMaps(ts: TextureSet, f: ProjectFile): Promise<boolean> {
   if (!f.meshMaps) return false;
