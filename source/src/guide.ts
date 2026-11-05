@@ -64,6 +64,10 @@ export const GUIDES: Guide[] = [
     sum: 'Updates, shapes, autosave, history, the Guide and more.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v2.01', steps: [
+        'Anchor points like Substance: right click a layer > Add anchor point, then set Micro details on an Edge wear, Dirt, AO or Curvature mask. Wear and dirt follow your painted and shape details.',
+        'Shapes: 21 shapes (soft ones too), UV tiling mode, move / rotate / resize handles on the model, and Height detail (press in / stick out).',
+      ] },
       { h: 'New in v2.00', steps: [
         'Scanned materials: 114 real photo-scanned materials (metal, rust, painted metal, sci-fi plates, wood, stone, fabric, leather and more) with colour, roughness, metal, normal and height maps. Each one downloads the first time you use it.',
         'Realistic smart materials built from those scans the way Substance builds them: Rusty Metal, Heavy Rust, Chipped Red Paint, Sci-Fi Panels, Worn Diamond Plate, Old Wood Planks, Mossy Rock and more.',
@@ -385,13 +389,30 @@ export const GUIDES: Guide[] = [
     body: [
       { steps: [
         'Right click a layer and choose Add generator > Shape (circle, star…). The layer now only shows inside the shape.',
-        'Drag on the 3D view to move the shape. It turns to face whatever surface you drag over. Press Esc or Done when it\'s in place.',
-        'In Properties change the shape, size, stretch, rotation and how hard the edge is. Tick Invert to cut the shape out instead.',
-        'To move it again later, select the layer\'s mask and click "Move: drag it on the model".',
+        'Use the handles on the model: drag the middle to move it (it turns to face the surface), the ring knob to turn it, the square to resize it. Press Esc or Done when it\'s in place.',
+        'In Properties pick one of 21 shapes (disc, square, star, capsule, brick, soft ones like bell, paraboloid and gaussian, waves…), and set stretch and how hard the edge is. Tick Invert to cut the shape out instead.',
+        'Projection "UV (tiling)" repeats the shape over the whole model in a grid, like Substance\'s Shape fill.',
+        'Height detail > Press in / Stick out turns the shape into a dent or bump and makes it an anchor point, so wear and dirt can follow it.',
       ] },
       { tips: ['You can add a shape to an existing mask too: Properties > Mask effects > Add effect > Generator: Shape. Multiply cuts it out of the mask, Lighten adds it.'] },
     ],
     related: ['masks', 'smart-masks'],
+  },
+  {
+    id: 'anchors', title: 'Anchor points (wear around painted details)', cat: 'Layers & materials',
+    sum: 'Make edge wear and dirt follow details you painted or shapes you added, not just the model\'s edges.',
+    tags: ['anchor', 'mask', 'smart', 'wear', 'shape'], words: 'anchor anchors point points micro details microdetails height detail bolts panels seams engraving react follow around rim edge wear dirt generator reference substance',
+    body: [
+      { p: 'Generators like Edge wear and Dirt look at the model\'s shape. An anchor point lets them also see details you added with height, like a pressed-in circle, painted panel lines or bolts.' },
+      { steps: [
+        'Make a detail with height: a fill layer with a Shape mask, then Height detail > Press in (or Stick out). That also makes it an anchor point. Or right click any layer with painted height > Add anchor point.',
+        'Pick the layer that should wear (paint, rust, dirt) and give it a generator mask: Edge wear, Dirt, Ambient occlusion or Curvature.',
+        'In the mask\'s Properties, set Micro details to your anchor (⚓). The wear now wraps around your detail too.',
+        'Use Detail strength to make the effect stronger or weaker.',
+      ] },
+      { tips: ['Anchors are found by layer name, so rename carefully.', 'Change the detail later (move the shape, paint more height) and the wear follows by itself.'] },
+    ],
+    related: ['shapes', 'smart-masks'],
   },
   {
     id: 'poly-fill', title: 'Filling a whole part', cat: 'Painting',
@@ -704,7 +725,8 @@ const SYN: Record<string, string[]> = {
   erase: ['erase', 'eraser', 'rubber', 'remove', 'wipe'],
   brush: ['brush', 'brushes', 'stroke', 'strokes', 'draw', 'drawing'],
   alpha: ['alpha', 'alphas', 'stamp', 'tip', 'tips', 'grunge', 'splatter'],
-  shape: ['shape', 'shapes', 'circle', 'square', 'star', 'heart', 'triangle', 'hexagon', 'ring', 'diamond', 'decal', 'sticker', 'generator'],
+  shape: ['shape', 'shapes', 'circle', 'square', 'star', 'heart', 'triangle', 'hexagon', 'ring', 'diamond', 'decal', 'sticker', 'generator', 'disc', 'capsule', 'brick', 'bell', 'gaussian'],
+  anchor: ['anchor', 'anchors', 'micro', 'microdetail', 'microdetails'],
   size: ['size', 'bigger', 'smaller', 'radius', 'resize', 'big', 'small', 'width', 'thick', 'thin'],
   flow: ['flow', 'build', 'buildup'],
   opacity: ['opacity', 'transparent', 'transparency', 'faint', 'strength', 'see'],
@@ -745,6 +767,7 @@ const PHRASES: [RegExp, string[]][] = [
   [/edge wear|worn edges/, ['wear', 'smart']],
   [/smart mat/, ['smart', 'material']],
   [/smart mask/, ['smart', 'mask']],
+  [/anchor point|micro ?details?|wear (around|follow)|react to (my )?(paint|details?|shapes?)/, ['anchor']],
   [/low (performance|end)|too (slow|weak)|runs? (slow|bad)/, ['performance']],
   [/pen pressure|drawing tablet/, ['pressure']],
   [/both sides|other side/, ['symmetry']],

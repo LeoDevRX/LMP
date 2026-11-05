@@ -28,6 +28,11 @@ Performance:
 - Shelf thumbnails are made only when they scroll into view.
 - Smart masks keep their generator result cached, so painting on a mask doesn't recompute the noise stack every frame.
 
+## New in v2.01
+
+- **Anchor points** (like Substance). Right-click a layer → Add anchor point. On an Edge wear, Dirt, Ambient occlusion or Curvature mask, set **Micro details** to that anchor and the wear follows the details you painted or added with shapes.
+- **Shapes:** 21 shapes (including soft ones like bell, paraboloid and gaussian), a UV tiling mode, move / rotate / resize handles on the model, and **Height detail** (press in / stick out) which also makes the layer an anchor.
+
 ## New in v2.00
 
 - **Scanned materials.** 114 CC0 photo scans from ambientCG (metal, rust, painted metal, sci-fi plates, wood, stone, bricks, ground, fabric, leather, plastic, plaster) with colour, roughness, metal, normal and height maps. They're on the shelf with previews and download the first time you use one (about 4 MB each), then stay on your PC in `presets/Scanned materials`.

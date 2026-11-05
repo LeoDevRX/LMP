@@ -696,3 +696,13 @@ body.moving-shape #viewport > canvas { cursor: move; }
 #tour .tour-btns button.primary { background: linear-gradient(180deg, #a36bff, #8648f5); border-color: #9b5cff; color: #fff; font-weight: 600; }
 #tour .tour-stop { background: none; border-color: transparent; color: #a99ccc; }
 @media (prefers-reduced-motion: reduce) { #tour .tour-ptr, #tour .tour-ring { animation: none; } #tour * { transition: none !important; } }
+.anchor-badge { margin-left: 6px; font-size: 11px; color: #c4a0ff; }
+
+/* v2.01: shape handles */
+#shape-gizmo { position: fixed; inset: 0; pointer-events: none; z-index: 40; }
+#shape-gizmo .gz-ring { position: fixed; border-radius: 50%; border: 2px dashed #c49bff; box-shadow: 0 0 0 1px #0006, inset 0 0 0 1px #0006; }
+#shape-gizmo .gz-move, #shape-gizmo .gz-rot, #shape-gizmo .gz-scale { position: fixed; pointer-events: auto; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px #0008; }
+#shape-gizmo .gz-move { width: 22px; height: 22px; border-radius: 50%; background: #9b5cff; border: 2px solid #fff; cursor: move; }
+#shape-gizmo .gz-move::after { content: '✥'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 13px; }
+#shape-gizmo .gz-rot { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 3px solid #9b5cff; cursor: grab; }
+#shape-gizmo .gz-scale { width: 14px; height: 14px; border-radius: 3px; background: #fff; border: 3px solid #9b5cff; cursor: nwse-resize; }

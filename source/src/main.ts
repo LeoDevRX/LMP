@@ -8,7 +8,7 @@ import {
   PaintTarget, BlendMode, BLEND_LABEL, GroupLayer, BakeKey, IdSource, ID_SOURCE_LABEL, DEFAULT_XF, DEFAULT_ADJ, FillAdjust, ScanRef,
 } from './engine/TextureSet';
 import { BrushPreset, BrushSettings, BUILTIN_TIPS, STARTER_BRUSHES, builtinTip, builtinTipThumb, imageTip, tipTexture, tipPreview } from './brushes';
-import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings, SHAPE_KINDS, SHAPE_LABEL, ShapeKind } from './engine/Masks';
+import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings, SHAPE_KINDS, SHAPE_LABEL, ShapeKind, MICRO_TYPES } from './engine/Masks';
 import { PATTERNS, PATTERN_LABEL, PatternType } from './engine/Procedural';
 import { MeshParts, PartMode, PART_LABEL, Part } from './engine/MeshParts';
 import { MaterialPreset, PresetShelf, ShelfItem , isDesktopApp, openNativePresets , splitMapName, MapSlot } from './engine/Presets';
@@ -250,7 +250,7 @@ class App {
 
   setModel(model: LoadedModel, resolution?: number, skipBake = false) {
     this.projectPath = '';
-    this.shapeMove = null; document.body.classList.remove('moving-shape');
+    this.shapeMove = null; document.body.classList.remove('moving-shape'); this.showGizmo?.(false);
     this.shelfOpen?.clear();
     const bake = this.ts?.bakeSettings;
     const hs = this.ts?.heightStrength;
@@ -2419,7 +2419,7 @@ class App {
     else if (k === 'o') this.toggleOverlap();
     else if (k === 'escape') {
       if (this.guideOpen) this.closeGuide();
-      else if (this.shapeMove) { this.shapeMove = null; document.body.classList.remove('moving-shape'); this.buildToolbar(); this.buildProperties(); }
+      else if (this.shapeMove) { this.shapeMove = null; document.body.classList.remove('moving-shape'); this.showGizmo(false); this.buildToolbar(); this.buildProperties(); }
       else if (this.tool === 'path' && (this.path.p3.length || this.path.p2.length)) this.clearPath();
       else if (this.flyout.classList.contains('open')) this.flyout.classList.remove('open');
       else if (this.mode === 'bake') this.setMode('paint');
@@ -3901,9 +3901,78 @@ class App {
     const hit = this.vp.pick(r.left + v.x + v.w / 2, r.top + v.y + v.h / 2);
     if (hit) { g.shapeAt = hit.point.toArray() as [number, number, number]; g.shapeNormal = hit.normal.clone().normalize().toArray() as [number, number, number]; }
   }
+  // Handles in the 3D view: middle = move, ring knob = rotate, square = resize (like Substance's projection gizmo).
+  private gizmo: HTMLElement | null = null;
+  private gizmoRaf = 0;
+  private showGizmo(on: boolean) {
+    cancelAnimationFrame(this.gizmoRaf);
+    if (!on) { this.gizmo?.remove(); this.gizmo = null; return; }
+    if (!this.gizmo) {
+      const gz = el('div', { id: 'shape-gizmo' },
+        el('div', { class: 'gz-ring' }), el('div', { class: 'gz-move', title: 'Drag to move the shape' }),
+        el('div', { class: 'gz-rot', title: 'Drag to turn the shape' }), el('div', { class: 'gz-scale', title: 'Drag to resize the shape' }));
+      document.body.append(gz);
+      this.gizmo = gz;
+      const drag = (cls: string, kind: 'move' | 'rot' | 'scale') => gz.querySelector(cls)!.addEventListener('pointerdown', (ev) => {
+        const e = ev as PointerEvent, sm = this.shapeMove;
+        if (!sm) return;
+        e.preventDefault(); e.stopPropagation();
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        this.ts.checkpoint(kind === 'move' ? 'Move shape' : kind === 'rot' ? 'Rotate shape' : 'Resize shape');
+        const st = this.gizmoState();
+        if (!st) return;
+        const a0 = Math.atan2(e.clientY - st.cy, e.clientX - st.cx), d0 = Math.hypot(e.clientX - st.cx, e.clientY - st.cy) || 1;
+        const rot0 = sm.g.shapeRot ?? 0, size0 = sm.g.shapeSize ?? 0.2;
+        const move = (mv: PointerEvent) => {
+          if (kind === 'move') { this.moveShapeTo(mv.clientX, mv.clientY); return; }
+          if (kind === 'rot') {
+            const a = Math.atan2(mv.clientY - st.cy, mv.clientX - st.cx);
+            let r = rot0 + ((a - a0) * 180) / Math.PI * st.flip;
+            r = ((r + 540) % 360) - 180;
+            sm.g.shapeRot = Math.round(r);
+          } else sm.g.shapeSize = Math.min(1.5, Math.max(0.01, size0 * (Math.hypot(mv.clientX - st.cx, mv.clientY - st.cy) / d0)));
+          this.ts.maskChanged(sm.layer); this.modified = true; this.poke();
+        };
+        const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); this.queueLayerThumbs(); this.buildProperties(); };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      });
+      drag('.gz-move', 'move'); drag('.gz-rot', 'rot'); drag('.gz-scale', 'scale');
+    }
+    const tick = () => {
+      const st = this.gizmoState(), gz = this.gizmo;
+      if (!gz) return;
+      if (!st) gz.style.display = 'none';
+      else {
+        gz.style.display = 'block';
+        const r = Math.max(18, st.r);
+        Object.assign((gz.querySelector('.gz-ring') as HTMLElement).style, { left: `${st.cx - r}px`, top: `${st.cy - r}px`, width: `${r * 2}px`, height: `${r * 2}px` });
+        Object.assign((gz.querySelector('.gz-move') as HTMLElement).style, { left: `${st.cx}px`, top: `${st.cy}px` });
+        const ra = st.angle - Math.PI / 2;
+        Object.assign((gz.querySelector('.gz-rot') as HTMLElement).style, { left: `${st.cx + Math.cos(ra) * r}px`, top: `${st.cy + Math.sin(ra) * r}px` });
+        Object.assign((gz.querySelector('.gz-scale') as HTMLElement).style, { left: `${st.cx + r * 0.7071}px`, top: `${st.cy + r * 0.7071}px` });
+      }
+      this.gizmoRaf = requestAnimationFrame(tick);
+    };
+    tick();
+  }
+  /** Where the shape is on screen: centre, radius, the angle of its "up" and whether the view mirrors it. */
+  private gizmoState(): { cx: number; cy: number; r: number; angle: number; flip: number } | null {
+    const sm = this.shapeMove;
+    if (!sm || sm.g.shapeProj === 'uv' || this.layout3 === '2d') return null;
+    const f = this.ts.shapeFrame(sm.g);
+    const c = this.toScreen(f.at);
+    const pu = this.toScreen(f.at.clone().addScaledVector(f.u, f.hx));
+    const pv = this.toScreen(f.at.clone().addScaledVector(f.v, f.hy));
+    if (!c || !pu || !pv) return null;
+    const ux = pu.x - c.x, uy = pu.y - c.y, vx = pv.x - c.x, vy = pv.y - c.y;
+    return { cx: c.x, cy: c.y, r: Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy)), angle: Math.atan2(vy, vx) + Math.PI / 2, flip: ux * vy - uy * vx > 0 ? -1 : 1 };
+  }
+
   toggleShapeMove(layer: Layer, g: GenSettings) {
     this.shapeMove = this.shapeMove?.g === g ? null : { layer, g };
     document.body.classList.toggle('moving-shape', !!this.shapeMove);
+    this.showGizmo(!!this.shapeMove);
     if (this.shapeMove) toast('Drag on the model to move the shape. Esc when done.');
     this.buildToolbar(); this.buildProperties();
   }
@@ -3923,12 +3992,38 @@ class App {
     });
   }
 
+  /** Anchor point (Substance): this layer's height details become usable as micro details by generators. */
+  toggleAnchor(l: Layer) {
+    const ts = this.ts;
+    ts.checkpoint(l.anchor ? 'Remove anchor point' : 'Add anchor point');
+    l.anchor = !l.anchor;
+    // Anchor names must be unique, generators find them by name.
+    if (l.anchor && ts.allLayers.some((x) => x !== l && x.anchor && x.name === l.name)) l.name = `${l.name} ${l.id}`;
+    ts.markAll();
+    this.modified = true;
+    this.refresh();
+    if (l.anchor) toast(`“${l.name}” is an anchor point. On another layer's Edge wear / Dirt / Curvature generator, set "Micro details" to it.`);
+  }
+  /** Make a (shape-masked) fill layer a height detail: pressed in or sticking out, and an anchor point. */
+  makeHeightDetail(l: Layer, dir: 'in' | 'out') {
+    if (l.kind !== 'fill') return;
+    const ts = this.ts;
+    ts.checkpoint('Height detail');
+    for (const ch of Object.keys(l.enabled) as Ch[]) l.enabled[ch] = ch === 'height';
+    l.values.height = dir === 'in' ? 0.38 : 0.62;
+    if (!l.anchor) { l.anchor = true; if (ts.allLayers.some((x) => x !== l && x.anchor && x.name === l.name)) l.name = `${l.name} ${l.id}`; }
+    ts.markAll();
+    this.modified = true;
+    this.refresh();
+    toast(`“${l.name}” now ${dir === 'in' ? 'presses into' : 'sticks out of'} the surface and is an anchor point. Give another layer an Edge wear or Dirt mask and pick it under "Micro details".`);
+  }
+
   addMaskTo(layer: Layer, base: 'white' | 'black', gen: GenType | null) {
     const g = gen ? defaultGen(gen) : null;
     if (g?.type === 'shape') this.placeShapeAtView(g);
     this.ts.addMask(layer, { base, gen: g });
     this.ts.activeId = layer.id;
-    if (g?.type === 'shape' && layer.mask?.gen) { this.shapeMove = { layer, g: layer.mask.gen }; document.body.classList.add('moving-shape'); toast('Shape added. Drag on the model to move it, then press Esc (or Done) when it\'s where you want it.'); }
+    if (g?.type === 'shape' && layer.mask?.gen) { this.shapeMove = { layer, g: layer.mask.gen }; document.body.classList.add('moving-shape'); this.showGizmo(true); toast('Shape added. Drag on the model to move it, then press Esc (or Done) when it\'s where you want it.'); }
     this.paintTarget = 'mask';
     this.modified = true;
     if (base === 'black' && !gen) {
@@ -4444,6 +4539,7 @@ class App {
       el('div', { class: 'ctx-sub' }, el('span', { class: 'muted' }, 'Add generator (black mask + generator)'),
         ...GEN_TYPES.map((t) => item(GEN_LABEL[t], () => this.addMaskTo(l, 'black', t)))),
       item('Remove mask', () => { ts.removeMask(l); this.paintTarget = 'content'; this.modified = true; }, !l.mask),
+      item(l.anchor ? 'Remove anchor point' : 'Add anchor point (use as micro details)', () => this.toggleAnchor(l)),
       el('hr'),
       item('New folder above', () => { ts.activeId = l.id; ts.addGroup(); this.modified = true; }),
       item('Put in a new folder  (Ctrl+G)', () => this.groupLayers([l])),
@@ -4574,7 +4670,10 @@ class App {
       inp.addEventListener('click', (e) => e.stopPropagation());
       name.append(inp);
       setTimeout(() => { inp.focus(); inp.select(); });
-    } else name.textContent = l.name;
+    } else {
+      name.textContent = l.name;
+      if (l.anchor) name.append(el('span', { class: 'anchor-badge', title: 'Anchor point: generators on other layers can use this layer\'s height details (Micro details)' }, '⚓'));
+    }
     const blend = select<BlendMode>((Object.keys(BLEND_LABEL) as BlendMode[]).map((b) => ({ value: b, label: BLEND_LABEL[b].split(' ')[0] })), l.blend, (v) => {
       ts.checkpoint('Blend mode');
       const ts2 = this.targetsFor(l);
@@ -4883,15 +4982,28 @@ class App {
       const moving = !!layer && this.shapeMove?.g === g;
       const inv = el('input', { type: 'checkbox', checked: g.invert }) as HTMLInputElement;
       inv.addEventListener('change', () => { pre(kp + 'invert'); g.invert = inv.checked; live(); });
+      const uvMode = g.shapeProj === 'uv';
+      const projSeg = el('div', { class: 'seg grow' },
+        el('button', { class: uvMode ? '' : 'on', title: 'One shape placed on the model like a sticker (move it with the handles)', onclick: () => { if (!uvMode) return; pre(kp + 'proj'); g.shapeProj = 'decal'; live(); this.buildProperties(); } }, 'On the model'),
+        el('button', { class: uvMode ? 'on' : '', title: 'The shape repeats over the UVs with tiling (Substance\'s default)', onclick: () => { if (uvMode) return; pre(kp + 'proj'); g.shapeProj = 'uv'; g.shapeTile ??= 4; if (this.shapeMove?.g === g) this.toggleShapeMove(layer!, g); live(); this.buildProperties(); } }, 'UV (tiling)'));
       out.push(el('div', { class: 'row' }, el('label', {}, 'Shape'), ss),
-        layer ? el('div', { class: 'row' }, el('button', { class: 'grow' + (moving ? ' primary' : ''), onclick: () => this.toggleShapeMove(layer, g) },
-          moving ? 'Done moving (Esc)' : 'Move: drag it on the model')) : el('span', {}),
+        el('div', { class: 'row' }, el('label', {}, 'Projection'), projSeg),
+        ...(uvMode ? [
+          slider('Tiling', { min: 1, max: 32, step: 1, value: g.shapeTile ?? 4, fmt: (v) => `${v} × ${v}`, onInput: (v) => { pre(kp + 'tile'); g.shapeTile = v; live(); } }).el,
+          slider('Offset U', { min: -0.5, max: 0.5, step: 0.005, value: g.shapeOff?.[0] ?? 0, fmt: (v) => v.toFixed(2), onInput: (v) => { pre(kp + 'offu'); g.shapeOff = [v, g.shapeOff?.[1] ?? 0]; live(); } }).el,
+          slider('Offset V', { min: -0.5, max: 0.5, step: 0.005, value: g.shapeOff?.[1] ?? 0, fmt: (v) => v.toFixed(2), onInput: (v) => { pre(kp + 'offv'); g.shapeOff = [g.shapeOff?.[0] ?? 0, v]; live(); } }).el,
+        ] : [layer ? el('div', { class: 'row' }, el('button', { class: 'grow' + (moving ? ' primary' : ''), onclick: () => this.toggleShapeMove(layer, g) },
+          moving ? 'Done (Esc)' : 'Move / rotate / scale on the model')) : el('span', {})]),
         slider('Size', { min: 0.01, max: 1.5, step: 0.005, value: g.shapeSize ?? 0.2, fmt: (v) => Math.round(v * 100) + '%', onInput: (v) => { pre(kp + 'size'); g.shapeSize = v; live(); } }).el,
         slider('Stretch', { min: 0.2, max: 5, step: 0.01, value: g.shapeAspect ?? 1, fmt: (v) => v.toFixed(2), onInput: (v) => { pre(kp + 'aspect'); g.shapeAspect = v; live(); } }).el,
         slider('Rotation', { min: -180, max: 180, step: 1, value: g.shapeRot ?? 0, fmt: (v) => Math.round(v) + '°', onInput: (v) => { pre(kp + 'rot'); g.shapeRot = v; live(); } }).el,
         sl('Hard edge', 'contrast', 0, 1, 0.01),
         el('label', { class: 'check-row' }, inv, ' Invert (hide inside the shape)'),
-        el('p', { class: 'note' }, 'The shape is projected onto the model like a sticker. Click "Move" and drag on the 3D view to place it; it turns to face the surface you drag over.'));
+        layer?.kind === 'fill' ? el('div', { class: 'row' }, el('label', {}, 'Height detail'), el('div', { class: 'seg grow' },
+          el('button', { title: 'Make this layer press the shape into the surface (height only) and make it an anchor point', onclick: () => this.makeHeightDetail(layer, 'in') }, 'Press in'),
+          el('button', { title: 'Make this layer raise the shape out of the surface (height only) and make it an anchor point', onclick: () => this.makeHeightDetail(layer, 'out') }, 'Stick out'))) : el('span', {}),
+        el('p', { class: 'note' }, uvMode ? 'The shape repeats over the UVs, like Substance\'s Shape fill. Use Tiling for how many, Size for how big each one is.'
+          : 'The shape sits on the model like a sticker. Click "Move / rotate / scale" and use the handles in the 3D view: drag the middle to move it, the ring to turn it, the square to resize it.'));
       return out;
     }
     if (g.type === 'pattern') {
@@ -4912,6 +5024,18 @@ class App {
     const inv = el('input', { type: 'checkbox', checked: g.invert }) as HTMLInputElement;
     inv.addEventListener('change', () => { pre(kp + 'invert'); g.invert = inv.checked; live(); });
     out.push(el('label', { class: 'check-row' }, inv, ' Invert'));
+    if (MICRO_TYPES.includes(g.type)) out.push(...this.microControls(g, pre, live, kp, layer));
+    return out;
+  }
+
+  /** "Micro details" (Substance anchor points): pick an anchor whose height details this generator follows. */
+  private microControls(g: GenSettings, pre: (k: string) => void, live: () => void, kp: string, layer?: Layer): HTMLElement[] {
+    const anchors = this.ts.anchors.filter((a) => a !== layer);
+    const sel = select<string>([{ value: '', label: anchors.length ? 'None' : 'None (add an anchor point first)' }, ...anchors.map((a) => ({ value: a.name, label: '⚓ ' + a.name }))],
+      g.micro?.anchor ?? '', (v) => { pre(kp + 'micro'); g.micro = v ? { anchor: v, amount: g.micro?.amount ?? 1 } : undefined; live(); this.buildProperties(); });
+    sel.title = 'Use the painted or shape height details of an anchored layer, so this mask wraps around them too';
+    const out: HTMLElement[] = [el('div', { class: 'row' }, el('label', {}, 'Micro details'), sel)];
+    if (g.micro?.anchor) out.push(slider('Detail strength', { min: 0, max: 2, step: 0.01, value: g.micro.amount, fmt: (v) => Math.round(v * 100) + '%', onInput: (v) => { pre(kp + 'microAmt'); g.micro!.amount = v; live(); } }).el);
     return out;
   }
 

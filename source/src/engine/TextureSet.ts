@@ -5,7 +5,7 @@ import { bakeHighToLow, HighBakeSettings, DEFAULT_HIGH, readFrames, FRAME_VERT, 
 import { MeshParts, idColor } from './MeshParts';
 import { bakeThickness, downsample, ThicknessSettings, DEFAULT_THICK } from './Thickness';
 import { RayBaker, SAMPLE_FLOATS } from './RayBaker';
-import { FRAG_GEN, GenSettings, LayerMaskSpec, axisVec, genIndex, MaskFx, FX_BLENDS, SHAPE_KINDS } from './Masks';
+import { FRAG_GEN, FRAG_MICRO, GenSettings, LayerMaskSpec, axisVec, genIndex, MaskFx, FX_BLENDS, SHAPE_KINDS, usesMicro } from './Masks';
 import { FRAG_PROC, ProcSource, patternIndex, procKey } from './Procedural';
 import type { GraphJSON } from '../designer/Graph';
 
@@ -122,6 +122,8 @@ export interface LayerMask extends LayerMaskSpec {
 
 interface LayerCommon {
   id: number; name: string; visible: boolean; opacity: number; blend: BlendMode; mask?: LayerMask;
+  /** Anchor point (Substance): generators can use the stack's height up to here as micro details. */
+  anchor?: boolean;
 }
 export interface PaintLayer extends LayerCommon { kind: 'paint'; rts: Record<Ch, RT> }
 /** An image (from a texture set) that drives one channel of a fill layer. */
@@ -638,6 +640,8 @@ export class TextureSet {
     hasPrev: { value: false }, prevMap: { value: null }, fxBlend: { value: 0 }, fxOpacity: { value: 1 }, outInv: { value: false },
     shpKind: { value: 0 }, shpC: { value: new THREE.Vector3() }, shpN: { value: new THREE.Vector3(0, 0, 1) }, shpU: { value: new THREE.Vector3(1, 0, 0) },
     shpV: { value: new THREE.Vector3(0, 1, 0) }, shpHalf: { value: new THREE.Vector2(0.2, 0.2) }, shpSoft: { value: 0.02 },
+    useMicro: { value: false }, microMap: { value: null }, microAmt: { value: 1 },
+    shpUV: { value: false }, shpTile: { value: 1 }, shpOff: { value: new THREE.Vector2() }, shpRotCS: { value: new THREE.Vector2(1, 0) }, shpScale: { value: new THREE.Vector2(0.5, 0.5) },
   });
   /** Renders a Material Designer graph into fill images (set by the app; used when opening projects). */
   graphBaker: ((g: GraphJSON) => Promise<Partial<Record<Ch, FillImage>>>) | null = null;
@@ -1254,6 +1258,7 @@ void main() {
     this.layers = [];
     this.undoStack = []; this.redoStack = [];
     this.thumbRTs.forEach((r) => r.dispose()); this.thumbRTs.clear();
+    this.anchorH.forEach((r) => r.dispose()); this.anchorD.forEach((r) => r.dispose()); this.anchorH.clear(); this.anchorD.clear();
   }
 
   /** Free one layer's own GPU data (children and masks are tracked separately). */
@@ -1266,7 +1271,7 @@ void main() {
 
   snapshot(): Snap {
     const node = (l: Layer): NodeSnap => {
-      const props: Record<string, unknown> = { name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend };
+      const props: Record<string, unknown> = { name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, anchor: l.anchor };
       if (l.kind === 'fill') {
         props.values = structuredClone(l.values); props.enabled = { ...l.enabled }; props.tiling = l.tiling;
         props.images = l.images ? { ...l.images } : undefined;
@@ -1507,7 +1512,7 @@ void main() {
     return walk(g);
   }
 
-  private markAll() {
+  markAll() {
     this.markDirty();
     this.onChange?.();
   }
@@ -1659,7 +1664,7 @@ void main() {
       m.dirty = false;
       return;
     }
-    const key = `${JSON.stringify(g)}#${this.meshVersion}#${this.size}`;
+    const key = `${JSON.stringify(g)}#${this.meshVersion}#${this.size}${usesMicro(g) ? '#a' + this.anchorVersion : ''}`;
     if (!m.genRT || m.genRT.width !== this.size || m.genKey !== key) {
       if (!m.genRT || m.genRT.width !== this.size) { m.genRT?.dispose(); m.genRT = makeRT(this.size); }
       this.renderGenStack(m, g, m.genRT);
@@ -1727,6 +1732,10 @@ void main() {
     (u.idCols.value as THREE.Vector3[]).forEach((v, k) => v.fromArray(cols[k] ?? [0, 0, 0]));
     u.idTol.value = g.tolerance ?? 0.1;
     if (g.type === 'shape') this.shapeUniforms(g);
+    const md = g.micro?.anchor ? this.anchorDetail(g.micro.anchor) : null;
+    u.useMicro.value = !!md;
+    u.microMap.value = md;
+    u.microAmt.value = g.micro?.amount ?? 1;
   }
 
   /** Where a Shape generator sits: its centre, facing and size (defaults to the front of the model). */
@@ -1755,19 +1764,35 @@ void main() {
     (u.shpV.value as THREE.Vector3).copy(f.v);
     (u.shpHalf.value as THREE.Vector2).set(f.hx, f.hy);
     u.shpSoft.value = THREE.MathUtils.lerp(0.35, 0.004, THREE.MathUtils.clamp(g.contrast, 0, 1));
+    u.shpUV.value = g.shapeProj === 'uv';
+    u.shpTile.value = Math.max(1, Math.round(g.shapeTile ?? 1));
+    (u.shpOff.value as THREE.Vector2).set(g.shapeOff?.[0] ?? 0, g.shapeOff?.[1] ?? 0);
+    const a = ((g.shapeRot ?? 0) * Math.PI) / 180;
+    (u.shpRotCS.value as THREE.Vector2).set(Math.cos(a), Math.sin(a));
+    const sz = Math.max(0.01, (g.shapeSize ?? 0.2) * 2.5);
+    (u.shpScale.value as THREE.Vector2).set(sz * (g.shapeAspect ?? 1), sz);
   }
 
   // ------------------------------------------------------------ compositing
 
   compositeDirty() {
-    for (const l of this.allLayers) {
-      if (l.mask?.dirty) { this.updateMask(l); this.markDirty(); }
+    for (let pass = 0; pass < 2; pass++) {
+      for (const l of this.allLayers) {
+        if (l.mask?.dirty) { this.updateMask(l); this.markDirty(); }
+      }
+      if (this.dirty.size) {
+        for (const ch of this.dirty) this.composite(ch);
+        if (this.dirty.has('height') || this.dirty.has('normal')) this.normalDirty = true;
+        this.dirty.clear();
+      }
+      // Anchors changed: masks whose generators use them as micro details update once more.
+      if (!this.anchorChanged || pass === 1) break;
+      this.anchorChanged = false;
+      let any = false;
+      for (const l of this.allLayers) if (l.mask?.gen && usesMicro(l.mask.gen)) { l.mask.dirty = true; any = true; }
+      if (!any) break;
     }
-    if (this.dirty.size) {
-      for (const ch of this.dirty) this.composite(ch);
-      if (this.dirty.has('height') || this.dirty.has('normal')) this.normalDirty = true;
-      this.dirty.clear();
-    }
+    this.anchorChanged = false;
     if (this.normalDirty) this.updateNormal();
   }
 
@@ -1804,18 +1829,51 @@ void main() {
     this.dilateFrom(out, out === this.compA ? this.compB : this.compA, this.final[ch]);
   }
 
+  // ------------------------------------------------------------ anchor points (micro details)
+
+  private anchorH = new Map<number, RT>();
+  private anchorD = new Map<number, RT>();
+  /** Bumped whenever an anchor's height changes, so generators that use it re-render. */
+  anchorVersion = 0;
+  private anchorChanged = false;
+  private matMicro = quadShader(FRAG_MICRO, { heightTex: { value: null }, texel: { value: new THREE.Vector2() }, gain: { value: 30 } });
+  /** Keep the height composited up to an anchored layer, and its detail map (rims and cavities). */
+  private snapAnchor(l: Layer, rt: RT) {
+    let h = this.anchorH.get(l.id), d = this.anchorD.get(l.id);
+    if (!h || h.width !== this.size) { h?.dispose(); h = makeRT(this.size, { type: THREE.HalfFloatType }); this.anchorH.set(l.id, h); }
+    if (!d || d.width !== this.size) { d?.dispose(); d = makeRT(this.size); this.anchorD.set(l.id, d); }
+    this.matCopy.uniforms.src.value = rt.texture;
+    this.gpu.run(this.matCopy, h);
+    this.matCopy.uniforms.src.value = null;
+    const u = this.matMicro.uniforms;
+    u.heightTex.value = h.texture;
+    (u.texel.value as THREE.Vector2).set(1 / this.size, 1 / this.size);
+    this.gpu.run(this.matMicro, d);
+    u.heightTex.value = null;
+    this.anchorVersion++;
+    this.anchorChanged = true;
+  }
+  /** Anchored layers anywhere in the stack (bottom → top). */
+  get anchors(): Layer[] { return this.allLayers.filter((l) => l.anchor); }
+  /** The detail map of an anchor, by layer name (what generators store). */
+  anchorDetail(name: string): THREE.Texture | null {
+    const l = this.allLayers.find((x) => x.anchor && x.name === name);
+    return l ? this.anchorD.get(l.id)?.texture ?? null : null;
+  }
+
   /** Composite a list of layers on top of `start` (which belongs to this depth's pair). */
   private compList(list: Layer[], ch: Ch, start: RT, depth: number): RT {
     const g = this.gpu;
     const [pa, pb] = this.pair(depth);
     let src = start, dst = start === pa ? pb : pa;
     for (const l of list) {
-      if (!l.visible || l.opacity <= 0) continue;
-      if (l.kind === 'fill' && !l.enabled[ch]) continue;
-      if (l.kind === 'fill' && ch === 'normal' && !l.images?.normal) continue;
+      layer: {
+      if (!l.visible || l.opacity <= 0) break layer;
+      if (l.kind === 'fill' && !l.enabled[ch]) break layer;
+      if (l.kind === 'fill' && ch === 'normal' && !l.images?.normal) break layer;
       let groupResult: RT | null = null;
       if (l.kind === 'group') {
-        if (!l.children.length) continue;
+        if (!l.children.length) break layer;
         // Children paint onto a copy of what's below, then the folder blends that in with its mask.
         const [ga] = this.pair(depth + 1);
         this.matCopy.uniforms.src.value = src.texture;
@@ -1878,6 +1936,8 @@ void main() {
       else u.layerTex.value = groupResult!.texture;
       g.run(this.matLayer, dst);
       [src, dst] = [dst, src];
+      }
+      if (ch === 'height' && l.anchor) this.snapAnchor(l, src);
     }
     return src;
   }

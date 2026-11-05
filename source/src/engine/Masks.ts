@@ -3,12 +3,19 @@ import { GLSL_NOISE, PatternType } from './Procedural';
 
 export type GenType = 'edge' | 'dirt' | 'ao' | 'gradient' | 'dust' | 'noise' | 'curvature' | 'thick' | 'id' | 'pattern' | 'shape';
 /** Shapes for the Shape generator. */
-export type ShapeKind = 'circle' | 'square' | 'rounded' | 'triangle' | 'star' | 'hexagon' | 'diamond' | 'ring' | 'heart' | 'cross';
-export const SHAPE_KINDS: ShapeKind[] = ['circle', 'square', 'rounded', 'triangle', 'star', 'hexagon', 'diamond', 'ring', 'heart', 'cross'];
+export type ShapeKind = 'circle' | 'square' | 'rounded' | 'triangle' | 'star' | 'hexagon' | 'diamond' | 'ring' | 'heart' | 'cross'
+  | 'capsule' | 'crescent' | 'brick' | 'paraboloid' | 'bell' | 'gaussian' | 'thorn' | 'pyramid' | 'cone' | 'gradation' | 'waves';
+/** Order matters: it's the index the shader uses. */
+export const SHAPE_KINDS: ShapeKind[] = ['circle', 'square', 'rounded', 'triangle', 'star', 'hexagon', 'diamond', 'ring', 'heart', 'cross',
+  'capsule', 'crescent', 'brick', 'paraboloid', 'bell', 'gaussian', 'thorn', 'pyramid', 'cone', 'gradation', 'waves'];
 export const SHAPE_LABEL: Record<ShapeKind, string> = {
-  circle: 'Circle', square: 'Square', rounded: 'Rounded square', triangle: 'Triangle', star: 'Star', hexagon: 'Hexagon',
-  diamond: 'Diamond', ring: 'Ring', heart: 'Heart', cross: 'Cross / plus',
+  circle: 'Disc / circle', square: 'Square', rounded: 'Rounded square', triangle: 'Triangle', star: 'Star', hexagon: 'Hexagon',
+  diamond: 'Diamond', ring: 'Ring', heart: 'Heart', cross: 'Cross / plus', capsule: 'Capsule', crescent: 'Crescent', brick: 'Brick',
+  paraboloid: 'Paraboloid (soft dome)', bell: 'Bell (soft)', gaussian: 'Gaussian (very soft)', thorn: 'Thorn (spike)', pyramid: 'Pyramid',
+  cone: 'Cone', gradation: 'Gradation (ramp)', waves: 'Waves (stripes)',
 };
+/** Shapes that are a smooth height profile rather than a hard outline. */
+export const SOFT_SHAPES: ShapeKind[] = ['paraboloid', 'bell', 'gaussian', 'thorn', 'pyramid', 'cone', 'gradation', 'waves'];
 /** How an effect combines with the effects below it (Substance / TextureCraft mask layers). */
 export type FxBlend = 'normal' | 'multiply' | 'lighten' | 'darken' | 'add' | 'subtract' | 'screen' | 'overlay' | 'difference';
 export const FX_BLENDS: FxBlend[] = ['normal', 'multiply', 'lighten', 'darken', 'add', 'subtract', 'screen', 'overlay', 'difference'];
@@ -51,6 +58,12 @@ export interface GenSettings {
   shapeAspect?: number;
   /** Degrees. */
   shapeRot?: number;
+  /** 'decal' = placed on the model (default), 'uv' = repeats over the UVs with tiling (Substance's default). */
+  shapeProj?: 'decal' | 'uv';
+  shapeTile?: number;
+  shapeOff?: [number, number];
+  /** Micro details (Substance anchor points): the height stack up to an anchored layer adds rims and cavities. */
+  micro?: { anchor: string; amount: number };
   /** Extra effects (bottom → top) blended over this one, like Substance's mask stack. */
   fx?: MaskFx[];
   /** Invert the whole stack at the end. */
@@ -100,6 +113,34 @@ export interface LayerMaskSpec {
 }
 
 export const genIndex = (t: GenType) => GEN_INDEX[t];
+/** Generators that can follow anchor-point details. */
+export const MICRO_TYPES: GenType[] = ['edge', 'dirt', 'ao', 'curvature'];
+export const usesMicro = (g: GenSettings) => [g, ...(g.fx ?? [])].some((e) => !!e.micro?.anchor);
+
+/**
+ * Detail map of an anchor point's height: r = occlusion (dips are dark), g = curvature (0.5 flat, rims bright).
+ * Looks a few texels around each point at two sizes, so thin painted lines and wide shapes both register.
+ */
+export const FRAG_MICRO = /* glsl */ `
+uniform sampler2D heightTex;
+uniform vec2 texel;
+uniform float gain;
+varying vec2 vUv;
+float H(vec2 o) { return texture2D(heightTex, vUv + o * texel).r; }
+void main() {
+  float h0 = H(vec2(0.0));
+  float a1 = 0.0, a2 = 0.0;
+  for (int i = 0; i < 8; i++) {
+    float t = float(i) * 0.785398;
+    vec2 d = vec2(cos(t), sin(t));
+    a1 += H(d * 2.0);
+    a2 += H(d * 6.0);
+  }
+  float lap = (a1 / 8.0 - h0) * 0.6 + (a2 / 8.0 - h0) * 0.4;
+  float cavity = clamp(lap * gain, 0.0, 1.0);
+  float convex = clamp(-lap * gain, 0.0, 1.0);
+  gl_FragColor = vec4(1.0 - cavity, 0.5 + 0.5 * (convex - cavity), 0.0, 1.0);
+}`;
 export const axisVec = (a: Axis, flip: boolean): [number, number, number] => {
   const s = flip ? -1 : 1;
   return a === 'x' ? [s, 0, 0] : a === 'y' ? [0, s, 0] : [0, 0, s];
@@ -146,6 +187,14 @@ uniform vec3 shpU;
 uniform vec3 shpV;
 uniform vec2 shpHalf;
 uniform float shpSoft;
+uniform bool shpUV;
+uniform float shpTile;
+uniform vec2 shpOff;
+uniform vec2 shpRotCS;
+uniform vec2 shpScale;
+uniform bool useMicro;
+uniform sampler2D microMap;
+uniform float microAmt;
 ${GLSL_NOISE}
 // Signed distance of the Shape generator's shapes (negative inside, ~1 unit = half size).
 float sdShape(int k, vec2 q) {
@@ -163,7 +212,23 @@ float sdShape(int k, vec2 q) {
     return sqrt(min(dot(p - vec2(0.0, 1.0), p - vec2(0.0, 1.0)), dot(p - 0.5 * max(p.x + p.y, 0.0), p - 0.5 * max(p.x + p.y, 0.0)))) * sign(p.x - p.y) / 1.15; }
   if (k == 9) { vec2 p = abs(q); vec2 a = p - vec2(1.0, 0.33); vec2 b = p - vec2(0.33, 1.0);
     float da = length(max(a, 0.0)) + min(max(a.x, a.y), 0.0); float db = length(max(b, 0.0)) + min(max(b.x, b.y), 0.0); return min(da, db); }
+  if (k == 10) { vec2 p = vec2(abs(q.x) - 0.5, q.y); p.x = max(p.x, 0.0); return length(p) - 0.5; }
+  if (k == 11) return max(length(q) - 1.0, -(length(q - vec2(0.45, 0.2)) - 0.8));
+  if (k == 12) { vec2 d = abs(q) - vec2(1.0, 0.5); return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
   return length(q) - 1.0;
+}
+/** 0..1 value of a shape: hard outlines from the distance, soft ones from their profile. */
+float shapeValue(int k, vec2 q, float soft) {
+  float r = length(q);
+  if (k == 13) return clamp(1.0 - r * r, 0.0, 1.0);
+  if (k == 14) return r < 1.0 ? 0.5 + 0.5 * cos(3.14159265 * r) : 0.0;
+  if (k == 15) return exp(-r * r * 4.0);
+  if (k == 16) return pow(clamp(1.0 - r, 0.0, 1.0), 3.0);
+  if (k == 17) return clamp(1.0 - max(abs(q.x), abs(q.y)), 0.0, 1.0);
+  if (k == 18) return clamp(1.0 - r, 0.0, 1.0);
+  if (k == 19) return max(abs(q.x), abs(q.y)) <= 1.0 ? clamp(q.x * 0.5 + 0.5, 0.0, 1.0) : 0.0;
+  if (k == 20) return max(abs(q.x), abs(q.y)) <= 1.0 ? 0.5 + 0.5 * sin(q.y * 3.14159265 * 3.0) : 0.0;
+  return 1.0 - smoothstep(-soft, soft, sdShape(k, q));
 }
 float fxMix(int m, float a, float b) {
   if (m == 1) return a * b;
@@ -183,6 +248,12 @@ void main() {
   vec4 M = texture2D(meshMap, vUv);
   float ao = M.r;
   float cv = M.g;
+  if (useMicro) {
+    // Anchor point details: their rims count as edges, their dips as cavities.
+    vec4 D = texture2D(microMap, vUv);
+    cv = clamp(cv + (D.g - 0.5) * microAmt, 0.0, 1.0);
+    ao = ao * mix(1.0, D.r, clamp(microAmt, 0.0, 1.0));
+  }
   float v = baseValue;
   if (useGen) {
     float raw;
@@ -211,13 +282,19 @@ void main() {
     else if (type == 8) raw = M.b;
     else if (type == 10) {
       // Shape: projected onto the model like a decal, facing shpN.
-      vec3 d = P.xyz - shpC;
-      vec2 q = vec2(dot(d, shpU) / shpHalf.x, dot(d, shpV) / shpHalf.y);
-      float sd = sdShape(shpKind, q);
-      float face = smoothstep(0.15, 0.45, dot(n, shpN));
-      // Like a sticker: only surfaces close to where it was placed, so it doesn't smear over edges.
-      float depth = abs(dot(d, shpN)) / max(max(shpHalf.x, shpHalf.y), 1e-4);
-      raw = (1.0 - smoothstep(-shpSoft, shpSoft, sd)) * face * (1.0 - smoothstep(0.35, 0.7, depth));
+      if (shpUV) {
+        // UV mode (Substance's default): the shape repeats in a grid over the UVs.
+        vec2 c = fract(vUv * shpTile + shpOff) * 2.0 - 1.0;
+        vec2 q = vec2(c.x * shpRotCS.x + c.y * shpRotCS.y, -c.x * shpRotCS.y + c.y * shpRotCS.x) / shpScale;
+        raw = shapeValue(shpKind, q, shpSoft);
+      } else {
+        vec3 d = P.xyz - shpC;
+        vec2 q = vec2(dot(d, shpU) / shpHalf.x, dot(d, shpV) / shpHalf.y);
+        float face = smoothstep(0.15, 0.45, dot(n, shpN));
+        // Like a sticker: only surfaces close to where it was placed, so it doesn't smear over edges.
+        float depth = abs(dot(d, shpN)) / max(max(shpHalf.x, shpHalf.y), 1e-4);
+        raw = shapeValue(shpKind, q, shpSoft) * face * (1.0 - smoothstep(0.35, 0.7, depth));
+      }
     }
     else raw = cv;
     // Noise breakup (TextureCraft's: world perlin fbm around the threshold).

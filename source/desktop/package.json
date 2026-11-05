@@ -1,7 +1,7 @@
 {
   "name": "lmp",
   "productName": "LMP",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Leo's Material Painter (owned by H9_zy)", "author": "H9_zy",
   "main": "main.js"
 }

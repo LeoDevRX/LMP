@@ -8,7 +8,7 @@ import type { GraphJSON } from '../designer/Graph';
 /** One layer as stored in a project (.tpaint) or smart material (.tpsmart). */
 export type LayerJSON =
   | {
-      kind: 'fill'; name: string; visible: boolean; opacity: number; blend?: BlendMode;
+      kind: 'fill'; name: string; visible: boolean; opacity: number; blend?: BlendMode; anchor?: boolean;
       values: ChannelValues; enabled: Record<Ch, boolean>;
       tiling?: number; images?: Partial<Record<Ch, { name: string; data: string; flipG?: boolean }>>;
       xf?: FillTransform; adj?: FillAdjust; note?: string;
@@ -19,12 +19,12 @@ export type LayerJSON =
       mask?: MaskJSON;
     }
   | {
-      kind: 'paint'; name: string; visible: boolean; opacity: number; blend?: BlendMode;
+      kind: 'paint'; name: string; visible: boolean; opacity: number; blend?: BlendMode; anchor?: boolean;
       channels: Partial<Record<Ch, string>>;
       mask?: MaskJSON;
     }
   | {
-      kind: 'group'; name: string; visible: boolean; opacity: number; blend?: BlendMode; open?: boolean;
+      kind: 'group'; name: string; visible: boolean; opacity: number; blend?: BlendMode; open?: boolean; anchor?: boolean;
       children: LayerJSON[];
       mask?: MaskJSON;
     };
@@ -86,7 +86,7 @@ export async function serializeLayer(ts: TextureSet, l: Layer, withPaint = true)
       images[ch] = { name: img.name, data: toB64(new Uint8Array(img.bytes)), flipG: img.flipG };
     }
     return {
-      kind: 'fill', name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
+      kind: 'fill', name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, anchor: l.anchor || undefined,
       values: structuredClone(l.values), enabled: { ...l.enabled }, tiling: l.tiling, images, mask,
       xf: l.xf ? { ...l.xf } : undefined, adj: l.adj ? structuredClone(l.adj) : undefined, note: l.note,
       procs: l.procs ? structuredClone(l.procs) : undefined,
@@ -96,12 +96,12 @@ export async function serializeLayer(ts: TextureSet, l: Layer, withPaint = true)
   if (l.kind === 'group') {
     const children: LayerJSON[] = [];
     for (const c of l.children) { const j = await serializeLayer(ts, c, withPaint); if (j) children.push(j); }
-    return { kind: 'group', name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, open: l.open, children, mask };
+    return { kind: 'group', name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, open: l.open, children, mask, anchor: l.anchor || undefined };
   }
   if (!withPaint) return null;
   const channels = {} as Record<Ch, string>;
   for (const ch of CHANNELS) channels[ch] = toB64(await gzip(ts.readLayerChannel(l, ch)));
-  return { kind: 'paint', name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, channels, mask };
+  return { kind: 'paint', name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, channels, mask, anchor: l.anchor || undefined };
 }
 
 /** Add a stored layer to the texture set (above the active layer when `aboveActive`). */
@@ -151,6 +151,7 @@ export async function restoreLayer(ts: TextureSet, l: LayerJSON, resolution: num
   layer.visible = l.visible;
   layer.opacity = l.opacity;
   layer.blend = l.blend ?? 'normal';
+  if (l.anchor) layer.anchor = true;
   if (l.mask) {
     ts.addMask(layer, { base: l.mask.base, gen: l.mask.gen ? structuredClone(l.mask.gen) : null });
     if (l.mask.paint) {
