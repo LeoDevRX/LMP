@@ -20,11 +20,16 @@ export interface Settings {
   checkUpdates: boolean;
   /** Lighting environment shown in the 3D view (an HDR on the shelf; '' = built-in studio). */
   envName: string;
+  /** Render Substance materials with Adobe's engine (sbsrender) when it's installed. */
+  sbsAdobe: boolean;
+  /** Where sbsrender.exe is, if the user pointed LMP at it ('' = look in the usual places). */
+  sbsPath: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   autosave: true, autosaveMinutes: 3, autosaveKeep: 5, defaultSize: 1024, pixelRatio: 0, historyLimit: 25,
   lowPerf: false, perfAsked: false, welcomed: false, startScreen: true, checkUpdates: true, envName: 'studio_small_09_1k',
+  sbsAdobe: true, sbsPath: '',
 };
 
 const KEY = 'lmp-settings';

@@ -61,9 +61,16 @@ export const GUIDES: Guide[] = [
   },
   {
     id: 'whats-new', title: `What's new in v${VERSION}`, cat: 'Start here',
-    sum: 'Updates, shapes, autosave, history, the Guide and more.',
+    sum: 'Substance materials with all their settings, updates, shapes and more.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v3.00', steps: [
+        'Substance materials (.sbsar) now come in with all their settings, like Painter\'s Substance material mode: presets, seed, the same groups, colours, sliders, on/off switches and image inputs.',
+        'If Substance 3D Designer is on your PC, LMP uses Adobe\'s own renderer for them, so they look exactly like in Painter. Without it, LMP uses its own version.',
+        'Simple Diffuse works fully in LMP, brush strokes and all.',
+        'Other materials get a much better stand-in: real panels, bricks, tiles, planks or lava cracks depending on the material, and their sliders do something.',
+        'Your Substance Painter materials show up on the shelf by themselves under Substance materials.',
+      ] },
       { h: 'New in v2.01', steps: [
         'Anchor points like Substance: right click a layer > Add anchor point, then set Micro details on an Edge wear, Dirt, AO or Curvature mask. Wear and dirt follow your painted and shape details.',
         'Shapes: 21 shapes (soft ones too), UV tiling mode, move / rotate / resize handles on the model, and Height detail (press in / stick out).',
@@ -531,12 +538,12 @@ export const GUIDES: Guide[] = [
     related: ['poly-fill', 'masks'],
   },
   {
-    id: 'from-substance', title: 'Bring a Substance material into LMP (exact look)', cat: 'Layers & materials',
-    sum: 'Export it from Substance Painter as pictures, then drop those into LMP.',
+    id: 'from-substance', title: 'Bring a Substance material into LMP as pictures', cat: 'Layers & materials',
+    sum: 'No Substance Designer? Export the material from Painter as pictures and drop those in.',
     tags: ['substance', 'import', 'material', 'image', 'export'],
     words: 'substance painter sbsar spsm smart material exact same look identical copy convert bake export textures adobe my own',
     body: [
-      { p: 'Substance materials (.sbsar, .spsm) only run inside Adobe\'s own engine, so LMP can only guess at them. For the exact look, let Substance make the pictures and give those to LMP.' },
+      { p: 'If you have Substance 3D Designer, you don\'t need this: just drop the .sbsar in (see "Substance materials"). Without it, LMP uses its own version of the material. When that isn\'t close enough, let Painter make the pictures and give those to LMP.' },
       { h: 'In Substance Painter', steps: [
         'Make a new project with a flat plane (a 1 × 1 plane from Blender works) and a texture size like 2048.',
         'Drag the material or smart material onto it.',
@@ -568,12 +575,30 @@ export const GUIDES: Guide[] = [
     related: ['smart-materials', 'materials'],
   },
   {
-    id: 'substance-files', title: 'Substance files (.sbsar, .spsm)', cat: 'Layers & materials',
-    sum: 'Drop Substance files in and LMP converts what it can.',
-    tags: ['substance', 'import'], words: 'sbsar spsm substance painter designer adobe convert translate smart material import',
+    id: 'substance-files', title: 'Substance materials (.sbsar, .spsm)', cat: 'Layers & materials',
+    sum: 'Drop an .sbsar in and change its settings like in Painter.',
+    tags: ['substance', 'import', 'material'], words: 'sbsar spsm substance painter designer adobe sbsrender engine material mode preset seed parameters sliders simple diffuse stylized hand painted exact same look',
     body: [
-      { p: 'Drag .sbsar or .spsm files into LMP. It reads the images and settings inside and turns them into LMP materials or smart materials where it can. Anything it can\'t convert is listed on the shelf under Substance.' },
+      { steps: [
+        'Drag an .sbsar onto LMP, or click one under Substance materials on the shelf. Your Substance Painter materials are listed there already.',
+        'It becomes a fill layer. Properties shows its settings the way Painter does: Preset, Seed, then its groups (open one to see its sliders).',
+        'Pick a preset or move the sliders. The model updates as you go.',
+        'If the material uses mesh maps (ambient occlusion, curvature, world normals, position), bake them in the Baking tab first. LMP plugs them in for you.',
+      ] },
+      { h: 'Exact or close?', steps: [
+        'The coloured tag under the name tells you. Green, "Adobe\'s engine": it looks exactly like in Painter.',
+        'Purple, "LMP\'s version": LMP has its own copy of this material (Simple Diffuse, for example), so every slider works.',
+        'Orange, "approximation": LMP builds a stand-in from the material\'s name and sliders. Close, not identical.',
+      ] },
+      { h: 'Using Adobe\'s engine', steps: [
+        'Adobe\'s renderer (sbsrender.exe) comes with Substance 3D Designer. If Designer is installed, LMP finds it on its own.',
+        'If it\'s somewhere unusual, go to File > Settings > Substance materials and click Find sbsrender.exe.',
+        'Each change takes a second or two to render, since Adobe\'s program runs in the background.',
+      ] },
+      { tips: ['Tiling materials are put on with tri-planar projection so there are no seams. Switch to UV in Projection if you want Painter\'s default.', 'Channels at the bottom of Properties says which output goes where. Set one to "Not used" to leave that channel alone.', '.spsm smart materials are rebuilt as LMP layers with masks.'] },
     ],
+    show: [{ label: 'Substance materials', act: 'shelf:unsupported', hl: '.shelf-sec', text: 'Substance materials' }],
+    related: ['from-substance', 'baking', 'materials'],
   },
 
   // ------------------------------------------------------------------ baking

@@ -33,7 +33,9 @@ import iconSmall from './assets/lmp-32.png?inline';
 import iconBig from './assets/lmp-256.png?inline';
 import { Designer } from './designer/DesignerUI';
 import { GraphRunner, GraphJSON, OUTPUT_CHANNELS, presetGraphs } from './designer/Graph';
-import { readSbsar, translateSbs, translateSpsm, Translation, SpNode } from './engine/SubstanceReader';
+import { translateSpsm, Translation, SpNode } from './engine/SubstanceReader';
+import { SBS_FILES, SBS_LOADED, SbsGraph, SbsParam, SbsState, SbsFeed, FEED_LABEL, registerSbs, newSbsState, graphOf, stateKey, visible, cliValue, isGlossy, readSbsPackage } from './engine/Substance';
+import { SbsNativeRunner, nativeFor } from './engine/SbsNative';
 import { el, slider, select, hexToRgb, rgbToHex, toast, pickFile, ICON2 as I } from './ui';
 
 const RESOLUTIONS = [512, 1024, 2048, 4096];
@@ -969,10 +971,21 @@ class App {
       el('div', { class: 'row' }, el('label', {}, 'Render scale'), select<number>([{ value: 0, label: 'Automatic' }, { value: 1, label: '1× (fastest)' }, { value: 1.5, label: '1.5×' }, { value: 2, label: '2× (sharpest)' }], st.pixelRatio, (v) => { st.pixelRatio = v; })),
       num('Undo history', 'historyLimit', 5, 100, ' steps'),
       el('p', { class: 'note' }, 'More undo steps use more memory, especially at 4K.'),
+      ...(this.native?.sbsEngine ? [
+        el('h4', {}, 'Substance materials (.sbsar)'),
+        (() => {
+          const c = el('input', { type: 'checkbox', checked: st.sbsAdobe }) as HTMLInputElement;
+          c.addEventListener('change', () => { st.sbsAdobe = c.checked; });
+          return el('label', { class: 'check-row' }, c, ' Use Adobe\'s engine when it\'s installed (exact look)');
+        })(),
+        el('p', { class: 'note' }, this.sbsExe ? `Found: ${this.sbsExe}` : 'Adobe\'s renderer (sbsrender.exe, comes with Substance 3D Designer) wasn\'t found. Without it LMP uses its own version of each material.'),
+        el('div', { class: 'row' }, el('label', {}, ''), el('button', { class: 'grow', onclick: async () => { await this.pickSbsEngine(); st.sbsPath = this.settings.sbsPath; st.sbsAdobe = this.settings.sbsAdobe; } }, 'Find sbsrender.exe…')),
+      ] : []),
     );
     this.modal({ title: 'Settings', text: '', icon: 'info', wide: true, content, buttons: [['Save', 'ok', 'primary'], ['Cancel', 'cancel']] }).then((r) => {
       if (r !== 'ok') return;
       this.settings = st; saveSettings(st); this.applySettings(); toast('Settings saved');
+      this.buildProperties();
     });
   }
 
@@ -1180,6 +1193,8 @@ class App {
     else if (!this.settings.welcomed) { this.settings.welcomed = true; saveSettings(this.settings); this.openGuide('getting-started'); }
     else if (this.settings.startScreen && this.native) this.openWindow('recent');
     if (this.settings.checkUpdates) setTimeout(() => this.checkForUpdates(false), 2500);
+    void this.findSbsEngine().then(() => this.loadSbsLibrary());
+    this.sbsTimer = window.setInterval(() => this.sbsTick(), 120);
   }
 
   // ================================================================ baking
@@ -1207,6 +1222,7 @@ class App {
     if (ok) {
       this.applyViews();
       this.mapThumbs.clear();
+      this.sbsMeshStamp++;
       if (ts.lastHigh && ts.highGeometries) {
         const pct = (100 * ts.lastHigh.hits) / Math.max(1, ts.lastHigh.texels);
         toast(pct > 99.5 ? `Baked from the high poly ✓ (rays hit ${pct.toFixed(1)}%)`
@@ -3089,7 +3105,7 @@ class App {
   }
   private static SHELF_SECTIONS: [Exclude<ShelfFilter, 'all'>, string][] = [
     ['model', 'Models'], ['smart', 'Smart materials'], ['cloud', 'Scanned materials'], ['material', 'Materials'], ['textures', 'Textures'], ['mask', 'Smart masks'],
-    ['brush', 'Brushes'], ['graph', 'Graphs'], ['env', 'Environments'], ['unsupported', 'Substance'],
+    ['brush', 'Brushes'], ['graph', 'Graphs'], ['env', 'Environments'], ['unsupported', 'Substance materials'],
   ];
   /** Sections opened in this session; every section starts closed (a new file closes them again). */
   private shelfOpen = new Set<string>();
@@ -3117,7 +3133,7 @@ class App {
       const list = items.filter((it) => this.shelfGroup(it) === g);
       if (!list.length) continue;
       if (!header('sec:' + g, label, list.length)) continue;
-      const catOf = (it: ShelfItem) => (it.kind === 'smart' && it.category) || (it.kind === 'cloud' && it.cat) || '';
+      const catOf = (it: ShelfItem) => (it.kind === 'smart' && it.category) || (it.kind === 'cloud' && it.cat) || (it.kind === 'unsupported' && (it.cat ?? 'Your files')) || '';
       const cats = [...new Set(list.map(catOf))];
       if (cats.length > 1) {
         for (const c of cats) {
@@ -3169,6 +3185,7 @@ class App {
     if (it.kind === 'textures') return () => this.thumbs.textures('t:' + it.name, it.files as any);
     if (it.kind === 'brush') return () => this.brushTipCanvas(it).then((cv) => cv.toDataURL());
     if (it.kind === 'cloud') return () => Promise.resolve(it.thumb);
+    if (it.kind === 'unsupported' && it.src && /\.sbsar$/i.test(it.file)) return () => this.sbsShelfIcon(it);
     return null;
   }
   private thumbKey(it: ShelfItem) {
@@ -3188,7 +3205,7 @@ class App {
     return h;
   }
   /** Built-in assets never change, so their thumbnails are kept between sessions. */
-  private thumbPersist(it: ShelfItem) { return /^(lib|mask|graph|model):/.test(it.file ?? '') || it.kind === 'smart' || (it.kind === 'brush' && !it.tipFile && it.brush.tip.startsWith('builtin:')); }
+  private thumbPersist(it: ShelfItem) { return /^(lib|mask|graph|model):/.test(it.file ?? '') || it.kind === 'smart' || (it.kind === 'unsupported' && /\.sbsar$/i.test(it.file)) || (it.kind === 'brush' && !it.tipFile && it.brush.tip.startsWith('builtin:')); }
   private thumbCache = new Map<string, string>();
   private thumbWaits = new Map<string, Promise<string | null>>();
   thumbOf(it: ShelfItem): Promise<string | null> {
@@ -3290,7 +3307,9 @@ class App {
     } else {
       img.classList.add('adobe');
       badge = it.file.split('.').pop()!.toUpperCase();
-      tip = /\.(sbsar|spsm)$/i.test(it.file) ? `${it.file} — ${it.reason}. Click (or drag onto the model) to translate it into an LMP material` : `${it.file} — ${it.reason}. Can't be translated`;
+      if (/\.sbsar$/i.test(it.file)) { badge = 'SBSAR'; img.classList.remove('adobe'); }
+      tip = /\.sbsar$/i.test(it.file) ? `${it.file} — ${it.reason}. Click (or drag onto the model) to add it as a layer with all its settings`
+        : /\.spsm$/i.test(it.file) ? `${it.file} — ${it.reason}. Click (or drag onto the model) to translate it into an LMP smart material` : `${it.file} — ${it.reason}. Can't be translated`;
     }
     const tile = el('button', {
       class: 'tile' + (it.kind === 'unsupported' ? ' unsupported' : '') + (this.shelfPick.has(it) ? ' picked' : ''),
@@ -3328,6 +3347,42 @@ class App {
     const it = this.shelf.items.find((x) => x.kind === 'env' && x.name === want);
     if (it?.kind !== 'env') return;
     try { await this.vp.loadHDR(await it.src()); this.vp.applyBackground(); } catch (e) { console.warn('env', e); }
+  }
+
+  // ---------------------------------------------------------------- Substance materials on this PC
+
+  /** The .sbsar materials of the user's Substance Painter (starter assets + their assets folder) on the shelf. */
+  async loadSbsLibrary() {
+    const native = this.native;
+    if (!native?.sbsLibrary) return;
+    let list: { name: string; path: string; size: number; source: string }[] = [];
+    try { list = await native.sbsLibrary(); } catch { return; }
+    if (!list?.length) return;
+    const have = new Set(this.shelf.items.filter((it) => it.kind === 'unsupported').map((it) => it.file.toLowerCase()));
+    const items: ShelfItem[] = list.filter((m) => !have.has((m.name + '.sbsar').toLowerCase())).map((m) => ({
+      kind: 'unsupported', name: m.name, file: m.name + '.sbsar', reason: `Substance material from ${m.source}`, cat: m.source,
+      src: async () => {
+        const b = await native.sbsRead(m.path);
+        if (!b) throw new Error(`Couldn't read ${m.path}`);
+        return new File([b], m.name + '.sbsar');
+      },
+    }));
+    this.shelf.items = [...this.shelf.items, ...items];
+    if (document.getElementById('shelf')?.childElementCount) this.buildShelf();
+  }
+  private sbsIconQueue: Promise<unknown> = Promise.resolve();
+  /** Shelf picture of an .sbsar: the icon stored inside it (one at a time, they can be big). */
+  private sbsShelfIcon(it: ShelfItem): Promise<string> {
+    const job = this.sbsIconQueue.then(async () => {
+      if (it.kind !== 'unsupported' || !it.src) return '';
+      const f = await it.src();
+      const pkg = await readSbsPackage(new Uint8Array(await f.arrayBuffer()), f.name);
+      if (!pkg.icon) return '';
+      const blob = new Blob([pkg.icon as BlobPart], { type: 'image/png' });
+      return await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => res(''); r.readAsDataURL(blob); });
+    });
+    this.sbsIconQueue = job.catch(() => '');
+    return job;
   }
 
   // ---------------------------------------------------------------- scanned materials (download on first use)
@@ -3478,11 +3533,12 @@ class App {
           });
           toast(`Translated smart material “${root.name}”: ${count} layer${count === 1 ? '' : 's'} with their masks.${skipped.length ? ' Not carried over: ' + skipped.slice(0, 4).join('; ') + (skipped.length > 4 ? '…' : '') + '.' : ''} Bake mesh maps (Baking tab) so the edge/dirt masks show.`);
         } else {
-          const info = await readSbsar(bytes, f.name);
-          const tr = translateSbs(info);
-          await this.ts.batch(`Translate ${f.name}`, () => this.addTranslated(tr));
-          toast(tr.exact ? `Translated “${tr.name}” using the textures stored in the file ✓`
-            : `Translated “${tr.name}” as an approximation (its pattern is compiled for Adobe's engine). Details in Properties.`, !tr.exact);
+          let fl: FillLayer | null = null;
+          await this.ts.batch(`Add ${f.name}`, async () => { fl = await this.addSbsLayer(bytes, f.name); });
+          const info = fl ? this.sbsInfo.get(fl) : undefined;
+          toast(info?.engine === 'adobe' ? `Added “${(fl as FillLayer | null)?.name}” — rendered by Adobe's engine ✓`
+            : info?.engine === 'lmp' ? `Added “${(fl as FillLayer | null)?.name}” with all its settings ✓`
+              : `Added “${(fl as FillLayer | null)?.name}”. Its settings are in Properties (LMP approximation: Adobe's engine isn't installed).`, info?.engine === 'approx');
         }
         this.paintTarget = 'content';
         this.modified = true;
@@ -3492,6 +3548,384 @@ class App {
         toast(`Couldn't translate ${f.name}: ${e?.message ?? e}`, true);
       }
     }
+  }
+
+  // ---------------------------------------------------------------- Substance material mode (.sbsar)
+  //
+  // A dropped .sbsar becomes a fill layer that keeps the material's own parameters (presets, seed,
+  // groups, colors, toggles, image inputs) like Painter's "Substance material mode". What the images
+  // show comes from Adobe's own renderer when it's installed (exact), else LMP's version of the graph.
+
+  /** Adobe's renderer (sbsrender.exe): undefined = not looked for yet, null = not on this PC. */
+  private sbsExe: string | null | undefined;
+  private sbsRunner?: SbsNativeRunner;
+  private sbsTargets = new WeakMap<FillLayer, Partial<Record<Ch, THREE.WebGLRenderTarget>>>();
+  /** What each layer's images currently show. */
+  private sbsDone = new WeakMap<FillLayer, string>();
+  private sbsBusy = new WeakMap<FillLayer, { want: string; since: number; running: boolean }>();
+  private sbsInfo = new WeakMap<FillLayer, { engine: 'adobe' | 'lmp' | 'approx'; error?: string; rendering?: boolean; ms?: number }>();
+  /** Materials Adobe's renderer couldn't run (they use LMP's version for the rest of the session). */
+  private sbsAdobeFailed = new Set<string>();
+  private sbsMeshStamp = 0;
+  private sbsTsIds = new WeakMap<TextureSet, string>();
+  private sbsOpenGroups = new Set<string>();
+  private sbsTimer = 0;
+
+  async findSbsEngine(): Promise<string | null> {
+    if (!this.native?.sbsEngine) return (this.sbsExe = null);
+    try { const r = await this.native.sbsEngine(this.settings.sbsPath || undefined); this.sbsExe = r?.path ?? null; } catch { this.sbsExe = null; }
+    return this.sbsExe ?? null;
+  }
+  private adobeFor(st: SbsState) { return !!this.sbsExe && this.settings.sbsAdobe && !this.sbsAdobeFailed.has(st.key); }
+  private sbsUsesMesh(st: SbsState) { return Object.values(st.feeds).some((f) => f !== 'none'); }
+  private sbsKeyOf(fl: FillLayer) {
+    const st = fl.sbs!;
+    return `${stateKey(st)}#${this.sbsUsesMesh(st) ? this.sbsMeshStamp : 0}#${this.adobeFor(st) ? 'a' : 'n'}`;
+  }
+
+  /** Add a dropped / picked .sbsar as a Substance-mode fill layer. */
+  async addSbsLayer(bytes: Uint8Array, file: string, parent?: GroupLayer): Promise<FillLayer> {
+    const { key, pkg } = await registerSbs(bytes, file);
+    const g = pkg.graphs[0];
+    const st = newSbsState(key, pkg, g, Math.min(this.ts.size, 2048));
+    if (this.sbsExe === undefined) await this.findSbsEngine();
+    const enabled = Object.fromEntries(CHANNELS.map((c) => [c, false])) as Record<Ch, boolean>;
+    const fl = this.ts.addFillLayer(g.label, undefined, enabled, !parent, undefined, 1, parent);
+    fl.sbs = st;
+    // Tiling materials (no mesh inputs) are projected from 3 sides, so UV seams don't show.
+    if (!this.sbsUsesMesh(st)) { fl.xf = { ...DEFAULT_XF, proj: 'tri' }; fl.tiling = 2; }
+    if (g.description) fl.note = g.description.split('\n')[0].slice(0, 300);
+    await this.renderSbs(fl, this.sbsKeyOf(fl));
+    this.ts.layerChanged();
+    return fl;
+  }
+
+  /** Re-render Substance layers whose values, inputs or engine changed (runs a few times a second). */
+  private sbsTick() {
+    if (!this.ts) return;
+    const now = performance.now();
+    for (const l of this.ts.allLayers) {
+      if (l.kind !== 'fill' || !l.sbs || !SBS_FILES.has(l.sbs.key)) continue;
+      const key = this.sbsKeyOf(l);
+      if (!this.sbsDone.has(l)) {
+        const loaded = SBS_LOADED.get(l);
+        if (loaded && loaded === stateKey(l.sbs)) { this.sbsDone.set(l, key); continue; }
+      }
+      if (this.sbsDone.get(l) === key) continue;
+      const b = this.sbsBusy.get(l);
+      if (b?.running) continue;
+      if (!b || b.want !== key) {
+        this.sbsBusy.set(l, { want: key, since: now, running: false });
+        if (!this.adobeFor(l.sbs)) void this.renderSbs(l, key); // LMP's version is instant
+        continue;
+      }
+      if (now - b.since > 380) void this.renderSbs(l, key);
+    }
+  }
+
+  private async renderSbs(fl: FillLayer, key: string) {
+    const st = fl.sbs!;
+    const g = graphOf(st);
+    if (!g) return;
+    const busy = { want: key, since: 0, running: true };
+    this.sbsBusy.set(fl, busy);
+    const info = this.sbsInfo.get(fl) ?? { engine: 'lmp' as const };
+    this.sbsInfo.set(fl, info);
+    const t0 = performance.now();
+    const sk = stateKey(st);
+    try {
+      let images: Partial<Record<Ch, FillImage>> | null = null;
+      if (this.adobeFor(st)) {
+        info.rendering = true; this.sbsInfoUI(fl);
+        const snap = structuredClone(st);
+        const r = await this.adobeRender(snap, g);
+        info.rendering = false;
+        if (r.images) { images = r.images; info.engine = 'adobe'; info.error = undefined; }
+        else {
+          info.error = r.error;
+          this.sbsAdobeFailed.add(st.key);
+          console.warn('sbsrender', r.error);
+          toast(`Adobe's engine couldn't render “${g.label}”, so LMP's own version is used. Details in Properties.`, true);
+        }
+      }
+      if (!images) { images = this.nativeSbs(fl, st, g); info.engine = nativeFor(g) ? 'lmp' : 'approx'; }
+      if (!this.ts.allLayers.includes(fl)) { for (const im of Object.values(images)) if (im && !im.rt) im.tex.dispose(); return; }
+      this.setSbsImages(fl, images, g);
+      this.sbsDone.set(fl, stateKey(st) === sk ? this.sbsKeyOf(fl) : key);
+      info.ms = performance.now() - t0;
+    } catch (e: any) {
+      console.error(e);
+      info.error = String(e?.message ?? e);
+    } finally {
+      busy.running = false;
+      info.rendering = false;
+      this.sbsInfoUI(fl);
+    }
+  }
+
+  private nativeSbs(fl: FillLayer, st: SbsState, g: SbsGraph): Partial<Record<Ch, FillImage>> {
+    this.sbsRunner ??= new SbsNativeRunner(this.gpu);
+    const targets = this.sbsTargets.get(fl) ?? {};
+    this.sbsTargets.set(fl, targets);
+    const rts = this.sbsRunner.render(this.ts, g, st, targets);
+    const wanted = new Set(Object.values(st.map).filter(Boolean) as Ch[]);
+    const out: Partial<Record<Ch, FillImage>> = {};
+    for (const [ch, rt] of Object.entries(rts) as [Ch, THREE.WebGLRenderTarget][]) {
+      if (wanted.size && !wanted.has(ch)) continue;
+      const prev = fl.images?.[ch];
+      out[ch] = prev?.rt === rt ? prev : { name: 'sbs:' + ch, bytes: new ArrayBuffer(0), tex: rt.texture, rt };
+    }
+    return out;
+  }
+
+  private async adobeRender(st: SbsState, g: SbsGraph): Promise<{ images?: Partial<Record<Ch, FillImage>>; error?: string }> {
+    const native = this.native;
+    const ent = SBS_FILES.get(st.key)!;
+    const size = 1 << st.res;
+    const values: [string, string][] = [];
+    for (const p of g.params) if (p.type !== 5 && p.type !== 6 && st.values[p.id]?.length) values.push([p.id, cliValue(p, st.values[p.id])]);
+    values.push(['$outputsize', `${st.res},${st.res}`], ['$randomseed', String(Math.round(st.seed))]);
+    if (g.system.includes('$normalformat')) values.push(['$normalformat', '1']);
+    let tsId = this.sbsTsIds.get(this.ts);
+    if (!tsId) { tsId = Math.random().toString(36).slice(2, 10); this.sbsTsIds.set(this.ts, tsId); }
+    const meshSize = Math.min(this.ts.size, size);
+    const entries: [string, string][] = [];
+    const feedOfName = new Map<string, SbsFeed>();
+    for (const p of g.params) {
+      if (p.type !== 5) continue;
+      const f = st.feeds[p.id];
+      if (!f || f === 'none' || !this.ts.baked.has(f as BakeKey)) continue;
+      const n = `${tsId}-${f}-${this.sbsMeshStamp}-${meshSize}`;
+      entries.push([p.id, n]);
+      feedOfName.set(n, f);
+    }
+    const req: any = { exe: this.sbsExe, key: st.key, graph: SBS_FILES.get(st.key)!.pkg.graphs.length > 1 ? g.url : undefined, values, entries };
+    let r: any;
+    try {
+      r = await native.sbsRender(req);
+      if (r?.need) {
+        if (r.need.sbsar) req.sbsar = ent.bytes;
+        if (r.need.meshes) {
+          req.meshes = [];
+          for (const n of r.need.meshes as string[]) {
+            const px = this.ts.meshMapPixels(feedOfName.get(n) as BakeKey, meshSize);
+            if (px) req.meshes.push([n, new Uint8Array(await (await pixelsToPng(px, meshSize)).arrayBuffer())]);
+          }
+        }
+        r = await native.sbsRender(req);
+      }
+    } catch (e: any) { return { error: String(e?.message ?? e) }; }
+    if (!r?.files?.length) return { error: r?.error || (r?.need ? 'LMP couldn\'t hand the material to Adobe\'s engine.' : 'Adobe\'s engine gave no pictures back.') };
+    const images: Partial<Record<Ch, FillImage>> = {};
+    for (const f of r.files as { name: string; data: Uint8Array }[]) {
+      const id = f.name.replace(/\.[^.]+$/, '');
+      const o = g.outputs.find((x) => x.id === id) ?? g.outputs.find((x) => id.endsWith('_' + x.id) || id.endsWith(x.id));
+      if (!o) continue;
+      const ch = st.map[o.id];
+      if (!ch || images[ch]) continue;
+      const bytes = new Uint8Array(f.data).slice().buffer;
+      images[ch] = { name: 'sbs:' + ch, bytes, tex: await imageTexture(bytes, f.name), flipG: ch === 'normal' && !g.system.includes('$normalformat') };
+    }
+    if (!Object.keys(images).length) return { error: 'None of the material\'s outputs go to a channel (see Channels).' };
+    return { images };
+  }
+
+  private setSbsImages(fl: FillLayer, images: Partial<Record<Ch, FillImage>>, g: SbsGraph) {
+    const old = fl.images ?? {};
+    const keep = new Set(Object.values(images));
+    for (const im of Object.values(old)) if (im && !keep.has(im) && !im.rt && im.name.startsWith('sbs:')) im.tex.dispose();
+    fl.images = images;
+    for (const ch of CHANNELS) fl.enabled[ch] = !!images[ch];
+    const glossOut = g.outputs.find((o) => fl.sbs!.map[o.id] === 'rough' && isGlossy(o));
+    if (glossOut) fl.adj = { ...(fl.adj ?? structuredClone(DEFAULT_ADJ)), roughInv: true };
+    this.ts.markDirty();
+    this.updateLayerRow(fl);
+    this.queueLayerThumbs();
+  }
+
+  /** Refresh just the status line of the open Substance panel. */
+  private sbsInfoUI(fl: FillLayer) {
+    const box = document.getElementById('sbs-status');
+    if (!box || box.dataset.layer !== String(fl.id)) return;
+    box.replaceWith(this.sbsStatusEl(fl));
+  }
+  private sbsStatusEl(fl: FillLayer): HTMLElement {
+    const info = this.sbsInfo.get(fl);
+    const st = fl.sbs!;
+    const box = el('div', { id: 'sbs-status', class: 'sbs-status' });
+    box.dataset.layer = String(fl.id);
+    const engine = info?.rendering ? 'Rendering with Adobe\'s engine…'
+      : info?.engine === 'adobe' ? 'Adobe\'s engine — exact, like in Painter'
+        : info?.engine === 'lmp' ? 'LMP\'s version of this material'
+          : SBS_LOADED.get(fl) && !info ? 'Saved render (from when the project was saved)' : 'LMP approximation';
+    box.append(el('span', { class: 'sbs-badge ' + (info?.engine ?? 'saved') + (info?.rendering ? ' busy' : '') }, engine));
+    if (info?.ms && !info.rendering) box.append(el('span', { class: 'muted' }, ` ${info.ms < 1000 ? Math.round(info.ms) + ' ms' : (info.ms / 1000).toFixed(1) + ' s'}`));
+    if (info?.error) {
+      box.append(el('p', { class: 'note warn' }, 'Adobe\'s engine said: ' + info.error.split('\n').filter(Boolean).slice(-3).join(' · ').slice(0, 400)),
+        el('button', { onclick: () => { this.sbsAdobeFailed.delete(st.key); info.error = undefined; this.sbsDone.delete(fl); this.buildProperties(); } }, 'Try Adobe\'s engine again'));
+    } else if (info?.engine === 'approx' || (info?.engine === 'lmp' && !this.sbsExe)) {
+      box.append(el('p', { class: 'note' }, info.engine === 'approx'
+        ? 'This material\'s graph is compiled for Adobe\'s engine. LMP sorts its sliders into base color, wear, dirt, roughness and scale so they still do something, but it won\'t look exactly like Painter.'
+        : 'LMP has its own version of this material, so every slider works.'));
+    }
+    if (this.sbsExe === null && this.native?.sbsPick) {
+      box.append(el('p', { class: 'note' }, 'For the exact look of any Substance material, LMP can use Adobe\'s renderer from Substance 3D Designer. It wasn\'t found on this PC.'),
+        el('button', { onclick: () => this.pickSbsEngine() }, 'Find sbsrender.exe…'));
+    } else if (this.sbsExe && !this.settings.sbsAdobe) {
+      box.append(el('p', { class: 'note' }, 'Adobe\'s engine is installed but turned off in Settings.'));
+    }
+    if (this.sbsUsesMesh(st)) {
+      const g = graphOf(st);
+      const missing = [...new Set(g?.params.filter((p) => p.type === 5 && st.feeds[p.id] !== 'none' && !this.ts.baked.has(st.feeds[p.id] as BakeKey)).map((p) => FEED_LABEL[st.feeds[p.id]]))];
+      if (missing.length) box.append(el('p', { class: 'note warn' }, `Uses mesh maps that aren't baked yet (${missing.join(', ')}).`),
+        el('button', { class: 'primary', onclick: () => this.setMode('bake') }, 'Go to Baking'));
+    }
+    return box;
+  }
+
+  async pickSbsEngine() {
+    const r = await this.native?.sbsPick?.();
+    if (!r) return;
+    if (r.error) { toast(r.error, true); return; }
+    this.settings.sbsPath = r.path; this.settings.sbsAdobe = true; saveSettings(this.settings);
+    this.sbsAdobeFailed.clear();
+    await this.findSbsEngine();
+    toast(this.sbsExe ? 'Adobe\'s engine will render Substance materials now ✓' : 'That didn\'t work', !this.sbsExe);
+    this.buildProperties();
+  }
+
+  private sbsIcons = new Map<string, string>();
+  private sbsIconUrl(key: string): string {
+    let u = this.sbsIcons.get(key);
+    if (u !== undefined) return u;
+    const ic = SBS_FILES.get(key)?.pkg.icon;
+    u = ic ? URL.createObjectURL(new Blob([ic as BlobPart], { type: 'image/png' })) : '';
+    this.sbsIcons.set(key, u);
+    return u;
+  }
+
+  /** Painter-style properties of a Substance-mode fill layer. */
+  private sbsProps(fl: FillLayer): HTMLElement[] {
+    const st = fl.sbs!;
+    const ent = SBS_FILES.get(st.key);
+    if (!ent) return [group('Substance material', el('p', { class: 'note warn' }, `The material file (${st.file}) isn't loaded.`))];
+    const g = graphOf(st)!;
+    const pre = (k: string) => this.ts.checkpoint(`Edit ${fl.name}`, `sbs:${fl.id}:${k}`);
+    const touched = () => { this.modified = true; };
+    const icon = this.sbsIconUrl(st.key);
+    const head = el('div', { class: 'sbs-head' },
+      icon ? el('img', { src: icon, alt: '' }) : el('div', { class: 'sbs-noicon' }, 'S'),
+      el('div', { class: 'grow' }, el('b', {}, g.label), el('div', { class: 'muted' }, st.file + (g.author ? ' · ' + g.author : ''))));
+    const top = group('Substance material', head, this.sbsStatusEl(fl),
+      ent.pkg.graphs.length > 1 ? el('div', { class: 'row' }, el('label', {}, 'Graph'), select<string>(ent.pkg.graphs.map((x) => ({ value: x.url, label: x.label })), st.graph, (v) => {
+        const ng = ent.pkg.graphs.find((x) => x.url === v)!;
+        pre('graph'); fl.sbs = { ...newSbsState(st.key, ent.pkg, ng, 1 << st.res), seed: st.seed }; fl.name = ng.label; touched(); this.ts.layerChanged(); this.buildProperties();
+      })) : null);
+
+    // ---- parameters
+    const rows: { p: SbsParam; row: HTMLElement }[] = [];
+    const updVis = () => { for (const r of rows) r.row.style.display = visible(r.p.visibleIf, st.values) ? '' : 'none'; };
+    const set = (p: SbsParam, v: number[]) => { pre(p.id); st.values[p.id] = v; st.preset = undefined; touched(); updVis(); };
+    const control = (p: SbsParam): HTMLElement | null => {
+      const v = st.values[p.id] ?? [...p.def];
+      const lo = (i: number) => p.min?.[i] ?? p.min?.[0] ?? 0;
+      const hi = (i: number) => p.max?.[i] ?? p.max?.[0] ?? Math.max(1, Math.abs(p.def[i] ?? 0) * 2);
+      const isInt = p.type === 4 || p.type >= 8;
+      if (p.widget === 'toggle' || (isInt && p.labels)) {
+        const c = el('input', { type: 'checkbox', checked: (v[0] ?? 0) > 0.5 }) as HTMLInputElement;
+        c.addEventListener('change', () => set(p, [c.checked ? 1 : 0]));
+        return el('label', { class: 'check-row', title: p.description ?? p.id }, c, ' ' + p.label);
+      }
+      if (p.widget === 'combo' && p.items?.length) {
+        return el('div', { class: 'row', title: p.description ?? p.id }, el('label', {}, p.label),
+          select<number>(p.items.map((it) => ({ value: it.value, label: it.label })), Math.round(v[0] ?? p.items[0].value), (x) => set(p, [x])));
+      }
+      if (p.widget === 'color') {
+        const rgb = [v[0] ?? 0, v[1] ?? v[0] ?? 0, v[2] ?? v[0] ?? 0] as [number, number, number];
+        const input = el('input', { type: 'color', value: rgbToHex(rgb) }) as HTMLInputElement;
+        const out = [...v];
+        input.addEventListener('input', () => { const c = hexToRgb(input.value); out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; set(p, [...out]); });
+        const row = el('div', { class: 'row', title: p.description ?? p.id }, el('label', {}, p.label), input);
+        if (p.type === 3) {
+          const a = slider('Opacity', { min: 0, max: 1, step: 0.01, value: v[3] ?? 1, onInput: (x) => { out[3] = x; set(p, [...out]); } }).el;
+          a.classList.add('sbs-sub');
+          return el('div', {}, row, a);
+        }
+        return row;
+      }
+      if (p.widget === 'slider' || p.widget === 'angle' || p.widget === 'position') {
+        const n = Math.max(1, v.length);
+        const comp = ['X', 'Y', 'Z', 'W'];
+        const parts: HTMLElement[] = [];
+        const out = [...v];
+        for (let i = 0; i < n; i++) {
+          const angle = p.widget === 'angle';
+          const min = angle && p.min === undefined ? 0 : lo(i), max = angle && p.max === undefined ? 1 : hi(i);
+          const step = p.step ?? (isInt ? 1 : (max - min) / 200);
+          const s = slider(n > 1 ? `${p.label} ${comp[i]}` : p.label, {
+            min, max, step, value: out[i] ?? 0,
+            fmt: angle ? (x) => `${Math.round(x * 360)}°` : isInt ? (x) => String(Math.round(x)) : (x) => (Math.abs(max - min) > 20 ? x.toFixed(1) : x.toFixed(2)),
+            onInput: (x) => { out[i] = isInt ? Math.round(x) : x; set(p, [...out]); },
+          }).el;
+          s.title = p.description ?? p.id;
+          parts.push(s);
+        }
+        return parts.length === 1 ? parts[0] : el('div', {}, ...parts);
+      }
+      return null;
+    };
+    const presetSel = select<string>([{ value: '', label: 'Select and apply' }, ...g.presets.map((x) => ({ value: x.label, label: x.label }))], st.preset ?? '', (v) => {
+      const ps = g.presets.find((x) => x.label === v);
+      if (!ps) return;
+      pre('preset:' + Math.random());
+      for (const [id, val] of Object.entries(ps.values)) if (id in st.values) st.values[id] = [...val];
+      st.preset = ps.label; touched(); this.buildProperties();
+      toast(`Preset: ${ps.label}`);
+    });
+    const seedIn = el('input', { type: 'number', value: String(st.seed), min: '0', max: '9999', step: '1', class: 'sbs-seed' }) as HTMLInputElement;
+    seedIn.addEventListener('change', () => { pre('seed'); st.seed = Math.max(0, Math.round(+seedIn.value || 0)); touched(); });
+    const params = group('Parameters',
+      g.presets.length ? el('div', { class: 'row' }, el('label', {}, 'Preset'), presetSel) : null,
+      el('div', { class: 'row' }, el('label', {}, 'Seed'), el('button', { class: 'grow', onclick: () => { pre('seed'); st.seed = Math.floor(Math.random() * 10000); seedIn.value = String(st.seed); touched(); } }, 'Random'), seedIn));
+    const groups = new Map<string, SbsParam[]>();
+    for (const p of g.params) {
+      if (p.type === 5 || p.type === 6) continue;
+      const k = p.group || '';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(p);
+    }
+    const many = groups.size > 2;
+    for (const [name, list] of groups) {
+      const body: HTMLElement[] = [];
+      for (const p of list) { const c = control(p); if (c) { rows.push({ p, row: c }); body.push(c); } }
+      if (!body.length) continue;
+      if (!name) { params.append(...body); continue; }
+      const gk = `${g.url}|${name}`;
+      const d = el('details', { class: 'sbs-grp' }, el('summary', {}, name.replace(/\//g, ' › ')), ...body) as HTMLDetailsElement;
+      d.open = !many || this.sbsOpenGroups.has(gk);
+      d.addEventListener('toggle', () => { if (d.open) this.sbsOpenGroups.add(gk); else this.sbsOpenGroups.delete(gk); });
+      params.append(d);
+    }
+    params.append(el('div', { class: 'row' }, el('label', {}, ''), el('button', { class: 'grow', onclick: () => {
+      pre('defaults:' + Math.random());
+      for (const p of g.params) if (p.type !== 5 && p.type !== 6) st.values[p.id] = [...p.def];
+      st.preset = undefined; touched(); this.buildProperties();
+    } }, 'Restore defaults')));
+    updVis();
+
+    // ---- image inputs and channels
+    const imgParams = g.params.filter((p) => p.type === 5);
+    const feeds = Object.keys(FEED_LABEL) as SbsFeed[];
+    const inputs = imgParams.length ? group('Image inputs',
+      ...imgParams.map((p) => el('div', { class: 'row', title: p.id }, el('label', {}, p.label),
+        select<SbsFeed>(feeds.map((f) => ({ value: f, label: FEED_LABEL[f] + (f !== 'none' && !this.ts.baked.has(f as BakeKey) ? ' (not baked)' : '') })), st.feeds[p.id] ?? 'none', (v) => { pre('feed:' + p.id); st.feeds[p.id] = v; touched(); }))),
+      el('p', { class: 'note' }, 'Like Painter, mesh map inputs are filled from your baked maps automatically.')) : null;
+    const chOpts: { value: string; label: string }[] = [{ value: '', label: 'Not used' }, ...CHANNELS.map((c) => ({ value: c, label: CH_LABEL[c] }))];
+    const channels = group('Channels',
+      ...g.outputs.map((o) => el('div', { class: 'row', title: `${o.id}${o.usage ? ' (' + o.usage + ')' : ''}` }, el('label', {}, o.label),
+        select<string>(chOpts, st.map[o.id] ?? '', (v) => { pre('map:' + o.id); st.map[o.id] = v as Ch | ''; touched(); }))),
+      el('div', { class: 'row' }, el('label', {}, 'Resolution'), select<number>([8, 9, 10, 11, 12].map((r) => ({ value: r, label: `${1 << r} × ${1 << r}` })), st.res, (v) => { pre('res'); st.res = v; touched(); })));
+    return [top, params, ...(inputs ? [inputs] : []), channels];
   }
 
   /** Rebuild a translated Substance layer stack. */
@@ -4799,9 +5233,15 @@ class App {
       title = 'Properties — fill';
       if ((layer as FillLayer).note) body.append(group('Source', el('p', { class: 'note' }, (layer as FillLayer).note!)));
       const fl = layer as FillLayer;
-      if (fl.graph) body.append(group('Material Designer', el('p', { class: 'note' }, `Driven by the node graph “${fl.graph.name}”.`),
-        el('button', { class: 'primary', onclick: () => this.editInDesigner(fl) }, 'Edit graph in Material Designer')));
-      body.append(this.materialProps(fl), ...this.procProps(fl), ...this.fillSettings(fl));
+      if (fl.sbs) {
+        title = 'Properties — Substance material';
+        body.innerHTML = '';
+        body.append(...this.sbsProps(fl), ...this.fillSettings(fl));
+      } else {
+        if (fl.graph) body.append(group('Material Designer', el('p', { class: 'note' }, `Driven by the node graph “${fl.graph.name}”.`),
+          el('button', { class: 'primary', onclick: () => this.editInDesigner(fl) }, 'Edit graph in Material Designer')));
+        body.append(this.materialProps(fl), ...this.procProps(fl), ...this.fillSettings(fl));
+      }
       if (layer.mask) body.append(group('Mask', el('p', { class: 'note' }, `This layer has a mask${layer.mask.gen ? ' (' + GEN_LABEL[layer.mask.gen.type] + ')' : ''}.`),
         el('button', { onclick: () => this.selectLayer(layer, 'mask') }, 'Edit mask')));
       else body.append(group('Mask', el('p', { class: 'note' }, 'Paint this material only where you want it: add a black mask, then paint white.'),

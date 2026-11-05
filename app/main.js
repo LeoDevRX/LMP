@@ -325,6 +325,134 @@ ipcMain.handle('shell:open', (_e, url) => {
   if (/^https:\/\/github\.com\/LeoDevRX\//i.test(String(url))) shell.openExternal(String(url));
 });
 
+// ---------------------------------------------------------------- Substance materials
+//
+// .sbsar files are compiled graphs. If Adobe's own renderer (sbsrender.exe, part of Substance 3D
+// Designer and the Automation Toolkit) is on this PC, LMP runs the real graph with it, so materials
+// look exactly like they do in Painter. LMP never ships Adobe's engine; it only calls the copy the
+// user already has installed.
+
+const os = require('os');
+const SBS_DIRS = () => {
+  const roots = [process.env.ProgramFiles || 'C:\\Program Files', process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', process.env.ProgramW6432,
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean);
+  const out = [];
+  for (const r of [...new Set(roots)]) for (const vendor of ['Adobe', 'Allegorithmic']) {
+    const d = path.join(r, vendor);
+    let names = [];
+    try { names = fs.readdirSync(d); } catch { continue; }
+    for (const n of names) if (/substance/i.test(n)) out.push(path.join(d, n));
+  }
+  return out;
+};
+function findFile(dir, re, depth, found) {
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isFile() && re.test(e.name)) found.push(full);
+    else if (e.isDirectory() && depth > 0 && !/^(node_modules|\.git)$/.test(e.name)) findFile(full, re, depth - 1, found);
+    if (found.length > 4000) return;
+  }
+}
+const isSbsrender = (p) => typeof p === 'string' && /(^|[\\/])sbsrender(\.exe)?$/i.test(p) && fs.existsSync(p);
+let sbsFound;
+function findSbsrender(custom) {
+  if (isSbsrender(custom)) return custom;
+  if (sbsFound !== undefined) return sbsFound;
+  // Designer / Automation Toolkit first (they ship sbsrender), then anything else from Adobe Substance.
+  const dirs = SBS_DIRS().sort((a, b) => (/designer|automation/i.test(b) ? 1 : 0) - (/designer|automation/i.test(a) ? 1 : 0));
+  for (const d of dirs) {
+    const found = [];
+    findFile(d, /^sbsrender(\.exe)?$/i, 3, found);
+    if (found.length) { sbsFound = found[0]; return sbsFound; }
+  }
+  sbsFound = null;
+  return null;
+}
+ipcMain.handle('sbs:engine', (_e, custom) => { const p = findSbsrender(custom); return p ? { path: p } : null; });
+ipcMain.handle('sbs:pick', async (e) => {
+  const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
+    title: 'Where is sbsrender.exe? (in your Substance 3D Designer folder)', properties: ['openFile'],
+    filters: [{ name: 'sbsrender', extensions: ['exe'] }], defaultPath: SBS_DIRS()[0],
+  });
+  const p = r.canceled ? null : r.filePaths[0];
+  return isSbsrender(p) ? { path: p } : (p ? { error: 'That file isn\'t sbsrender.exe.' } : null);
+});
+
+const sbsTmp = () => { const d = path.join(os.tmpdir(), 'LMP-substance'); fs.mkdirSync(path.join(d, 'mesh'), { recursive: true }); return d; };
+const sbsSafe = (s) => String(s).replace(/[^\w.-]+/g, '_').slice(0, 120);
+const ID_RE = /^[$A-Za-z_][\w$]*$/;
+/**
+ * req: { exe, key, sbsar?, graph?, values: [id, "v1,v2"][], entries: [id, name][], meshes?: [name, Uint8Array][] }
+ * Returns { files: [{ name, data }], log } or { need: { sbsar?: true, meshes?: string[] } } or { error }.
+ */
+ipcMain.handle('sbs:render', async (_e, req) => {
+  if (!isSbsrender(req && req.exe)) return { error: 'Adobe\'s renderer (sbsrender.exe) wasn\'t found.' };
+  const dir = sbsTmp();
+  const sbs = path.join(dir, sbsSafe(req.key) + '.sbsar');
+  if (req.sbsar) fs.writeFileSync(sbs, Buffer.from(req.sbsar));
+  for (const [n, data] of req.meshes || []) fs.writeFileSync(path.join(dir, 'mesh', sbsSafe(n) + '.png'), Buffer.from(data));
+  const need = {};
+  if (!fs.existsSync(sbs)) need.sbsar = true;
+  const missing = (req.entries || []).map((x) => x[1]).filter((n) => !fs.existsSync(path.join(dir, 'mesh', sbsSafe(n) + '.png')));
+  if (missing.length) need.meshes = missing;
+  if (need.sbsar || need.meshes) return { need };
+  const job = path.join(dir, 'job-' + crypto.randomBytes(6).toString('hex'));
+  fs.mkdirSync(job);
+  const args = ['render', '--input', sbs, '--output-path', job, '--output-name', '{outputNodeName}', '--output-format', 'png'];
+  if (req.graph) args.push('--input-graph', String(req.graph));
+  for (const [id, v] of req.values || []) if (ID_RE.test(id) && /^[-\d.,e]+$/i.test(String(v))) args.push('--set-value', `${id}@${v}`);
+  for (const [id, n] of req.entries || []) if (ID_RE.test(id)) args.push('--set-entry', `${id}@${path.join(dir, 'mesh', sbsSafe(n) + '.png')}`);
+  const res = await new Promise((resolve) => {
+    execFile(req.exe, args, { windowsHide: true, timeout: 240000, maxBuffer: 32 * 1024 * 1024, cwd: path.dirname(req.exe) }, (err, stdout, stderr) => {
+      resolve({ err, log: `${stdout || ''}\n${stderr || ''}`.trim().slice(-4000) });
+    });
+  });
+  const files = [];
+  try {
+    for (const n of fs.readdirSync(job)) if (/\.(png|jpe?g)$/i.test(n)) files.push({ name: n, data: fs.readFileSync(path.join(job, n)) });
+  } catch { /* none */ }
+  try { fs.rmSync(job, { recursive: true, force: true }); } catch { /* fine */ }
+  if (!files.length) return { error: (res.err ? String(res.err.message || res.err) + '\n' : '') + res.log };
+  return { files, log: res.log };
+});
+
+/** Materials from the user's Substance 3D Painter (its starter assets and their own assets folder). */
+let sbsLibRoots = [];
+ipcMain.handle('sbs:library', () => {
+  const roots = [];
+  for (const d of SBS_DIRS()) if (/painter/i.test(d)) roots.push({ dir: path.join(d, 'resources'), source: 'Substance Painter' });
+  for (const docs of [app.getPath('documents'), path.join(os.homedir(), 'OneDrive', 'Documents')]) {
+    for (const sub of ['Adobe', 'Allegorithmic']) for (const n of ['Adobe Substance 3D Painter', 'Substance Painter']) roots.push({ dir: path.join(docs, sub, n, 'assets'), source: 'Your Painter assets' });
+  }
+  const live = roots.filter((r) => fs.existsSync(r.dir));
+  sbsLibRoots = live.map((r) => r.dir);
+  const out = [];
+  const seen = new Set();
+  for (const r of live) {
+    const found = [];
+    findFile(r.dir, /\.sbsar$/i, 5, found);
+    for (const f of found) {
+      const rel = path.relative(r.dir, f).replace(/\\/g, '/');
+      // only materials (not the filters, generators and grunges Painter also ships as .sbsar)
+      if (!/(^|\/)materials?\//i.test(rel)) continue;
+      const k = path.basename(f).toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      let size = 0;
+      try { size = fs.statSync(f).size; } catch { /* fine */ }
+      out.push({ name: path.basename(f, path.extname(f)), path: f, size, source: r.source });
+    }
+  }
+  return out;
+});
+ipcMain.handle('sbs:read', (_e, p) => {
+  const full = path.resolve(String(p));
+  if (!/\.sbsar$/i.test(full) || !sbsLibRoots.some((r) => full.toLowerCase().startsWith(path.resolve(r).toLowerCase() + path.sep))) return null;
+  try { return fs.readFileSync(full); } catch { return null; }
+});
+
 // ---------------------------------------------------------------- window
 
 let mainWin = null;

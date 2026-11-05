@@ -8,6 +8,7 @@ import { RayBaker, SAMPLE_FLOATS } from './RayBaker';
 import { FRAG_GEN, FRAG_MICRO, GenSettings, LayerMaskSpec, axisVec, genIndex, MaskFx, FX_BLENDS, SHAPE_KINDS, usesMicro } from './Masks';
 import { FRAG_PROC, ProcSource, patternIndex, procKey } from './Procedural';
 import type { GraphJSON } from '../designer/Graph';
+import type { SbsState } from './Substance';
 
 export type Ch = 'color' | 'rough' | 'metal' | 'height' | 'emit' | 'normal';
 export const CHANNELS: Ch[] = ['color', 'rough', 'metal', 'height', 'emit', 'normal'];
@@ -146,6 +147,8 @@ export interface FillLayer extends LayerCommon {
   procs?: Partial<Record<Ch, ProcSource>>;
   /** Material Designer graph driving this layer's images (outputs named "graph:<channel>"). */
   graph?: GraphJSON;
+  /** Substance material mode: an .sbsar and its parameter values drive this layer's images ("sbs:<channel>"). */
+  sbs?: SbsState;
 }
 /** Folder: its children are composited together, then blended with the folder's mask / opacity. */
 export interface GroupLayer extends LayerCommon { kind: 'group'; children: Layer[]; open: boolean }
@@ -1278,6 +1281,7 @@ void main() {
         props.xf = l.xf ? { ...l.xf } : undefined; props.adj = l.adj ? structuredClone(l.adj) : undefined;
         props.procs = l.procs ? structuredClone(l.procs) : undefined;
         props.graph = l.graph;
+        props.sbs = l.sbs ? structuredClone(l.sbs) : undefined;
       }
       if (l.kind === 'group') props.open = l.open;
       const n: NodeSnap = { layer: l, props, mask: l.mask };
@@ -1291,7 +1295,7 @@ void main() {
   private restore(s: Snap) {
     const build = (n: NodeSnap): Layer => {
       const l = n.layer as any;
-      for (const [k, v] of Object.entries(n.props)) l[k] = k === 'values' || k === 'adj' || k === 'procs' ? (v === undefined ? v : structuredClone(v)) : k === 'enabled' || (k === 'xf' && v) ? { ...(v as object) } : v;
+      for (const [k, v] of Object.entries(n.props)) l[k] = k === 'values' || k === 'adj' || k === 'procs' || k === 'sbs' ? (v === undefined ? v : structuredClone(v)) : k === 'enabled' || (k === 'xf' && v) ? { ...(v as object) } : v;
       l.mask = n.mask;
       if (n.mask && n.maskProps) {
         n.mask.base = n.maskProps.base;
@@ -2389,6 +2393,25 @@ void main() {
   writeLayerChannel(layer: PaintLayer, ch: Ch, bytes: Uint8Array, size: number) {
     this.writeRT(layer.rts[ch], bytes, size);
     this.dirty.add(ch);
+  }
+
+  private matMeshOut = quadShader(/* glsl */ `
+uniform sampler2D src; uniform int mode; varying vec2 vUv;
+void main() { vec4 s = texture2D(src, vUv); vec3 c = mode == 0 ? vec3(s.r) : mode == 1 ? vec3(s.g) : mode == 2 ? vec3(s.b) : s.rgb; gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0); }`,
+  { src: { value: null }, mode: { value: 0 } });
+  /** One baked mesh map as RGBA8 pixels (rows bottom-up), for Substance image inputs; null when it isn't baked. */
+  meshMapPixels(key: BakeKey, size: number): Uint8Array | null {
+    if (!this.baked.has(key)) return null;
+    const src: [RT, number] = key === 'ao' ? [this.meshRT, 0] : key === 'curv' ? [this.meshRT, 1] : key === 'thick' ? [this.meshRT, 2]
+      : key === 'wsn' ? [this.wsnRT, 3] : key === 'pos' ? [this.posNRT, 3] : key === 'normal' ? [this.bakedNRT, 3] : key === 'id' ? [this.idRT, 3] : [this.bakedHRT, 0];
+    const u = this.matMeshOut.uniforms;
+    u.src.value = src[0].texture; u.mode.value = src[1];
+    const rt = makeRT(size);
+    this.gpu.run(this.matMeshOut, rt);
+    u.src.value = null;
+    const px = this.gpu.readPixels(rt);
+    rt.dispose();
+    return px;
   }
 
   /** Render one export map at the given size. Rows are bottom-up (GL order). */

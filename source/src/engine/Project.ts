@@ -4,6 +4,7 @@ import type { ModelSource } from './ModelLoader';
 import type { GenSettings } from './Masks';
 import type { ProcSource } from './Procedural';
 import type { GraphJSON } from '../designer/Graph';
+import { SBS_FILES, SBS_LOADED, SbsState, registerSbs, stateKey } from './Substance';
 
 /** One layer as stored in a project (.tpaint) or smart material (.tpsmart). */
 export type LayerJSON =
@@ -16,6 +17,8 @@ export type LayerJSON =
       graph?: GraphJSON;
       /** Maps from a scanned material (downloaded on first use). */
       scan?: ScanRef;
+      /** Substance material mode: parameter values plus the .sbsar itself (base64). */
+      sbs?: SbsState & { data?: string };
       mask?: MaskJSON;
     }
   | {
@@ -83,6 +86,7 @@ export async function serializeLayer(ts: TextureSet, l: Layer, withPaint = true)
     const images: Partial<Record<Ch, { name: string; data: string; flipG?: boolean }>> = {};
     for (const [ch, img] of Object.entries(l.images ?? {}) as [Ch, FillImage][]) {
       if (img.name.startsWith('graph:') && l.graph) continue; // rebuilt from the graph
+      if (!img.bytes.byteLength) continue; // rendered on the GPU (rebuilt when opened)
       images[ch] = { name: img.name, data: toB64(new Uint8Array(img.bytes)), flipG: img.flipG };
     }
     return {
@@ -91,6 +95,7 @@ export async function serializeLayer(ts: TextureSet, l: Layer, withPaint = true)
       xf: l.xf ? { ...l.xf } : undefined, adj: l.adj ? structuredClone(l.adj) : undefined, note: l.note,
       procs: l.procs ? structuredClone(l.procs) : undefined,
       graph: l.graph ? structuredClone(l.graph) : undefined,
+      sbs: l.sbs ? { ...structuredClone(l.sbs), data: SBS_FILES.has(l.sbs.key) ? toB64(SBS_FILES.get(l.sbs.key)!.bytes) : undefined } : undefined,
     };
   }
   if (l.kind === 'group') {
@@ -125,6 +130,15 @@ export async function restoreLayer(ts: TextureSet, l: LayerJSON, resolution: num
     if (l.graph && ts.graphBaker) {
       try { images = { ...(images ?? {}), ...(await ts.graphBaker(l.graph)) }; } catch (e) { console.warn('graph', e); }
     }
+    let sbs: SbsState | undefined, sbsKey = '';
+    if (l.sbs) {
+      const { data, ...st } = l.sbs;
+      sbs = structuredClone(st);
+      try { if (data && !SBS_FILES.has(st.key)) await registerSbs(fromB64(data), st.file); } catch (e) { console.warn('sbs', e); }
+      // Saved renders are used as they are; anything missing is rendered again once the layer exists.
+      const keep = images ?? {};
+      if (SBS_FILES.has(st.key) && !Object.values(st.map).some((ch) => ch && !keep[ch as Ch])) sbsKey = stateKey(sbs);
+    }
     if (l.scan && ts.scanResolver && !images) {
       try {
         const got = await ts.scanResolver(l.scan);
@@ -135,6 +149,7 @@ export async function restoreLayer(ts: TextureSet, l: LayerJSON, resolution: num
     }
     const fl = ts.addFillLayer(l.name, l.values, l.enabled, aboveActive, images, l.tiling ?? 1, parent);
     if (l.graph) fl.graph = structuredClone(l.graph);
+    if (sbs) { fl.sbs = sbs; if (sbsKey) SBS_LOADED.set(fl, sbsKey); }
     if (l.xf) fl.xf = { ...DEFAULT_XF, ...l.xf };
     if (l.adj) fl.adj = { ...DEFAULT_ADJ, ...structuredClone(l.adj) };
     if (l.note) fl.note = l.note;

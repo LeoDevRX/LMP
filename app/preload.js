@@ -28,4 +28,9 @@ contextBridge.exposeInMainWorld('texpaintNative', {
   openUrl: (url) => ipcRenderer.invoke('shell:open', url),
   cloudCatalog: (online) => ipcRenderer.invoke('cloud:catalog', online),
   cloudGet: (m) => ipcRenderer.invoke('cloud:get', m),
+  sbsEngine: (custom) => ipcRenderer.invoke('sbs:engine', custom),
+  sbsPick: () => ipcRenderer.invoke('sbs:pick'),
+  sbsRender: (req) => ipcRenderer.invoke('sbs:render', req),
+  sbsLibrary: () => ipcRenderer.invoke('sbs:library'),
+  sbsRead: (p) => ipcRenderer.invoke('sbs:read', p),
 });

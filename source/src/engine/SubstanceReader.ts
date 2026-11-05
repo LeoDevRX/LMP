@@ -165,6 +165,15 @@ const COLOR_WORDS: [RegExp, [number, number, number], number?, number?][] = [
   [/\bblack\b/i, [0.04, 0.04, 0.045]], [/\bwhite\b/i, [0.88, 0.88, 0.86]], [/\byellow\b/i, [0.85, 0.7, 0.1]],
 ];
 
+/** Look (sRGB color, metal, rough) suggested by words in a material's name / category / keywords. */
+export function guessLook(...texts: string[]): { color: [number, number, number]; metal?: number; rough?: number; word: string } | null {
+  for (const t of texts) {
+    const hit = COLOR_WORDS.find(([re]) => re.test(t));
+    if (hit) return { color: [...hit[1]] as [number, number, number], metal: hit[2], rough: hit[3], word: (t.match(hit[0]) ?? [''])[0].trim() };
+  }
+  return null;
+}
+
 const SLOT_WORDS: [RegExp, Ch | 'gloss'][] = [
   [/base.?colou?r|albedo|diffuse|_col(or)?\b|_bc\b/i, 'color'], [/normal|_nrm\b|_nor\b/i, 'normal'],
   [/rough/i, 'rough'], [/gloss|smooth/i, 'gloss'], [/metal/i, 'metal'],

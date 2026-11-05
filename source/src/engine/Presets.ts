@@ -34,7 +34,7 @@ export type ShelfItem =
   | { kind: 'env'; name: string; file: string; src: () => Promise<File> }
   | { kind: 'model'; name: string; file: string; model: string }
   | { kind: 'graph'; name: string; file: string; graph: any }
-  | { kind: 'unsupported'; name: string; file: string; reason: string; src?: () => Promise<File> }
+  | { kind: 'unsupported'; name: string; file: string; reason: string; src?: () => Promise<File>; cat?: string }
   | { kind: 'brush'; name: string; file: string; brush: BrushPreset; tipFile?: File }
   /** A CC0 scanned material from LMP's materials release; downloaded the first time it's used. */
   | { kind: 'cloud'; name: string; file: string; cat: string; thumb: string; size: number; tags: string[]; maps: string[]; downloaded?: boolean; source?: string };
