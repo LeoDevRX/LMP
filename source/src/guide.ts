@@ -64,6 +64,12 @@ export const GUIDES: Guide[] = [
     sum: 'Updates, shapes, autosave, history, the Guide and more.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v2.00', steps: [
+        'Scanned materials: 114 real photo-scanned materials (metal, rust, painted metal, sci-fi plates, wood, stone, fabric, leather and more) with colour, roughness, metal, normal and height maps. Each one downloads the first time you use it.',
+        'Realistic smart materials built from those scans the way Substance builds them: Rusty Metal, Heavy Rust, Chipped Red Paint, Sci-Fi Panels, Worn Diamond Plate, Old Wood Planks, Mossy Rock and more.',
+        'The 3D view is lit by a real studio photo by default, so metals reflect like in Substance. Change it in Display settings.',
+        'New guide: how to bring a Substance material into LMP with its exact look.',
+      ] },
       { h: 'New in v1.04', steps: [
         'Walk me through it: many guides can now show you how, step by step. A pointer moves to each button and a small note under it says what to do.',
       ] },
@@ -502,6 +508,43 @@ export const GUIDES: Guide[] = [
       { steps: ['Drag a material from the shelf over the model. The part under the cursor lights up.', 'Let go. The new fill layer gets a mask that only covers that part.', 'You can also use G (polygon fill) on a mask.'] },
     ],
     related: ['poly-fill', 'masks'],
+  },
+  {
+    id: 'from-substance', title: 'Bring a Substance material into LMP (exact look)', cat: 'Layers & materials',
+    sum: 'Export it from Substance Painter as pictures, then drop those into LMP.',
+    tags: ['substance', 'import', 'material', 'image', 'export'],
+    words: 'substance painter sbsar spsm smart material exact same look identical copy convert bake export textures adobe my own',
+    body: [
+      { p: 'Substance materials (.sbsar, .spsm) only run inside Adobe\'s own engine, so LMP can only guess at them. For the exact look, let Substance make the pictures and give those to LMP.' },
+      { h: 'In Substance Painter', steps: [
+        'Make a new project with a flat plane (a 1 × 1 plane from Blender works) and a texture size like 2048.',
+        'Drag the material or smart material onto it.',
+        'File > Export Textures. Pick the "PBR Metallic Roughness" preset, choose a folder and click Export.',
+      ] },
+      { h: 'In LMP', steps: [
+        'Drag all the exported pictures onto LMP at once (or Ctrl+I and pick them).',
+        'LMP recognises Base Color, Roughness, Metallic, Normal and Height from the names. Choose "New fill layer".',
+        'In Properties set the tiling and switch Projection to Tri-planar so it wraps around your model without seams.',
+      ] },
+      { tips: ['Choose "Add to Assets shelf only" instead, and the material stays on your shelf to use again.', 'Want smart-material wear on top? Add LMP\'s smart masks (edge wear, dirt) to the layer afterwards.'] },
+    ],
+    show: [{ label: 'Import pictures', act: 'import' }],
+    related: ['import-images', 'materials'],
+  },
+  {
+    id: 'scanned', title: 'Scanned materials', cat: 'Layers & materials',
+    sum: 'Real photo-scanned materials that download when you first use them.',
+    tags: ['material', 'smart', 'image'], words: 'scan scanned photo realistic real download cloud ambientcg metal rust wood stone concrete fabric leather plastic pbr',
+    body: [
+      { steps: [
+        'Open Scanned materials on the Assets shelf. The ones marked with a download size aren\'t on your PC yet.',
+        'Click one or drag it onto the model. The first time, LMP downloads it (a few MB) and keeps it for next time.',
+        'It comes in as a fill layer with real colour, roughness, metal, normal and height maps. Add masks to wear it in.',
+      ] },
+      { tips: ['These are free CC0 scans from ambientCG.com.', 'The "Realistic" smart materials are built from these scans.'] },
+    ],
+    show: [{ label: 'Scanned materials', act: 'shelf:cloud', hl: '.shelf-sec', text: 'Scanned materials' }],
+    related: ['smart-materials', 'materials'],
   },
   {
     id: 'substance-files', title: 'Substance files (.sbsar, .spsm)', cat: 'Layers & materials',

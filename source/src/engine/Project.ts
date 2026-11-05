@@ -1,4 +1,4 @@
-import { CHANNELS, Ch, ChannelValues, FillImage, Layer, TextureSet, BlendMode, GroupLayer, FillTransform, FillAdjust, DEFAULT_XF, DEFAULT_ADJ, BakeKey } from './TextureSet';
+import { CHANNELS, Ch, ChannelValues, FillImage, Layer, TextureSet, BlendMode, GroupLayer, FillTransform, FillAdjust, DEFAULT_XF, DEFAULT_ADJ, BakeKey, ScanRef } from './TextureSet';
 import { imageTexture } from './images';
 import type { ModelSource } from './ModelLoader';
 import type { GenSettings } from './Masks';
@@ -14,6 +14,8 @@ export type LayerJSON =
       xf?: FillTransform; adj?: FillAdjust; note?: string;
       procs?: Partial<Record<Ch, ProcSource>>;
       graph?: GraphJSON;
+      /** Maps from a scanned material (downloaded on first use). */
+      scan?: ScanRef;
       mask?: MaskJSON;
     }
   | {
@@ -122,6 +124,14 @@ export async function restoreLayer(ts: TextureSet, l: LayerJSON, resolution: num
     }
     if (l.graph && ts.graphBaker) {
       try { images = { ...(images ?? {}), ...(await ts.graphBaker(l.graph)) }; } catch (e) { console.warn('graph', e); }
+    }
+    if (l.scan && ts.scanResolver && !images) {
+      try {
+        const got = await ts.scanResolver(l.scan);
+        const use = l.scan.use ?? (Object.keys(got) as Ch[]);
+        images = {};
+        for (const ch of use) if (got[ch]) images[ch] = got[ch];
+      } catch (e) { console.warn('scan', e); }
     }
     const fl = ts.addFillLayer(l.name, l.values, l.enabled, aboveActive, images, l.tiling ?? 1, parent);
     if (l.graph) fl.graph = structuredClone(l.graph);

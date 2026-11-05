@@ -18,11 +18,13 @@ export interface Settings {
   startScreen: boolean;
   /** Ask GitHub for a newer LMP when it starts. */
   checkUpdates: boolean;
+  /** Lighting environment shown in the 3D view (an HDR on the shelf; '' = built-in studio). */
+  envName: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   autosave: true, autosaveMinutes: 3, autosaveKeep: 5, defaultSize: 1024, pixelRatio: 0, historyLimit: 25,
-  lowPerf: false, perfAsked: false, welcomed: false, startScreen: true, checkUpdates: true,
+  lowPerf: false, perfAsked: false, welcomed: false, startScreen: true, checkUpdates: true, envName: 'studio_small_09_1k',
 };
 
 const KEY = 'lmp-settings';

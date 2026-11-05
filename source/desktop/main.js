@@ -17,6 +17,8 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=8192');
 
 const exeDir = path.dirname(process.execPath);
+/** Scanned materials downloaded on first use live in presets/<SCANS>/<category>/<name>/. */
+const SCANS = 'Scanned materials';
 const PROJECT_EXTS = ['.lmp', '.tpaint'];
 
 // presets folder: next to LMP.exe, else the user's documents.
@@ -33,7 +35,7 @@ function walk(dir, depth, rel, out) {
   for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isFile()) out.push({ name: e.name, dir: rel, path: full, size: fs.statSync(full).size });
-    else if (e.isDirectory() && depth > 0) walk(full, depth - 1, rel ? `${rel}/${e.name}` : e.name, out);
+    else if (e.isDirectory() && depth > 0 && !(rel === '' && e.name === SCANS)) walk(full, depth - 1, rel ? `${rel}/${e.name}` : e.name, out);
   }
 }
 
@@ -278,6 +280,46 @@ ipcMain.handle('update:install', async () => {
     return { ok: false, error: /EACCES|EPERM|EROFS/.test(msg) ? 'LMP can\'t write to its own folder (it may be in a protected place like Program Files).' : msg, url: RELEASES };
   }
 });
+// ---------------------------------------------------------------- scanned materials (download on first use)
+
+const MAT_BASE = `https://github.com/${REPO}/releases/download/materials/`;
+const catalogCache = () => path.join(app.getPath('userData'), 'materials-catalog.json');
+const safePart = (n) => String(n).replace(/[\\/:*?"<>|]+/g, '_').replace(/^\.+/, '').trim() || 'Material';
+const scanDir = (m) => path.join(presetsDir(), SCANS, safePart(m.cat), safePart(m.name));
+function readCatalog(p) { try { const c = JSON.parse(fs.readFileSync(p, 'utf8')); return c && Array.isArray(c.materials) ? c : null; } catch { return null; } }
+/** The catalog of scanned materials: online if possible (and cached), else the cached or bundled copy. */
+ipcMain.handle('cloud:catalog', async (_e, online) => {
+  let cat = null;
+  if (online) {
+    try {
+      const r = await net.fetch(MAT_BASE + 'materials-catalog.json', { headers: { 'User-Agent': 'LMP' } });
+      if (r.ok) { const txt = await r.text(); cat = JSON.parse(txt); if (cat?.materials) fs.writeFileSync(catalogCache(), txt); }
+    } catch { /* offline */ }
+  }
+  cat = (cat?.materials && cat) || readCatalog(catalogCache()) || readCatalog(path.join(presetsDir(), 'materials-catalog.json'));
+  if (!cat) return null;
+  for (const m of cat.materials) m.downloaded = fs.existsSync(scanDir(m));
+  return cat;
+});
+/** Make sure a scanned material is on this PC (download + unpack it the first time). Returns its files. */
+ipcMain.handle('cloud:get', async (_e, m) => {
+  const dir = scanDir(m);
+  try {
+    if (!fs.existsSync(dir)) {
+      if (!/^mat-[\w.-]+\.zip$/.test(String(m.file))) throw new Error('Unknown material');
+      const zip = await getBytes(MAT_BASE + m.file);
+      const files = [...unzip(zip)].filter(([n, b]) => b && /^[^/\\]+\.(jpg|jpeg|png)$/i.test(n));
+      if (!files.length) throw new Error('The download was empty');
+      const tmp = dir + '.part';
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.mkdirSync(tmp, { recursive: true });
+      for (const [n, b] of files) fs.writeFileSync(path.join(tmp, n), b);
+      fs.renameSync(tmp, dir);
+    }
+    return { ok: true, files: fs.readdirSync(dir).map((n) => ({ name: n, path: path.join(dir, n) })) };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+
 ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
 ipcMain.handle('shell:open', (_e, url) => {
   if (/^https:\/\/github\.com\/LeoDevRX\//i.test(String(url))) shell.openExternal(String(url));

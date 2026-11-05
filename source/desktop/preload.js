@@ -26,4 +26,6 @@ contextBridge.exposeInMainWorld('texpaintNative', {
   updateInstall: () => ipcRenderer.invoke('update:install'),
   relaunch: () => ipcRenderer.invoke('app:relaunch'),
   openUrl: (url) => ipcRenderer.invoke('shell:open', url),
+  cloudCatalog: (online) => ipcRenderer.invoke('cloud:catalog', online),
+  cloudGet: (m) => ipcRenderer.invoke('cloud:get', m),
 });

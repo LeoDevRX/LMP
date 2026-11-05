@@ -28,6 +28,13 @@ Performance:
 - Shelf thumbnails are made only when they scroll into view.
 - Smart masks keep their generator result cached, so painting on a mask doesn't recompute the noise stack every frame.
 
+## New in v2.00
+
+- **Scanned materials.** 114 CC0 photo scans from ambientCG (metal, rust, painted metal, sci-fi plates, wood, stone, bricks, ground, fabric, leather, plastic, plaster) with colour, roughness, metal, normal and height maps. They're on the shelf with previews and download the first time you use one (about 4 MB each), then stay on your PC in `presets/Scanned materials`.
+- **Realistic smart materials** built from the scans the way Substance builds them (a scanned base, then scanned rust or paint, dirt, grunge and edge wear placed by smart masks): Rusty Metal, Heavy Rust, Chipped Red Paint, Worn Green Paint, Industrial White Paint, Sci-Fi Panels, Scratched Gunmetal, Tarnished Gold, Worn Chrome, Worn Diamond Plate, Old Wood Planks, Mossy Rock, Dirty Concrete, Worn Leather and Dusty Rubber.
+- **Studio photo lighting** by default (an HDR from Poly Haven), so metals reflect properly. Pick another in Display settings.
+- **Bringing Substance materials in.** Substance materials only run in Adobe's engine; the Guide shows how to export one from Substance Painter and use it in LMP with the exact same look.
+
 ## New in v1.04
 
 - **Walk me through it.** Guides like Shapes, Masks, Painting, Baking, Smart materials and Export can show you how: a purple pointer moves to each button with a short note under it, and the next step starts when you do it.

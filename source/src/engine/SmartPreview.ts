@@ -16,6 +16,7 @@ export class SmartPreview {
   private ready: Promise<void> | null = null;
   private chain: Promise<unknown> = Promise.resolve();
   graphBaker: TextureSet['graphBaker'] = null;
+  scanResolver: TextureSet['scanResolver'] = null;
 
   constructor(private gpu: GPU, readonly size = 256) {
     this.geometry = previewModel().geometries[0];
@@ -25,6 +26,7 @@ export class SmartPreview {
     return (this.ready ??= (async () => {
       const ts = new TextureSet(this.gpu, [this.geometry], this.size);
       ts.graphBaker = this.graphBaker;
+      ts.scanResolver = this.scanResolver;
       ts.bakeMaps = { normal: false, height: false, wsn: true, id: true, ao: true, curv: true, pos: true, thick: true };
       ts.bakeSettings = { ...ts.bakeSettings, aoRays: 48, curvRays: 24 };
       await ts.bakeMeshMaps();

@@ -5,13 +5,13 @@ import { Viewport, ViewMode, ViewSource, Hit, Region, ToneMap } from './engine/V
 import { UVView } from './engine/UVView';
 import {
   TextureSet, Brush, CHANNELS, CH_LABEL, Ch, ChannelValues, Layer, FillLayer, FillImage,
-  PaintTarget, BlendMode, BLEND_LABEL, GroupLayer, BakeKey, IdSource, ID_SOURCE_LABEL, DEFAULT_XF, DEFAULT_ADJ, FillAdjust,
+  PaintTarget, BlendMode, BLEND_LABEL, GroupLayer, BakeKey, IdSource, ID_SOURCE_LABEL, DEFAULT_XF, DEFAULT_ADJ, FillAdjust, ScanRef,
 } from './engine/TextureSet';
 import { BrushPreset, BrushSettings, BUILTIN_TIPS, STARTER_BRUSHES, builtinTip, builtinTipThumb, imageTip, tipTexture, tipPreview } from './brushes';
 import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings, SHAPE_KINDS, SHAPE_LABEL, ShapeKind } from './engine/Masks';
 import { PATTERNS, PATTERN_LABEL, PatternType } from './engine/Procedural';
 import { MeshParts, PartMode, PART_LABEL, Part } from './engine/MeshParts';
-import { MaterialPreset, PresetShelf, ShelfItem , isDesktopApp, openNativePresets , splitMapName } from './engine/Presets';
+import { MaterialPreset, PresetShelf, ShelfItem , isDesktopApp, openNativePresets , splitMapName, MapSlot } from './engine/Presets';
 import { imageTexture } from './engine/images';
 import { ThumbRenderer } from './engine/Thumbs';
 import { SmartPreview } from './engine/SmartPreview';
@@ -22,6 +22,8 @@ import {
   parseProject, restoreLayers, restoreLayer, serializeLayer, serializeProject, toB64, fromB64, makeSmartMaterial, applySmartMaterial, restoreMeshMaps,
 } from './engine/Project';
 import { STARTER } from './starter';
+import { SCAN_SMART } from './smartScans';
+import SCAN_PREVIEWS from './assets/scanPreviews.json';
 import { libraryMaterials } from './materialLib';
 import { VERSION } from './version';
 import { Settings, loadSettings, saveSettings, weakComputer } from './settings';
@@ -71,7 +73,7 @@ const BAKE_ITEMS: [BakeKey, string][] = [
 const BAKE_VIEW: Record<BakeItem, ViewMode> = {
   common: 'rays', normal: 'bnormal', wsn: 'wsn', id: 'id', ao: 'ao', curv: 'curv', pos: 'pos', thick: 'thick', height: 'bheight',
 };
-type ShelfFilter = 'all' | 'model' | 'smart' | 'material' | 'textures' | 'brush' | 'unsupported' | 'mask' | 'env' | 'graph';
+type ShelfFilter = 'all' | 'model' | 'smart' | 'material' | 'textures' | 'brush' | 'unsupported' | 'mask' | 'env' | 'graph' | 'cloud';
 
 /** Dock: a titled panel like the ones in Substance (title bar + body). */
 function dock(title: string | HTMLElement, body: HTMLElement, cls = '') {
@@ -114,7 +116,7 @@ class App {
   /** Runs smart materials for real on a preview shape (made on first use). */
   private smartPrev: SmartPreview | null = null;
   private get smartPreview() {
-    if (!this.smartPrev) { this.smartPrev = new SmartPreview(this.gpu, this.settings.lowPerf ? 128 : 256); this.smartPrev.graphBaker = (g) => this.bakeGraph(g); }
+    if (!this.smartPrev) { this.smartPrev = new SmartPreview(this.gpu, this.settings.lowPerf ? 128 : 256); this.smartPrev.graphBaker = (g) => this.bakeGraph(g); this.smartPrev.scanResolver = (r) => this.scanImages(r); }
     return this.smartPrev;
   }
   private smartThumb(key: string, sm: any): Promise<string> {
@@ -259,6 +261,7 @@ class App {
     const res = resolution ?? this.ts?.size ?? 1024;
     this.ts = new TextureSet(this.gpu, model.geometries, res);
     this.ts.graphBaker = (g) => this.bakeGraph(g);
+    this.ts.scanResolver = (r) => this.scanImages(r);
     this.ts.onBakeStage = (k, st) => this.onBakeStage(k, st);
     if (bake) this.ts.bakeSettings = { ...bake };
     if (hs !== undefined) this.ts.heightStrength = hs;
@@ -1157,6 +1160,7 @@ class App {
     for (const b of STARTER_BRUSHES) files.push(new File([JSON.stringify(b)], `${b.name}.tpbrush`, { type: 'application/json' }));
     this.shelf.builtins = [
       ...BUILTINS.map((b): ShelfItem => ({ kind: 'model', name: b.label, file: 'model:' + b.id, model: b.id })),
+      ...SCAN_SMART.map((sm): ShelfItem => ({ kind: 'smart', name: sm.name, file: 'lib:scan-' + sm.name.toLowerCase().replace(/\W+/g, '-'), smart: sm, category: 'Realistic (scanned)' })),
       ...libraryMaterials().map((m): ShelfItem => ({ kind: 'smart', name: m.def.label, file: 'lib:' + m.def.id, smart: m.smart, category: m.def.category, swatch: m.swatch })),
       ...SMART_MASKS.map((m): ShelfItem => ({ kind: 'mask', name: m.label, file: 'mask:' + m.id, preset: m.id })),
       ...presetGraphs().map((g): ShelfItem => ({ kind: 'graph', name: g.name, file: 'graph:' + g.name, graph: g })),
@@ -1166,7 +1170,10 @@ class App {
     this.buildShelf();
     await this.checkPerformance();
     this.applySettings();
+    await this.loadCloudCatalog(false);
+    await this.loadStartEnv();
     await this.preloadThumbs();
+    setTimeout(() => this.loadCloudCatalog(true), 4000);
     this.startAutosave();
     const session = this.native?.sessionStart ? await this.native.sessionStart() : { crashed: false };
     if (session.crashed) this.openWindow('autosave', true);
@@ -1992,6 +1999,7 @@ class App {
 
   /** Several assets (Ctrl-click picked on the shelf) dropped at once: one undo step. */
   async dropAssets(items: ShelfItem[], x: number, y: number) {
+    items = await this.resolveCloud(items);
     if (this.mode === 'bake') this.setMode('paint');
     const usable = items.filter((it) => it.kind !== 'unsupported' && it.kind !== 'brush' && it.kind !== 'mask' && it.kind !== 'env' && it.kind !== 'model');
     if (!usable.length) { if (items[0]) this.applyShelfItem(items[0]); return; }
@@ -2030,6 +2038,7 @@ class App {
 
   /** Add several assets above the active layer as one undo step. */
   async addAssets(items: ShelfItem[]) {
+    items = await this.resolveCloud(items);
     if (this.mode === 'bake') this.setMode('paint');
     const usable = items.filter((it) => it.kind !== 'unsupported' && it.kind !== 'brush' && it.kind !== 'mask' && it.kind !== 'env' && it.kind !== 'model');
     if (!usable.length) { const b = items.find((it) => it.kind === 'brush' || it.kind === 'mask' || it.kind === 'env' || it.kind === 'model'); if (b) this.applyShelfItem(b); return; }
@@ -2079,15 +2088,11 @@ class App {
       return this.ts.addFillLayer(it.name, structuredClone(it.preset.values), { ...it.preset.enabled, normal: false }, !parent, undefined, 1, parent);
     }
     if (it.kind === 'textures') {
-      const images: Partial<Record<Ch, FillImage>> = {};
+      const images = await this.textureImages(it);
       const enabled = {} as Record<Ch, boolean>;
-      for (const ch of CHANNELS) {
-        const f = it.files[ch];
-        enabled[ch] = !!f;
-        if (!f) continue;
-        const bytes = await f.arrayBuffer();
-        images[ch] = { name: f.name, bytes, tex: await imageTexture(bytes, f.name), flipG: ch === 'normal' && !!it.normalDX };
-      }
+      for (const ch of CHANNELS) enabled[ch] = !!images[ch];
+      // A scan without a metal map is a non-metal: say so, instead of letting the layer below show through.
+      if (it.file?.startsWith('scan:') && images.color) enabled.metal = true;
       if (!Object.keys(images).length) { toast('No usable maps in that set', true); return null; }
       return this.applyTexSettings(this.ts.addFillLayer(it.name, undefined, enabled, !parent, images, it.tiling ?? 1, parent), it);
     }
@@ -2988,12 +2993,21 @@ class App {
       el('div', { class: 'dock-body' },
         group('Environment',
           el('div', { class: 'row' }, el('label', {}, 'Lighting'),
-            select<string>([
-              ...Viewport.ENVIRONMENTS.map((n) => ({ value: n, label: n + (n === 'Studio Soft' ? ' (default)' : '') })),
-              { value: 'soft', label: 'Flat (true color)' },
-              { value: 'room', label: 'Bright room' },
-              ...(vp.envName !== 'Studio' ? [{ value: 'hdr', label: vp.envName }] : []),
-            ], vp.envName !== 'Studio' ? 'hdr' : vp.studioKind, (v) => { if (v !== 'hdr') { vp.setStudioEnv(v); vp.applyBackground(); this.buildFlyout(); } })),
+            (() => {
+              const hdrs = this.shelf.items.filter((x) => x.kind === 'env');
+              const cur = this.settings.envName && hdrs.some((x) => x.name === this.settings.envName) ? 'env:' + this.settings.envName : vp.envName !== 'Studio' ? 'hdr' : vp.studioKind;
+              const nice = (n: string) => n.replace(/_\d+k$/i, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+              return select<string>([
+                ...hdrs.map((x) => ({ value: 'env:' + x.name, label: 'Photo: ' + nice(x.name) + (x.name === 'studio_small_09_1k' ? ' (default)' : '') })),
+                ...Viewport.ENVIRONMENTS.map((n) => ({ value: n, label: n })),
+                { value: 'soft', label: 'Flat (true color)' },
+                { value: 'room', label: 'Bright room' },
+                ...(cur === 'hdr' ? [{ value: 'hdr', label: vp.envName }] : []),
+              ], cur, (v) => {
+                if (v.startsWith('env:')) { const it = hdrs.find((x) => x.name === v.slice(4)); if (it) this.applyShelfItem(it); return; }
+                if (v !== 'hdr') { vp.setStudioEnv(v); vp.applyBackground(); this.settings.envName = ''; saveSettings(this.settings); this.buildFlyout(); }
+              });
+            })()),
           el('div', { class: 'row' }, el('label', {}, ''),
             el('button', { class: 'grow', onclick: async () => { const file = await pickFile('.hdr'); if (file) this.openAny(file); } }, 'Load .hdr environment…')),
           slider('Rotation', { min: 0, max: 360, step: 1, value: 0, fmt: (v) => `${v}°`, onInput: (v) => (vp.envRotation = v) }).el,
@@ -3045,7 +3059,7 @@ class App {
     } }, 'Link folder…');
     const body = el('div', { class: 'dock-body shelf-body' },
       el('div', { class: 'shelf-search' }, el('span', { class: 'si' }), search),
-      el('div', { class: 'chips' }, chip('all', 'All'), chip('model', 'Models'), chip('smart', 'Smart materials'), chip('material', 'Materials'), chip('textures', 'Textures'), chip('mask', 'Smart masks'), chip('brush', 'Brushes'), chip('graph', 'Graphs'), chip('env', 'Environments'), chip('unsupported', 'Substance')),
+      el('div', { class: 'chips' }, chip('all', 'All'), chip('model', 'Models'), chip('smart', 'Smart materials'), chip('cloud', 'Scanned'), chip('material', 'Materials'), chip('textures', 'Textures'), chip('mask', 'Smart masks'), chip('brush', 'Brushes'), chip('graph', 'Graphs'), chip('env', 'Environments'), chip('unsupported', 'Substance')),
       el('div', { class: 'row drop-row', title: 'What dragging an asset onto the model fills' }, el('label', {}, 'Drop onto'),
         select<DropMode>([{ value: 'whole', label: 'Whole model' }, { value: 'object', label: 'Object (separate mesh)' },
           { value: 'part', label: 'Mesh part' }, { value: 'island', label: 'UV island' }, { value: 'tri', label: 'Triangle' }],
@@ -3074,7 +3088,7 @@ class App {
     return it.kind as Exclude<ShelfFilter, 'all'>;
   }
   private static SHELF_SECTIONS: [Exclude<ShelfFilter, 'all'>, string][] = [
-    ['model', 'Models'], ['smart', 'Smart materials'], ['material', 'Materials'], ['textures', 'Textures'], ['mask', 'Smart masks'],
+    ['model', 'Models'], ['smart', 'Smart materials'], ['cloud', 'Scanned materials'], ['material', 'Materials'], ['textures', 'Textures'], ['mask', 'Smart masks'],
     ['brush', 'Brushes'], ['graph', 'Graphs'], ['env', 'Environments'], ['unsupported', 'Substance'],
   ];
   /** Sections opened in this session; every section starts closed (a new file closes them again). */
@@ -3084,7 +3098,8 @@ class App {
     grid.innerHTML = '';
     const q = this.shelfSearch.trim().toLowerCase();
     const items = this.shelf.items.filter((it) =>
-      (this.shelfFilter === 'all' || this.shelfGroup(it) === this.shelfFilter) && (!q || it.name.toLowerCase().includes(q)));
+      (this.shelfFilter === 'all' || this.shelfGroup(it) === this.shelfFilter)
+      && (!q || it.name.toLowerCase().includes(q) || (it.kind === 'cloud' && (it.cat.toLowerCase().includes(q) || it.tags.some((t) => t.toLowerCase().includes(q))))));
     if (!items.length) { grid.append(el('p', { class: 'note', style: { gridColumn: '1 / -1' } }, q ? 'Nothing matches.' : 'No assets of this kind yet.')); return; }
     // Sections (and sub-sections by category, e.g. Metal / Wood), each collapsible.
     // Top sections start closed; sub-sections (Metal, Wood…) start open. Picking one filter or searching opens them.
@@ -3102,7 +3117,7 @@ class App {
       const list = items.filter((it) => this.shelfGroup(it) === g);
       if (!list.length) continue;
       if (!header('sec:' + g, label, list.length)) continue;
-      const catOf = (it: ShelfItem) => (it.kind === 'smart' && it.category) || '';
+      const catOf = (it: ShelfItem) => (it.kind === 'smart' && it.category) || (it.kind === 'cloud' && it.cat) || '';
       const cats = [...new Set(list.map(catOf))];
       if (cats.length > 1) {
         for (const c of cats) {
@@ -3134,6 +3149,11 @@ class App {
   /** The job that makes an asset's thumbnail (null = no thumbnail). */
   private thumbJob(it: ShelfItem): (() => Promise<string>) | null {
     if (it.kind === 'material') return () => this.thumbs.material('m:' + it.file, it.preset.values, it.preset.enabled);
+    // Realistic smart materials: previews rendered ahead of time, so the shelf needs no downloads.
+    if (it.kind === 'smart' && it.file.startsWith('lib:scan-') && (SCAN_PREVIEWS as Record<string, string>)[it.name]) {
+      const u = (SCAN_PREVIEWS as Record<string, string>)[it.name];
+      return () => Promise.resolve(u);
+    }
     if (it.kind === 'smart') {
       const fills = it.smart.layers.filter((l) => l.kind === 'fill') as any[];
       const main = fills[Math.min(1, fills.length - 1)];
@@ -3148,6 +3168,7 @@ class App {
     if (it.kind === 'mask') return () => this.thumbs.smartMask(it.preset);
     if (it.kind === 'textures') return () => this.thumbs.textures('t:' + it.name, it.files as any);
     if (it.kind === 'brush') return () => this.brushTipCanvas(it).then((cv) => cv.toDataURL());
+    if (it.kind === 'cloud') return () => Promise.resolve(it.thumb);
     return null;
   }
   private thumbKey(it: ShelfItem) {
@@ -3263,6 +3284,9 @@ class App {
       img.classList.add('tip');
       badge = 'BRUSH';
       tip += ' — brush preset: click to use it';
+    } else if (it.kind === 'cloud') {
+      badge = it.downloaded ? 'SCAN' : `↓ ${(it.size / 1e6).toFixed(0)} MB`;
+      tip += ` — scanned material (${it.cat}; ${it.maps.join(', ')}). ${it.downloaded ? 'Saved on this PC.' : 'Downloads the first time you use it.'} Click to add as a fill layer`;
     } else {
       img.classList.add('adobe');
       badge = it.file.split('.').pop()!.toUpperCase();
@@ -3297,13 +3321,87 @@ class App {
     return tile;
   }
 
+  /** Light the 3D view with a real HDR photo (like Substance's panorama) instead of the flat built-in studio. */
+  private async loadStartEnv() {
+    const want = this.settings.envName;
+    if (!want) return;
+    const it = this.shelf.items.find((x) => x.kind === 'env' && x.name === want);
+    if (it?.kind !== 'env') return;
+    try { await this.vp.loadHDR(await it.src()); this.vp.applyBackground(); } catch (e) { console.warn('env', e); }
+  }
+
+  // ---------------------------------------------------------------- scanned materials (download on first use)
+
+  private cloudItems: ShelfItem[] = [];
+  /** Load the scanned-materials catalog (cached / bundled first; online refresh later) into the shelf. */
+  async loadCloudCatalog(online: boolean) {
+    const native = this.native;
+    if (!native?.cloudCatalog) return;
+    let cat: any = null;
+    try { cat = await native.cloudCatalog(online); } catch { return; }
+    if (!cat?.materials?.length) return;
+    this.cloudItems = cat.materials.map((m: any) => ({ kind: 'cloud', name: m.name, file: m.file, cat: m.cat, thumb: m.thumb, size: m.size, tags: m.tags ?? [], maps: m.maps ?? [], downloaded: !!m.downloaded, source: m.source }));
+    this.shelf.items = [...this.shelf.items.filter((it) => it.kind !== 'cloud'), ...this.cloudItems];
+    if (document.getElementById('shelf')?.childElementCount) this.buildShelf();
+  }
+  private cloudCache = new Map<string, ShelfItem>();
+  /** A scanned material as a texture set (downloads it the first time). */
+  async cloudTextures(it: ShelfItem): Promise<ShelfItem | null> {
+    if (it.kind !== 'cloud') return it;
+    const hit = this.cloudCache.get(it.file);
+    if (hit) return hit;
+    const native = this.native;
+    if (!native?.cloudGet) { toast('Scanned materials download in the LMP app', true); return null; }
+    if (!it.downloaded) toast(`Downloading “${it.name}” (${(it.size / 1e6).toFixed(1)} MB)…`);
+    const r = await native.cloudGet({ file: it.file, name: it.name, cat: it.cat });
+    if (!r?.ok) { toast(`Couldn't download “${it.name}”: ${r?.error ?? 'no connection'}. Check your internet connection and try again.`, true); return null; }
+    const files: Partial<Record<MapSlot, File>> = {};
+    for (const f of r.files as { name: string; path: string }[]) {
+      const sp = splitMapName(f.name.replace(/\.[^.]+$/, ''));
+      if (!sp || files[sp.slot]) continue;
+      files[sp.slot] = new File([await native.readPreset(f.path)], f.name, { type: 'image/jpeg' });
+    }
+    if (!it.downloaded) { it.downloaded = true; this.buildShelf(); toast(`“${it.name}” downloaded and saved for next time`); }
+    const t: ShelfItem = { kind: 'textures', name: it.name, files, normalDX: false, thumb: it.thumb, file: 'scan:' + it.file };
+    this.cloudCache.set(it.file, t);
+    return t;
+  }
+  /** A texture set's maps as fill images. */
+  private async textureImages(it: ShelfItem): Promise<Partial<Record<Ch, FillImage>>> {
+    const images: Partial<Record<Ch, FillImage>> = {};
+    if (it.kind !== 'textures') return images;
+    for (const ch of CHANNELS) {
+      const f = it.files[ch];
+      if (!f) continue;
+      const bytes = await f.arrayBuffer();
+      images[ch] = { name: f.name, bytes, tex: await imageTexture(bytes, f.name), flipG: ch === 'normal' && !!it.normalDX };
+    }
+    return images;
+  }
+  /** Maps of a scanned material for smart materials built from scans (downloads it the first time). */
+  async scanImages(ref: ScanRef): Promise<Partial<Record<Ch, FillImage>>> {
+    const it: ShelfItem = this.cloudItems.find((c) => c.kind === 'cloud' && c.file === ref.file)
+      ?? { kind: 'cloud', name: ref.name, file: ref.file, cat: ref.cat, thumb: '', size: 0, tags: [], maps: [] };
+    const t = await this.cloudTextures(it);
+    if (!t) throw new Error('scan not available');
+    return this.textureImages(t);
+  }
+
+  private async resolveCloud(items: ShelfItem[]): Promise<ShelfItem[]> {
+    if (!items.some((it) => it.kind === 'cloud')) return items;
+    const out: ShelfItem[] = [];
+    for (const it of items) { const t = await this.cloudTextures(it); if (t) out.push(t); }
+    return out;
+  }
+
   async applyShelfItem(it: ShelfItem) {
+    if (it.kind === 'cloud') { const t = await this.cloudTextures(it); if (t) await this.applyShelfItem(t); return; }
     if (this.mode === 'bake') this.setMode('paint');
     if (it.kind === 'brush') { await this.applyBrushPreset(it.brush, it.tipFile); return; }
     if (it.kind === 'mask') { this.applySmartMaskTo(this.ts.activeLayer, it.preset); return; }
     if (it.kind === 'model') { this.loadBuiltin(it.model as BuiltinId); return; }
     if (it.kind === 'env') {
-      try { await this.vp.loadHDR(await it.src()); this.vp.applyBackground(); this.buildFlyout(); toast(`Environment: ${it.name}`); } catch { toast('Could not read that HDR file', true); }
+      try { await this.vp.loadHDR(await it.src()); this.vp.applyBackground(); this.buildFlyout(); toast(`Environment: ${it.name}`); this.settings.envName = it.name; saveSettings(this.settings); } catch { toast('Could not read that HDR file', true); }
       return;
     }
     if (it.kind === 'graph') { this.setMode('design'); await this.designer.open(it.graph); this.designLinked = -1; this.buildProperties(); toast(`Opened graph “${it.name}” — click Add as fill layer to use it`); return; }
