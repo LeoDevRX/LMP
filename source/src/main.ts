@@ -499,7 +499,10 @@ class App {
     const u = this.updateInfo;
     if (!u) return;
     const notes = el('div', { class: 'update-notes' });
-    const lines = u.notes.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && !/^\*\*(new install|already have)/i.test(x)).slice(0, 8);
+    // Only the "What's new" part of the release notes (the download help above it is for the web page).
+    const all = u.notes.split(/\r?\n/);
+    const wn = all.findIndex((x) => /what'?s new/i.test(x));
+    const lines = (wn >= 0 ? all.slice(wn + 1) : all).map((x) => x.trim()).filter((x) => x && !/^#|^\*\*(new install|already have)|download/i.test(x)).slice(0, 8);
     for (const l of lines) { const p = el('p', {}); p.innerHTML = guideFmt(l.replace(/^[-*]\s*/, '')); notes.append(p); }
     const r = await this.modal({
       title: `LMP v${u.version} is out`,

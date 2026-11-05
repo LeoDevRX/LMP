@@ -64,6 +64,9 @@ export const GUIDES: Guide[] = [
     sum: 'Updates, shapes, autosave, history, the Guide and more.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.03', steps: [
+        'Updates now download one small file and the GitHub download page is simpler: just download LMP-vX.XX.zip.',
+      ] },
       { h: 'New in v1.02', steps: [
         'LMP tells you when a new version is out and can update itself with one click (Update now). If you pick Later, an Update button stays in the top bar.',
         'Shape generator: right click a layer > Add generator > Shape. Pick a circle, star, heart and more, then drag it on the model to move it.',

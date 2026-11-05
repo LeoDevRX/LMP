@@ -28,6 +28,10 @@ Performance:
 - Shelf thumbnails are made only when they scroll into view.
 - Smart masks keep their generator result cached, so painting on a mask doesn't recompute the noise stack every frame.
 
+## New in v1.03
+
+- Updates download one small file (the update zip) and the GitHub release only lists the two downloads.
+
 ## New in v1.02
 
 - **Updates.** LMP checks GitHub when it starts. If a new version is out it tells you, and **Update now** downloads only the changed files and restarts LMP. Pick **Later** and an orange **Update** button stays in the top bar until you update. **File → Check for updates** checks any time.

@@ -218,43 +218,61 @@ async function getBytes(url) {
   if (!r.ok) throw new Error(`Download failed (${r.status})`);
   return Buffer.from(await r.arrayBuffer());
 }
-/** The newest release: { version, notes, url, hasUpdateFiles } or null when offline. */
+/** The small update zip of a release (LMP-vX.XX-update.zip). */
+const updateAsset = (rel) => (rel.assets || []).find((a) => /^LMP-v[\d.]+-update\.zip$/i.test(a.name));
+/** The newest release: { version, notes, url, hasUpdateFiles } or { error } when offline. */
 ipcMain.handle('update:check', async () => {
   try {
     const rel = await getJSON(`https://api.github.com/repos/${REPO}/releases/latest`);
-    return {
-      version: String(rel.tag_name || '').replace(/^v/i, ''), notes: rel.body || '', url: rel.html_url || RELEASES,
-      hasUpdateFiles: (rel.assets || []).some((a) => a.name === 'lmp-update.json'),
-    };
+    return { version: String(rel.tag_name || '').replace(/^v/i, ''), notes: rel.body || '', url: rel.html_url || RELEASES, hasUpdateFiles: !!updateAsset(rel) };
   } catch (e) { return { error: String(e.message || e) }; }
 });
-/** Download the changed app files of the newest release, check them, and swap them in. Needs a restart after. */
+
+/** Read the files of a zip (stored or deflated entries; enough for LMP's own update zips). */
+function unzip(buf) {
+  const zlib = require('zlib');
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('The update file is damaged');
+  const count = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  const out = new Map();
+  for (let k = 0; k < count; k++) {
+    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('The update file is damaged');
+    const method = buf.readUInt16LE(p + 10), csize = buf.readUInt32LE(p + 20);
+    const nlen = buf.readUInt16LE(p + 28), xlen = buf.readUInt16LE(p + 30), clen = buf.readUInt16LE(p + 32), off = buf.readUInt32LE(p + 42);
+    const name = buf.toString('utf8', p + 46, p + 46 + nlen);
+    p += 46 + nlen + xlen + clen;
+    if (name.endsWith('/')) continue;
+    const ln = buf.readUInt16LE(off + 26), lx = buf.readUInt16LE(off + 28);
+    const data = buf.subarray(off + 30 + ln + lx, off + 30 + ln + lx + csize);
+    out.set(name, method === 0 ? Buffer.from(data) : method === 8 ? zlib.inflateRawSync(data) : null);
+  }
+  return out;
+}
+
+/** Download the newest release's small update zip, check it, and swap the app files in. Needs a restart after. */
 ipcMain.handle('update:install', async () => {
   const appDir = __dirname;
   try {
     const rel = await getJSON(`https://api.github.com/repos/${REPO}/releases/latest`);
-    const assets = new Map((rel.assets || []).map((a) => [a.name, a.browser_download_url]));
-    if (!assets.has('lmp-update.json')) throw new Error('This release has no update files');
-    const manifest = JSON.parse((await getBytes(assets.get('lmp-update.json'))).toString('utf8'));
-    const files = (manifest.files || []).filter((f) => /^[\w.-]+$/.test(f.name) && !f.name.startsWith('.'));
-    if (!files.length) throw new Error('The update has no files');
-    // Download and check everything first, so a dropped connection never leaves a half-updated LMP.
-    const got = [];
-    for (const f of files) {
-      if (!assets.has(f.name)) throw new Error(`Missing ${f.name} in the release`);
-      const b = await getBytes(assets.get(f.name));
-      const sha = crypto.createHash('sha256').update(b).digest('hex');
-      if (f.sha256 && sha !== f.sha256) throw new Error(`${f.name} didn't download correctly`);
-      got.push([f.name, b]);
-    }
+    const asset = updateAsset(rel);
+    if (!asset) throw new Error('This release has no update file');
+    const zip = await getBytes(asset.browser_download_url);
+    if (asset.size && zip.length !== asset.size) throw new Error('The download was cut off');
+    const want = String(asset.digest || '').replace(/^sha256:/i, '');
+    if (want && crypto.createHash('sha256').update(zip).digest('hex') !== want) throw new Error('The update didn\'t download correctly');
+    // Only the app's own files (LMP/resources/app/*), never anything outside that folder.
+    const files = [...unzip(zip)].filter(([n, b]) => b && /^LMP\/resources\/app\/[\w.-]+$/.test(n)).map(([n, b]) => [n.split('/').pop(), b]);
+    if (!files.some(([n]) => n === 'LMP.html')) throw new Error('The update file is missing LMP.html');
     fs.accessSync(appDir, fs.constants.W_OK);
-    for (const [name, b] of got) fs.writeFileSync(path.join(appDir, name + '.new'), b);
-    for (const [name] of got) {
+    for (const [name, b] of files) fs.writeFileSync(path.join(appDir, name + '.new'), b);
+    for (const [name] of files) {
       const target = path.join(appDir, name);
       if (fs.existsSync(target)) fs.copyFileSync(target, target + '.bak');
       fs.renameSync(target + '.new', target);
     }
-    return { ok: true, version: manifest.version };
+    return { ok: true, version: String(rel.tag_name || '').replace(/^v/i, '') };
   } catch (e) {
     const msg = String(e.message || e);
     return { ok: false, error: /EACCES|EPERM|EROFS/.test(msg) ? 'LMP can\'t write to its own folder (it may be in a protected place like Program Files).' : msg, url: RELEASES };

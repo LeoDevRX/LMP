@@ -63,14 +63,6 @@ jobs:
           zip -qr -9 "../LMP-v$V.zip" LMP
           zip -qr -9 "../LMP-v$V-update.zip" LMP/resources/app LMP/README.md LMP/source
           cd ..
-          # Files the in-app updater downloads (LMP 1.02+), with checksums.
-          mkdir -p upd && cp build/LMP/resources/app/* upd/
-          node -e '
-            const fs=require("fs"),c=require("crypto");
-            const files=fs.readdirSync("upd").map(n=>({name:n,size:fs.statSync("upd/"+n).size,sha256:c.createHash("sha256").update(fs.readFileSync("upd/"+n)).digest("hex")}));
-            fs.writeFileSync("upd/lmp-update.json", JSON.stringify({version:process.argv[1],files},null,1));
-          ' "$V"
-          cat upd/lmp-update.json
           ls -lh LMP-v*.zip
 
       - name: Publish the release
@@ -78,16 +70,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           V="${{ steps.ver.outputs.v }}"
-          NOTES="LMP (Leo's Material Painter) v$V for Windows 10/11, 64-bit. Owned by LeoDevRX.
-
-          **New install:** download LMP-v$V.zip, extract it anywhere (for example D:\\LMP) and open LMP.exe. Nothing needs installing.
-
-          **Already have LMP:** download the small LMP-v$V-update.zip, extract it into the folder that holds your LMP folder and replace files when Windows asks."
-          # A rebuild of the same version replaces its release (and tag) so it points at this commit.
-          if [ -f "notes/v$V.md" ]; then NOTES="$(cat "notes/v$V.md")
-
-          $NOTES"; fi
+          {
+            echo "## Download"
+            echo
+            echo "**[Download LMP-v$V.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/v$V/LMP-v$V.zip)** is the whole program (Windows 10/11, 64-bit). Extract it anywhere, for example D:\\LMP, and open LMP.exe. Nothing needs installing."
+            echo
+            echo "Already using LMP 1.02 or newer? You don't need to download anything. LMP tells you about this update and installs it when you click Update now."
+            echo
+            echo "LMP-v$V-update.zip is only for updating LMP 1.01 or older by hand: extract it into the folder that holds your LMP folder."
+            echo
+            echo "## What's new"
+            echo
+            if [ -f "notes/v$V.md" ]; then cat "notes/v$V.md"; fi
+            echo
+            echo "Owned by LeoDevRX."
+          } > release-notes.md
+          cat release-notes.md
           if gh release view "v$V" >/dev/null 2>&1; then
             gh release delete "v$V" --cleanup-tag --yes
           fi
-          gh release create "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" upd/* --target "$GITHUB_SHA" --title "LMP v$V" --notes "$NOTES" --latest
+          gh release create "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" --target "$GITHUB_SHA" --title "LMP v$V" --notes-file release-notes.md --latest
