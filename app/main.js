@@ -453,6 +453,41 @@ ipcMain.handle('sbs:read', (_e, p) => {
   try { return fs.readFileSync(full); } catch { return null; }
 });
 
+// ---------------------------------------------------------------- texture export (output directory)
+
+/** Default output folder: D:\LMP\export when there is a D: drive, else Documents\LMP\export. */
+function defaultExportDir() {
+  if (process.platform === 'win32' && fs.existsSync('D:\\')) return 'D:\\LMP\\export';
+  return path.join(app.getPath('documents'), 'LMP', 'export');
+}
+ipcMain.handle('export:defaultDir', () => defaultExportDir());
+ipcMain.handle('export:pickDir', async (e, current) => {
+  const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
+    title: 'Output directory', properties: ['openDirectory', 'createDirectory'], defaultPath: current || defaultExportDir(),
+  });
+  return r.canceled ? null : r.filePaths[0];
+});
+/** files: [{ name, data }] — plain file names only, written into dir (created if needed). */
+ipcMain.handle('export:write', (_e, dir, files) => {
+  try {
+    const d = path.resolve(String(dir || defaultExportDir()));
+    fs.mkdirSync(d, { recursive: true });
+    const written = [];
+    for (const f of files || []) {
+      const n = path.basename(String(f.name)).replace(/[\\/:*?"<>|]+/g, '_');
+      if (!n || n === '.' || n === '..') continue;
+      fs.writeFileSync(path.join(d, n), Buffer.from(f.data));
+      written.push(n);
+    }
+    return { ok: true, dir: d, written };
+  } catch (err) { return { ok: false, error: String(err.message || err) }; }
+});
+ipcMain.handle('export:open', (_e, dir) => {
+  const d = path.resolve(String(dir || defaultExportDir()));
+  if (fs.existsSync(d)) shell.openPath(d);
+  return fs.existsSync(d);
+});
+
 // ---------------------------------------------------------------- window
 
 let mainWin = null;

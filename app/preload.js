@@ -33,4 +33,8 @@ contextBridge.exposeInMainWorld('texpaintNative', {
   sbsRender: (req) => ipcRenderer.invoke('sbs:render', req),
   sbsLibrary: () => ipcRenderer.invoke('sbs:library'),
   sbsRead: (p) => ipcRenderer.invoke('sbs:read', p),
+  exportDefaultDir: () => ipcRenderer.invoke('export:defaultDir'),
+  exportPickDir: (current) => ipcRenderer.invoke('export:pickDir', current),
+  exportWrite: (dir, files) => ipcRenderer.invoke('export:write', dir, files),
+  exportOpen: (dir) => ipcRenderer.invoke('export:open', dir),
 });

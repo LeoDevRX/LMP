@@ -79,11 +79,11 @@ export const GUIDES: Guide[] = [
   },
   {
     id: 'about', title: 'About LMP', cat: 'Start here',
-    sum: `Leo's Material Painter v${VERSION}, owned by H9_zy.`,
-    tags: ['about', 'credits'], words: 'owner author made creator who license version h9_zy h9zy leo copyright',
+    sum: `Leo's Material Painter v${VERSION}, owned by LeoDevRX.`,
+    tags: ['about', 'credits'], words: 'owner author made creator who license version leodevrx leo dev github copyright',
     body: [
       { p: `LMP (Leo's Material Painter), version ${VERSION}.` },
-      { p: 'This program is owned by **H9_zy**.' },
+      { p: 'This program is owned by **[LeoDevRX](https://github.com/LeoDevRX/LMP/commits?author=LeoDevRX)**.' },
       { p: 'A personal and free alternative to paid material painting programs. Made with three.js and Electron.' },
       { p: 'LMP isn\'t made by, affiliated with or endorsed by Adobe. Substance, Substance 3D Painter and Substance 3D Designer are trademarks of Adobe; they\'re named only to say which files LMP can open. LMP doesn\'t include any Adobe software or Substance materials.' },
       { p: 'Scanned materials come from ambientCG and the HDR environments from Poly Haven, both CC0. Open-source licenses are in the licenses folder next to LMP.exe.' },
@@ -610,13 +610,21 @@ export const GUIDES: Guide[] = [
   // ------------------------------------------------------------------ export
   {
     id: 'export', title: 'Exporting textures', cat: 'Export',
-    sum: 'Ctrl+Shift+E saves the textures as PNG files.',
-    tags: ['export'], words: 'export save textures png images output maps finished done unity unreal blender godot game engine',
+    sum: 'Ctrl+Shift+E opens the export window. Pick a template for your engine or 3D program and export.',
+    tags: ['export'], words: 'export save textures png jpg tga 16 bit images output maps finished done unity urp hdrp unreal godot blender maya 3ds max arnold vray redshift gltf glb sketchfab usd roblox template padding dilation output directory channel pack orm',
     body: [
       { steps: [
         'Press Ctrl+Shift+E, or the export button on the right edge.',
-        'Pick a preset: Roblox, PBR (Blender, Unity) or Unreal.',
-        'Pick a size and click Export.',
+        'Output template: pick where the textures are going. There are templates for Unity (Built-in, URP, HDRP), Unreal, Godot, Roblox, Blender, Maya / 3ds Max (Arnold), V-Ray, Redshift, glTF, Sketchfab, USD and more.',
+        'Pick the file type (png, jpg, tga; png can be 16 bits), the size and the padding.',
+        'Check the output directory (on the desktop app it starts as D:\\LMP\\export when you have a D: drive) and click Export.',
+        'List of exports shows each file and a console with what happened.',
+      ] },
+      { h: 'Your own template', steps: [
+        'Open the Output templates tab, pick a template close to what you want and click + to make a copy.',
+        'Add outputs with the Gray / RGB / R+G+B / RGB+A / R+G+B+A buttons.',
+        'Drag maps from the right (base color, roughness, AO, converted maps like glossiness…) onto each output\'s channels. You can also click a channel and then a map.',
+        'Name files with $textureSet, e.g. $textureSet_ORM. Save settings keeps it for next time.',
       ] },
     ],
     show: [{ label: 'Export', act: 'export' }],
@@ -628,7 +636,7 @@ export const GUIDES: Guide[] = [
     tags: ['export', 'roblox'], words: 'roblox studio surfaceappearance surface appearance pbr meshpart colormap normalmap roughnessmap metalnessmap',
     body: [
       { steps: [
-        'Press Ctrl+Shift+E and choose Roblox SurfaceAppearance.',
+        'Press Ctrl+Shift+E and choose Roblox (SurfaceAppearance) as the output template.',
         'Roblox only allows textures up to 1024 x 1024, so LMP keeps the size at or below that.',
         'In Roblox Studio, put a SurfaceAppearance inside your MeshPart and set ColorMap, NormalMap, RoughnessMap and MetalnessMap to the exported files.',
         'If you painted glow, use the EmissiveMask file and set EmissiveStrength and EmissiveTint.',
@@ -759,7 +767,7 @@ const SYN: Record<string, string[]> = {
   substance: ['substance', 'sbsar', 'spsm', 'adobe', 'painter'],
   start: ['start', 'started', 'begin', 'beginner', 'tutorial', 'intro', 'learn', 'basics', 'first', 'howto', 'help', 'welcome'],
   setup: ['setup', 'set', 'install', 'configure'],
-  about: ['about', 'credits', 'credit', 'owner', 'owned', 'author', 'made', 'creator', 'version', 'h9_zy', 'h9zy', 'h9'],
+  about: ['about', 'credits', 'credit', 'owner', 'owned', 'author', 'made', 'creator', 'version', 'leodevrx', 'leo', 'github'],
   update: ['update', 'updates', 'updating', 'upgrade', 'changelog', 'changes', 'whats', 'latest', 'release', 'outdated', 'version', 'newer'],
   tip: ['tip', 'tips'],
 };
@@ -889,7 +897,8 @@ export const guideById = (id: string) => GUIDES.find((g) => g.id === id);
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 /** **bold** → <b>, keys like Ctrl+S / F1 → <kbd>. */
 export function fmt(s: string): string {
-  return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\[([^\]]+)\]\((https:\/\/github\.com\/[^)\s"]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="link">$1</a>');
 }
 
 // ====================================================================== walkthrough tours
@@ -970,13 +979,13 @@ export const TOURS: Record<string, TourStep[]> = {
   ],
   'export': [
     { at: '#sidestrip button[title^="Export"]', t: 'Click Export (or press Ctrl+Shift+E).', wait: 'state:export' },
-    { at: '#export-dialog select', t: 'Pick where the textures are going: Roblox, Blender/Unity or Unreal.' },
-    { at: '#export-dialog footer button.primary', t: 'Click Export to folder and choose a folder.', wait: 'click' },
+    { at: '#export-dialog .exp-template', t: 'Pick where the textures are going: Unity, Unreal, Godot, Blender, Roblox and many more.' },
+    { at: '#export-dialog .exp-go', t: 'Click Export.', wait: 'click' },
   ],
   'roblox': [
     { at: '#sidestrip button[title^="Export"]', t: 'Click Export (or press Ctrl+Shift+E).', wait: 'state:export' },
-    { at: '#export-dialog select', t: 'Choose Roblox SurfaceAppearance. LMP keeps the size at 1024 for Roblox.' },
-    { at: '#export-dialog footer button.primary', t: 'Click Export to folder. In Roblox Studio, put a SurfaceAppearance in your MeshPart and set its maps to these files.', wait: 'click' },
+    { at: '#export-dialog .exp-template', t: 'Choose Roblox (SurfaceAppearance). LMP keeps the size at 1024 for Roblox.' },
+    { at: '#export-dialog .exp-go', t: 'Click Export. In Roblox Studio, put a SurfaceAppearance in your MeshPart and set its maps to these files.', wait: 'click' },
   ],
   'import-images': [
     { at: '#viewport', t: 'Drag your PNG or JPG files onto LMP now, or press Ctrl+I.', wait: 'state:import' },

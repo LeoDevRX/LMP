@@ -2,7 +2,7 @@
 
 A personal and free alternative to paid material painting programs like Substance Painter, for Windows.
 
-**Owned by H9_zy.**
+**Owned by [LeoDevRX](https://github.com/LeoDevRX/LMP/commits?author=LeoDevRX).**
 
 ## Version
 

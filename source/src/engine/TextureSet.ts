@@ -2414,6 +2414,83 @@ void main() { vec4 s = texture2D(src, vUv); vec3 c = mode == 0 ? vec3(s.r) : mod
     return px;
   }
 
+  private matSrc = quadShader(/* glsl */ `
+uniform sampler2D src; uniform sampler2D src2; uniform int mode; uniform bool flipG; uniform vec4 k;
+varying vec2 vUv;
+void main() {
+  vec4 a = texture2D(src, vUv);
+  vec3 c;
+  if (mode == 0) c = a.rgb;
+  else if (mode == 1) c = vec3(a.r);
+  else if (mode == 2) { c = a.rgb; if (flipG) c.g = 1.0 - c.g; }
+  else if (mode == 3) c = vec3(a.g);
+  else if (mode == 4) c = vec3(a.b);
+  else if (mode == 5) c = vec3(a.a);
+  else if (mode == 6) c = vec3(1.0 - a.r);
+  else if (mode == 7) c = a.rgb * (1.0 - texture2D(src2, vUv).r);
+  else if (mode == 8) c = mix(vec3(0.22), a.rgb, texture2D(src2, vUv).r);
+  else if (mode == 10) c = vec3(max(a.r, max(a.g, a.b)));
+  else if (mode == 11) c = a.rgb * texture2D(src2, vUv).r;
+  else c = k.rgb;
+  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+}`, { src: { value: null }, src2: { value: null }, mode: { value: 0 }, flipG: { value: false }, k: { value: new THREE.Vector4() } });
+  private floatOK: boolean | null = null;
+  /**
+   * One export source (a channel, a baked mesh map or a converted map) as RGBA pixels, rows bottom-up.
+   * float = 0..1 floats for 16-bit files (falls back to 8-bit if the GPU can't read floats).
+   */
+  exportSource(src: string, size: number, float = false): Uint8Array | Float32Array {
+    this.compositeDirty();
+    const u = this.matSrc.uniforms;
+    u.flipG.value = false; u.src2.value = null;
+    const set = (t: THREE.Texture | null, mode: number, t2: THREE.Texture | null = null) => { u.src.value = t; u.mode.value = mode; u.src2.value = t2; };
+    const F = this.final;
+    switch (src) {
+      case 'baseColor': set(F.color.texture, 0); break;
+      case 'roughness': set(F.rough.texture, 1); break;
+      case 'glossiness': set(F.rough.texture, 6); break;
+      case 'metallic': set(F.metal.texture, 1); break;
+      case 'height': set(F.height.texture, 1); break;
+      case 'emissive': set(F.emit.texture, 0); break;
+      case 'emissiveMask': set(F.emit.texture, 10); break;
+      case 'normalGL': set(this.finalN.texture, 2); break;
+      case 'normalDX': set(this.finalN.texture, 2); u.flipG.value = true; break;
+      case 'diffuse': set(F.color.texture, 7, F.metal.texture); break;
+      case 'specular': set(F.color.texture, 8, F.metal.texture); break;
+      case 'colorAO': set(F.color.texture, 11, this.meshRT.texture); break;
+      case 'ao': case 'mixedAO': set(this.meshRT.texture, 1); break;
+      case 'curvature': set(this.meshRT.texture, 3); break;
+      case 'thickness': set(this.meshRT.texture, 4); break;
+      case 'position': set(this.posNRT.texture, 0); break;
+      case 'wsn': set(this.wsnRT.texture, 0); break;
+      case 'id': set(this.idRT.texture, 0); break;
+      case 'meshNormal': set(this.bakedNRT.texture, 0); break;
+      case 'meshHeight': set(this.bakedHRT.texture, 1); break;
+      case 'coverage': set(this.posRT.texture, 5); break;
+      case 'white': set(null, 9); (u.k.value as THREE.Vector4).set(1, 1, 1, 1); break;
+      default: set(null, 9); (u.k.value as THREE.Vector4).set(0, 0, 0, 1); break;
+    }
+    if (this.floatOK === null) this.floatOK = this.gpu.renderer.extensions.has('EXT_color_buffer_float');
+    if (float && this.floatOK) {
+      try {
+        const rt = makeRT(size, { type: THREE.FloatType });
+        this.gpu.run(this.matSrc, rt);
+        const buf = new Float32Array(size * size * 4);
+        this.gpu.renderer.readRenderTargetPixels(rt, 0, 0, size, size, buf);
+        rt.dispose();
+        this.floatOK = true;
+        u.src.value = u.src2.value = null;
+        return buf;
+      } catch { this.floatOK = false; }
+    }
+    const rt = makeRT(size);
+    this.gpu.run(this.matSrc, rt);
+    u.src.value = u.src2.value = null;
+    const px = this.gpu.readPixels(rt);
+    rt.dispose();
+    return px;
+  }
+
   /** Render one export map at the given size. Rows are bottom-up (GL order). */
   renderExport(kind: ExportKind, size: number): Uint8Array {
     this.compositeDirty();

@@ -17,7 +17,11 @@ import { ThumbRenderer } from './engine/Thumbs';
 import { SmartPreview } from './engine/SmartPreview';
 import { findUVOverlaps, overlapTexture, overlapMesh, UVOverlap } from './engine/UVOverlap';
 import { BUILTINS, BuiltinId, LoadedModel, MODEL_EXTS, builtinModel, parseModel, demoHighPoly } from './engine/ModelLoader';
-import { PRESETS, exportMaps, saveFiles, downloadBlob, pixelsToPng } from './engine/Exporter';
+import { saveFiles, downloadBlob, pixelsToPng } from './engine/Exporter';
+import {
+  ExportState, ExportTemplate, OutMap, ExpSrc, SrcInfo, MapMode, FileType, PadMode, Pix, SOURCES, MODE_SLOTS, PAD_LABEL, TEMPLATE_GROUPS, DEFAULT_EXPORT,
+  loadExportState, saveExportState, allTemplates, fileName, channelsOf, compose, nearestFill, pad, encodePNG, encodeTGA, encodeJPG,
+} from './engine/ExportTemplates';
 import {
   parseProject, restoreLayers, restoreLayer, serializeLayer, serializeProject, toB64, fromB64, makeSmartMaterial, applySmartMaterial, restoreMeshMaps,
 } from './engine/Project';
@@ -99,7 +103,7 @@ class App {
   private _modified = false;
   get modified() { return this._modified; }
   set modified(v: boolean) { if (v !== this._modified) { this._modified = v; this.updateTitle?.(); } }
-  exportPreset = 'roblox';
+  exportPreset = 'pbr-gl';
   paintTarget: PaintTarget = 'content';
   tool: Tool = 'paint';
   mode: Mode = 'paint';
@@ -209,7 +213,7 @@ class App {
   constructor() {
     // App icon: tab / window icon, the logo in the menu bar and on the loading screen.
     { const v = document.getElementById('brand-ver'); if (v) v.textContent = 'v' + VERSION; }
-    { const v = document.getElementById('splash-ver'); if (v) v.textContent = `v${VERSION} · owned by H9_zy`; }
+    { const v = document.getElementById('splash-ver'); if (v) v.textContent = `v${VERSION} · owned by LeoDevRX`; }
     const fav = document.createElement('link'); fav.rel = 'icon'; fav.href = iconSmall; document.head.append(fav);
     document.querySelectorAll<HTMLElement>('.logo').forEach((e) => (e.style.backgroundImage = `url(${iconSmall})`));
     document.querySelectorAll<HTMLElement>('.splash-logo').forEach((e) => (e.style.backgroundImage = `url(${iconBig})`));
@@ -616,7 +620,7 @@ class App {
       body.append(el('h4', {}, c), ...list.map((g) => this.guideRow(g, false)));
     }
     body.append(el('h4', {}, 'About'), this.guideRow(guideById('about')!, true));
-    body.append(el('div', { class: 'guide-credit' }, `LMP v${VERSION} · owned by H9_zy`));
+    body.append(el('div', { class: 'guide-credit' }, `LMP v${VERSION} · owned by LeoDevRX`));
   }
 
   private renderGuideResults(body: HTMLElement, q: string) {
@@ -658,7 +662,7 @@ class App {
     }
     const rel = (g.related ?? []).map(guideById).filter(Boolean) as Guide[];
     if (rel.length) body.append(el('h4', {}, 'Related'), ...rel.map((r) => this.guideRow(r)));
-    if (g.id === 'about' || g.id === 'getting-started') body.append(el('div', { class: 'guide-credit' }, `LMP v${VERSION} · owned by H9_zy`));
+    if (g.id === 'about' || g.id === 'getting-started') body.append(el('div', { class: 'guide-credit' }, `LMP v${VERSION} · owned by LeoDevRX`));
   }
 
   /** "Show me": do the thing (switch tool, open a panel…) and point at it. */
@@ -928,7 +932,7 @@ class App {
       el('div', { class: 'lmp-modal-head' }, el('span', { class: 'lmp-modal-logo', style: { backgroundImage: `url(${iconSmall})` } }), el('span', {}, 'LMP'), el('span', { class: 'grow' }),
         el('button', { class: 'start-x', title: 'Close (Esc)', onclick: close }, '×')),
       el('div', { class: 'start-body' },
-        el('div', { class: 'start-left' }, logo, el('h2', {}, "Leo's Material Painter"), el('div', { class: 'start-ver' }, `v${VERSION} · owned by H9_zy`),
+        el('div', { class: 'start-left' }, logo, el('h2', {}, "Leo's Material Painter"), el('div', { class: 'start-ver' }, `v${VERSION} · owned by LeoDevRX`),
           el('h4', {}, 'New file'), models,
           el('button', { class: 'lmp-btn guide-btn', onclick: () => { close(); this.openGuide('getting-started'); } }, 'Getting started')),
         el('div', { class: 'start-right' }, tabs, pane)),
@@ -2848,6 +2852,7 @@ class App {
   private showShortcuts() {
     const dlg = document.getElementById('export-dialog') as HTMLDialogElement;
     dlg.innerHTML = '';
+    dlg.className = '';
     const rows: [string, string][] = [
       ['Paint / Erase / Picker', 'B / E / P'], ['Brush size / hardness', '[ ]  /  { }'],
       ['Orbit / Pan / Zoom', 'RMB or Alt+LMB / MMB / Wheel'], ['Frame model (or 2D view)', 'F'],
@@ -5702,55 +5707,321 @@ class App {
 
   // ================================================================ export
 
+  // ================================================================ export (like Painter's Export textures window)
+
+  private exp?: ExportState;
+  private expName = '';
+  private expInclude = true;
+  private expTab: 'settings' | 'templates' | 'list' = 'settings';
+  private expLeft: 'global' | 'set' = 'global';
+  private expEditing = '';
+  private expSlot: { map: number; slot: number } | null = null;
+  private expLog: string[] = [];
+  private expBusy = false;
+
   openExport() {
+    this.exp ??= loadExportState();
+    const st = this.exp;
+    if (!allTemplates(st).some((t) => t.id === st.template)) st.template = this.exportPreset && allTemplates(st).some((t) => t.id === this.exportPreset) ? this.exportPreset : 'pbr-gl';
+    if (!st.dir && this.native?.exportDefaultDir) this.native.exportDefaultDir().then((d: string) => { if (!st.dir) { st.dir = d; this.renderExportDlg(); } }).catch(() => {});
+    this.expName = this.expName || this.model.name.replace(/[^\w\-]+/g, '_') || 'texture';
+    this.expEditing ||= st.template;
+    this.expSlot = null;
     const dlg = document.getElementById('export-dialog') as HTMLDialogElement;
+    this.renderExportDlg();
+    if (!dlg.open) dlg.showModal();
+  }
+
+  private expTemplate(id?: string): ExportTemplate {
+    const all = allTemplates(this.exp!);
+    return all.find((t) => t.id === (id ?? this.exp!.template)) ?? all[0];
+  }
+  private expSizeOf(t: ExportTemplate) { const s = this.exp!.size || this.ts.size; return t.maxSize ? Math.min(s, t.maxSize) : s; }
+  private expFormatOf(mp: OutMap): { fmt: FileType; bits: 8 | 16 } {
+    const fmt = (mp.format || this.exp!.format) as FileType;
+    const bits = fmt === 'png' ? ((mp.bits || this.exp!.bits) as 8 | 16) : 8;
+    return { fmt, bits };
+  }
+  private expList(t: ExportTemplate) {
+    const size = this.expSizeOf(t);
+    return t.maps.map((mp) => { const f = this.expFormatOf(mp); return { name: fileName(mp.name, this.expName, f.fmt), size, ...f }; });
+  }
+  private expSave() { saveExportState(this.exp!); }
+
+  private renderExportDlg() {
+    const dlg = document.getElementById('export-dialog') as HTMLDialogElement;
+    const st = this.exp!;
+    const t = this.expTemplate();
+    dlg.className = 'exp-dlg';
     dlg.innerHTML = '';
-    let preset = PRESETS.find((p) => p.id === this.exportPreset) ?? PRESETS[0];
-    let size = this.ts.size;
-    let base = this.model.name.replace(/[^\w\-]+/g, '_') || 'texture';
-    const note = el('p', { class: 'note' });
-    const sizeNote = el('p', { class: 'note' });
-    const updNotes = () => {
-      note.textContent = preset.note ?? '';
-      const eff = preset.maxSize ? Math.min(size, preset.maxSize) : size;
-      sizeNote.textContent = eff !== size ? `Will export at ${eff} px (preset limit).` : '';
-    };
-    const nameInput = el('input', { type: 'text', value: base, class: 'grow' }) as HTMLInputElement;
-    nameInput.addEventListener('input', () => (base = nameInput.value.trim() || 'texture'));
-    const go = el('button', { class: 'primary' }, 'Export to folder…');
-    go.addEventListener('click', async () => {
-      go.disabled = true;
-      try {
-        const files = await exportMaps(this.ts, preset, base, size, this.ts.heightStrength);
-        const msg = await saveFiles(files);
-        if (msg !== 'cancelled') { dlg.close(); toast(msg); }
-      } catch (e: any) {
-        console.error(e); toast('Export failed: ' + (e?.message ?? e), true);
-      } finally { go.disabled = false; }
-    });
+    const tab = (id: typeof this.expTab, label: string) => el('button', { class: 'exp-tab' + (this.expTab === id ? ' on' : ''), onclick: () => { this.expTab = id; this.renderExportDlg(); } }, label);
+    const right = this.expTab === 'list'
+      ? (this.native?.exportOpen ? el('button', { onclick: () => this.native.exportOpen(st.dir) }, 'Open output directory') : el('span'))
+      : this.expTab === 'settings' ? el('button', { onclick: () => { this.expInclude = true; this.renderExportDlg(); } }, 'Include all') : el('span');
+    let body: HTMLElement;
+    if (this.expTab === 'settings') body = this.expSettingsTab(t);
+    else if (this.expTab === 'templates') body = this.expTemplatesTab();
+    else body = this.expListTab(t);
+    const count = this.expInclude ? t.maps.length : 0;
+    const go = el('button', { class: 'primary exp-go', disabled: this.expBusy || !count, onclick: () => this.expRun() }, this.expBusy ? 'Exporting…' : 'Export');
     dlg.append(
-      el('header', {}, 'Export textures'),
-      el('div', { class: 'body' },
-        el('div', { class: 'row' }, el('label', {}, 'Output template'), select(PRESETS.map((p) => ({ value: p.id, label: p.label })), preset.id, (v) => {
-          preset = PRESETS.find((p) => p.id === v)!; this.exportPreset = v; updNotes();
-        })),
-        note,
-        el('div', { class: 'row' }, el('label', {}, 'Size'), select([512, 1024, 2048, 4096].map((r) => ({ value: r, label: `${r} × ${r}` })), size, (v) => { size = v; updNotes(); })),
-        sizeNote,
-        el('div', { class: 'row' }, el('label', {}, 'File name'), nameInput),
-        slider('Height → normal', { min: 0, max: 30, step: 0.5, value: this.ts.heightStrength, fmt: (v) => v.toFixed(1), onInput: (v) => this.ts.setHeightStrength(v) }).el,
-      ),
-      el('footer', {}, el('button', { onclick: () => dlg.close() }, 'Cancel'), go),
+      el('div', { class: 'exp-title' }, el('span', {}, 'Export textures'), el('button', { class: 'exp-x', title: 'Close', onclick: () => dlg.close() }, '×')),
+      el('div', { class: 'exp-tabs' }, tab('settings', 'Settings'), tab('templates', 'Output templates'), tab('list', 'List of exports'), el('span', { class: 'grow' }), right),
+      body,
+      el('div', { class: 'exp-foot' },
+        el('button', { onclick: () => { const custom = st.custom; this.exp = { ...structuredClone(DEFAULT_EXPORT), custom, dir: st.dir }; this.expSave(); this.renderExportDlg(); toast('Export settings reset'); } }, 'Reset all'),
+        el('span', { class: 'grow' }),
+        el('span', { class: 'muted' }, `${count} texture${count === 1 ? '' : 's'} selected for export`),
+        el('button', { onclick: () => dlg.close() }, 'Cancel'),
+        el('button', { onclick: () => { this.expSave(); toast('Export settings saved'); } }, 'Save settings'),
+        go),
     );
-    updNotes();
-    dlg.showModal();
+  }
+
+  private expSettingsTab(t: ExportTemplate): HTMLElement {
+    const st = this.exp!;
+    const set = () => { this.expSave(); this.renderExportDlg(); };
+    const left = el('div', { class: 'exp-left' },
+      el('button', { class: 'exp-item' + (this.expLeft === 'global' ? ' on' : ''), onclick: () => { this.expLeft = 'global'; this.renderExportDlg(); } }, 'Global settings'),
+      (() => {
+        const c = el('input', { type: 'checkbox', checked: this.expInclude }) as HTMLInputElement;
+        c.addEventListener('click', (e) => e.stopPropagation());
+        c.addEventListener('change', () => { this.expInclude = c.checked; this.renderExportDlg(); });
+        return el('div', { class: 'exp-item' + (this.expLeft === 'set' ? ' on' : ''), onclick: () => { this.expLeft = 'set'; this.renderExportDlg(); } }, c, el('span', {}, this.expName));
+      })());
+    const row = (label: string, ...ctl: (HTMLElement | null)[]) => el('div', { class: 'exp-row' }, el('label', {}, label), el('div', { class: 'exp-ctl' }, ...ctl));
+    let right: HTMLElement;
+    if (this.expLeft === 'set') {
+      const name = el('input', { type: 'text', value: this.expName }) as HTMLInputElement;
+      name.addEventListener('input', () => { this.expName = name.value.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'texture'; });
+      name.addEventListener('change', () => this.renderExportDlg());
+      right = el('div', { class: 'exp-right' },
+        el('div', { class: 'exp-h' }, `Texture set · ${this.expName}`),
+        row('Name ($textureSet)', name),
+        el('p', { class: 'note' }, 'Used in the file names: $textureSet_BaseColor becomes ' + fileName(`$textureSet_BaseColor`, this.expName, 'png') + '.'),
+        el('div', { class: 'exp-h sub' }, 'Files'),
+        ...this.expList(t).map((f) => el('div', { class: 'exp-file' }, el('span', {}, f.name), el('span', { class: 'muted' }, `${f.size}×${f.size} · ${f.fmt} · ${f.bits} bits`))));
+    } else {
+      const groups = TEMPLATE_GROUPS.map((g) => ({ g, list: allTemplates(st).filter((x) => (x.custom ? 'Your templates' : x.group) === g) })).filter((x) => x.list.length);
+      const tsel = el('select', { class: 'exp-template' }) as HTMLSelectElement;
+      for (const { g, list } of groups) {
+        const og = el('optgroup', { label: g });
+        for (const x of list) og.append(el('option', { value: x.id }, x.label));
+        tsel.append(og);
+      }
+      tsel.value = t.id;
+      tsel.addEventListener('change', () => { st.template = tsel.value; this.exportPreset = tsel.value; this.expEditing = tsel.value; set(); });
+      const fmt = select<FileType>([{ value: 'png', label: 'png' }, { value: 'jpg', label: 'jpg' }, { value: 'tga', label: 'tga' }], st.format, (v) => { st.format = v; set(); });
+      const bits = select<number>([{ value: 8, label: '8 bits' }, { value: 16, label: '16 bits' }], st.format === 'png' ? st.bits : 8, (v) => { st.bits = v as 8 | 16; set(); });
+      bits.disabled = st.format !== 'png';
+      const sizes = [256, 512, 1024, 2048, 4096];
+      const size = select<number>([{ value: 0, label: `Based on the texture set size (${this.ts.size})` }, ...sizes.map((s) => ({ value: s, label: `${s} × ${s}` }))], st.size, (v) => { st.size = v; set(); });
+      const padSel = select<PadMode>((Object.keys(PAD_LABEL) as PadMode[]).map((p) => ({ value: p, label: PAD_LABEL[p] })), st.padding, (v) => { st.padding = v; set(); });
+      const padPx = select<number>([1, 2, 4, 8, 16, 32, 64].map((v) => ({ value: v, label: String(v) })), st.padPx, (v) => { st.padPx = v; set(); });
+      padPx.disabled = !(st.padding === 'dilate' || st.padding === 'dilate+transparent');
+      padPx.classList.add('exp-px');
+      let dirRow: HTMLElement;
+      if (this.native?.exportWrite) {
+        const dir = el('input', { type: 'text', value: st.dir, class: 'exp-dir' }) as HTMLInputElement;
+        dir.addEventListener('change', () => { st.dir = dir.value.trim(); this.expSave(); });
+        dirRow = row('Output directory', dir, el('button', { class: 'exp-browse', title: 'Choose a folder', onclick: async () => { const d = await this.native.exportPickDir(st.dir); if (d) { st.dir = d; set(); } } }, '…'));
+      } else dirRow = row('Output directory', el('span', { class: 'muted' }, 'You\'ll pick a folder when you click Export.'));
+      const open = el('input', { type: 'checkbox', checked: st.openAfter }) as HTMLInputElement;
+      open.addEventListener('change', () => { st.openAfter = open.checked; this.expSave(); });
+      const eff = this.expSizeOf(t), want = st.size || this.ts.size;
+      right = el('div', { class: 'exp-right' },
+        el('div', { class: 'exp-h' }, 'General export parameters',
+          el('button', { class: 'exp-reset', title: 'Back to the defaults (keeps your templates and folder)', onclick: () => { const { custom, dir } = st; this.exp = { ...structuredClone(DEFAULT_EXPORT), custom, dir, template: st.template }; this.expSave(); this.renderExportDlg(); } }, '⟲')),
+        dirRow,
+        row('Output template', tsel),
+        row('File type', fmt, bits),
+        row('Size', size),
+        row('Padding', padSel, padPx),
+        this.native?.exportOpen ? el('label', { class: 'check-row exp-check' }, open, ' Open the output directory when done') : null,
+        el('div', { class: 'exp-h sub' }, 'Normal map'),
+        slider('Height strength', { min: 0, max: 30, step: 0.5, value: this.ts.heightStrength, fmt: (v) => v.toFixed(1), onInput: (v) => this.ts.setHeightStrength(v) }).el,
+        t.note ? el('p', { class: 'note' }, t.note) : null,
+        eff !== want ? el('p', { class: 'note warn' }, `This template exports at ${eff} px at most.`) : null,
+        el('p', { class: 'note' }, 'Padding fills the space outside the UV islands so seams don\'t show when the texture gets smaller in the distance. Dilation infinite is the usual choice; Transparent leaves it empty (alpha).'));
+    }
+    return el('div', { class: 'exp-body' }, left, right);
+  }
+
+  /** Output templates: presets on the left, the chosen one's output maps in the middle, maps to drag on the right. */
+  private expTemplatesTab(): HTMLElement {
+    const st = this.exp!;
+    const t = this.expTemplate(this.expEditing);
+    const edit = !!t.custom;
+    const changed = () => { this.expSave(); this.renderExportDlg(); };
+    const presets = el('div', { class: 'exp-presets' },
+      el('div', { class: 'exp-h' }, 'Presets', el('span', { class: 'grow' }),
+        el('button', { class: 'exp-ib', title: 'Make your own copy of this template', onclick: () => {
+          const copy: ExportTemplate = { ...structuredClone(t), id: 'my-' + Date.now().toString(36), label: `${t.label} (copy)`, group: 'Your templates', custom: true };
+          st.custom.push(copy); this.expEditing = copy.id; changed();
+        } }, '+'),
+        el('button', { class: 'exp-ib', title: 'Delete this template (your own only)', disabled: !edit, onclick: () => {
+          st.custom = st.custom.filter((x) => x.id !== t.id);
+          if (st.template === t.id) st.template = 'pbr-gl';
+          this.expEditing = st.template; changed();
+        } }, '−')));
+    for (const g of TEMPLATE_GROUPS) {
+      const list = allTemplates(st).filter((x) => (x.custom ? 'Your templates' : x.group) === g);
+      if (!list.length) continue;
+      presets.append(el('div', { class: 'exp-grp' }, g));
+      for (const x of list) presets.append(el('button', { class: 'exp-preset' + (x.id === t.id ? ' on' : ''), onclick: () => { this.expEditing = x.id; this.expSlot = null; this.renderExportDlg(); } }, x.label));
+    }
+    // ---- middle: output maps
+    const create = (mode: MapMode, label: string) => el('button', { disabled: !edit, onclick: () => {
+      const src: (ExpSrc | null)[] = MODE_SLOTS[mode].map(() => null);
+      t.maps.push({ name: `$textureSet_${mode === 'gray' ? 'Gray' : 'Map'}${t.maps.length + 1}`, mode, src });
+      changed();
+    } }, label);
+    const assign = (mi: number, si: number, s: ExpSrc | null) => {
+      if (!edit) { toast('Built-in templates can\'t be changed. Click + to make your own copy.', true); return; }
+      t.maps[mi].src[si] = s; this.expSlot = null; changed();
+    };
+    const rows = t.maps.map((mp, mi) => {
+      const name = el('input', { type: 'text', value: mp.name, disabled: !edit }) as HTMLInputElement;
+      name.addEventListener('change', () => { mp.name = name.value.trim() || '$textureSet'; changed(); });
+      const slots = MODE_SLOTS[mp.mode].map((lab, si) => {
+        const s = mp.src[si];
+        const info = s ? SOURCES[s] : null;
+        const sel = this.expSlot?.map === mi && this.expSlot.slot === si;
+        const b = el('button', { class: 'exp-slot' + (sel ? ' on' : '') + (s ? '' : ' empty'), title: s ? `${lab}: ${info!.label} (double-click to clear)` : `${lab}: empty — drop a map here`,
+          style: info ? { background: info.tint } : {},
+          onclick: () => { this.expSlot = sel ? null : { map: mi, slot: si }; this.renderExportDlg(); },
+          ondblclick: () => assign(mi, si, null) },
+        el('b', {}, lab === 'L' ? 'Gray' : lab), el('span', {}, info ? info.label : '—'));
+        b.addEventListener('dragover', (e) => { if (edit) { e.preventDefault(); b.classList.add('drop'); } });
+        b.addEventListener('dragleave', () => b.classList.remove('drop'));
+        b.addEventListener('drop', (e) => { e.preventDefault(); const v = e.dataTransfer?.getData('text/lmp-src') as ExpSrc; if (v) assign(mi, si, v); });
+        return b;
+      });
+      const f = select<string>([{ value: '', label: 'global' }, { value: 'png', label: 'png' }, { value: 'jpg', label: 'jpg' }, { value: 'tga', label: 'tga' }], mp.format ?? '', (v) => { mp.format = v as FileType | ''; changed(); });
+      const bt = select<number>([{ value: 0, label: 'global' }, { value: 8, label: '8 bits' }, { value: 16, label: '16 bits' }], mp.bits ?? 0, (v) => { mp.bits = v as 0 | 8 | 16; changed(); });
+      f.disabled = bt.disabled = !edit;
+      return el('div', { class: 'exp-map' }, name,
+        el('button', { class: 'exp-ib', title: 'Insert $textureSet (the texture set name)', disabled: !edit, onclick: () => { mp.name += '$textureSet'; changed(); } }, '$'),
+        el('div', { class: 'exp-slots' }, ...slots),
+        el('div', { class: 'exp-fmt' }, f, bt),
+        el('button', { class: 'exp-ib', title: 'Remove this output', disabled: !edit, onclick: () => { t.maps.splice(mi, 1); changed(); } }, '×'));
+    });
+    const labelIn = el('input', { type: 'text', value: t.label, disabled: !edit, class: 'grow' }) as HTMLInputElement;
+    labelIn.addEventListener('change', () => { t.label = labelIn.value.trim() || 'My template'; changed(); });
+    const mid = el('div', { class: 'exp-mid' },
+      el('div', { class: 'exp-h' }, 'Current preset: ', labelIn),
+      edit ? null : el('p', { class: 'note warn' }, 'This is a built-in template. Click + (top left) to make your own copy you can change.'),
+      el('div', { class: 'exp-h sub' }, 'Output maps', el('span', { class: 'grow' }), el('span', { class: 'muted' }, 'Create: '),
+        create('gray', 'Gray'), create('rgb', 'RGB'), create('r+g+b', 'R+G+B'), create('rgb+a', 'RGB+A'), create('r+g+b+a', 'R+G+B+A')),
+      el('div', { class: 'exp-maps' }, ...rows),
+      el('p', { class: 'note' }, 'Drag maps from the right onto an output\'s channels, or click a channel and then a map. Double-click a channel to empty it.'),
+      el('p', { class: 'muted' }, `${t.maps.length} output map${t.maps.length === 1 ? '' : 's'} will be exported.`));
+    // ---- right: maps to use
+    const chip = (s: ExpSrc) => {
+      const info = SOURCES[s];
+      const c = el('button', { class: 'exp-src', draggable: true, title: this.expSlot ? `Put ${info.label} in the selected channel` : 'Drag onto an output channel',
+        onclick: () => { if (this.expSlot) assign(this.expSlot.map, this.expSlot.slot, s); } },
+      el('i', { style: { background: info.tint } }), info.label);
+      c.addEventListener('dragstart', (e) => { e.dataTransfer?.setData('text/lmp-src', s); });
+      return c;
+    };
+    const list = (g: SrcInfo['group']) => (Object.keys(SOURCES) as ExpSrc[]).filter((s) => SOURCES[s].group === g).map(chip);
+    const srcs = el('div', { class: 'exp-srcs' },
+      el('div', { class: 'exp-h sub' }, 'Input maps'), ...list('input'),
+      el('div', { class: 'exp-h sub' }, 'Mesh maps'), ...list('mesh'),
+      el('div', { class: 'exp-h sub' }, 'Converted maps'), ...list('converted'), ...list('constant'));
+    return el('div', { class: 'exp-body tpl' }, presets, mid, srcs);
+  }
+
+  private expListTab(t: ExportTemplate): HTMLElement {
+    const files = this.expInclude ? this.expList(t) : [];
+    const log = el('div', { class: 'exp-log' }, ...this.expLog.map((l) => el('div', { class: l.startsWith('✗') ? 'warn' : '' }, l)));
+    setTimeout(() => (log.scrollTop = log.scrollHeight));
+    return el('div', { class: 'exp-body list' },
+      el('div', { class: 'exp-files' }, el('div', { class: 'exp-grp' }, `▾ ${this.expName}`),
+        ...files.map((f) => el('div', { class: 'exp-file' }, el('span', {}, f.name), el('span', { class: 'muted' }, `${f.size}×${f.size}${this.exp!.size ? '' : ' (texture set size)'} · ${f.fmt} · ${f.bits} bits`))),
+        files.length ? null : el('p', { class: 'note' }, 'Nothing selected. Tick the texture set in Settings.')),
+      el('div', { class: 'exp-console' }, el('div', { class: 'exp-h' }, 'Console'), log));
+  }
+
+  /** Make the files of one template (shared by Export and the tests). */
+  private async expBuild(t: ExportTemplate, opts: { size: number; padding: PadMode; padPx: number; name: string; log?: (s: string) => void }): Promise<{ name: string; blob: Blob }[]> {
+    const ts = this.ts;
+    const S = opts.size;
+    const cache = new Map<string, Pix>();
+    const get = (s: ExpSrc, float: boolean) => {
+      const k = s + (float ? '#f' : '');
+      let p = cache.get(k);
+      if (!p) { p = ts.exportSource(s, S, float); cache.set(k, p); }
+      return p;
+    };
+    let cov: Uint8Array | null = null, near: Int32Array | null = null;
+    if (opts.padding !== 'none') {
+      const c = ts.exportSource('coverage', S) as Uint8Array;
+      cov = new Uint8Array(S * S);
+      for (let i = 0; i < cov.length; i++) cov[i] = c[i * 4] > 127 ? 1 : 0;
+      if (opts.padding !== 'transparent') near = nearestFill(cov, S, S, opts.padding === 'infinite' ? 0 : opts.padPx);
+    }
+    const out: { name: string; blob: Blob }[] = [];
+    for (const mp of t.maps) {
+      const { fmt, bits } = this.expFormatOf(mp);
+      const float = bits === 16;
+      const alpha = (opts.padding === 'transparent' || opts.padding === 'dilate+transparent') && fmt !== 'jpg';
+      const data = compose(mp, (s) => get(s, float), S, S, bits, alpha);
+      const nc = channelsOf(mp.mode, alpha);
+      if (cov) pad(data, nc, S, S, cov, near, opts.padding);
+      const name = fileName(mp.name, opts.name, fmt);
+      const blob = fmt === 'png' ? await encodePNG(data, S, S, nc, bits)
+        : fmt === 'tga' ? encodeTGA(data as Uint8Array, S, S, nc) : await encodeJPG(data as Uint8Array, S, S, nc);
+      out.push({ name, blob });
+      opts.log?.(`✓ ${name}  ${S}×${S} · ${fmt} · ${bits} bits`);
+      await new Promise((r) => setTimeout(r));
+    }
+    return out;
+  }
+
+  private async expRun() {
+    if (this.expBusy) return;
+    const st = this.exp!;
+    const t = this.expTemplate();
+    if (!this.expInclude) { toast('Tick the texture set in Settings first', true); return; }
+    this.expBusy = true;
+    this.expTab = 'list';
+    const size = this.expSizeOf(t);
+    this.expLog = [`Exporting “${this.expName}” with ${t.label} at ${size}×${size}…`];
+    this.renderExportDlg();
+    const log = (s: string) => { this.expLog.push(s); const box = document.querySelector('#export-dialog .exp-log'); if (box) { box.append(el('div', { class: s.startsWith('✗') ? 'warn' : '' }, s)); box.scrollTop = box.scrollHeight; } };
+    try {
+      const files = await this.expBuild(t, { size, padding: st.padding, padPx: st.padPx, name: this.expName, log });
+      if (this.native?.exportWrite) {
+        const data = await Promise.all(files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.blob.arrayBuffer()) })));
+        const r = await this.native.exportWrite(st.dir, data);
+        if (!r?.ok) throw new Error(r?.error ?? 'could not write the files');
+        log(`Saved ${r.written.length} files to ${r.dir}`);
+        toast(`Exported ${r.written.length} textures to ${r.dir}`);
+        if (st.openAfter) this.native.exportOpen(r.dir);
+      } else {
+        const msg = await saveFiles(files);
+        log(msg === 'cancelled' ? 'Cancelled.' : msg);
+        if (msg !== 'cancelled') toast(msg);
+      }
+      this.expSave();
+    } catch (e: any) {
+      console.error(e);
+      log('✗ Export failed: ' + (e?.message ?? e));
+      toast('Export failed: ' + (e?.message ?? e), true);
+    } finally {
+      this.expBusy = false;
+      if ((document.getElementById('export-dialog') as HTMLDialogElement).open) this.renderExportDlg();
+    }
   }
 
   // ================================================================ test hooks
 
-  async exportForTest(presetId: string, size?: number) {
-    const p = PRESETS.find((x) => x.id === presetId)!;
-    const files = await exportMaps(this.ts, p, 'test', size ?? this.ts.size, this.ts.heightStrength);
+  async exportForTest(presetId: string, size?: number, padding: PadMode = 'none') {
+    this.exp ??= loadExportState();
+    const t = this.expTemplate(presetId);
+    const files = await this.expBuild(t, { size: t.maxSize ? Math.min(size ?? this.ts.size, t.maxSize) : size ?? this.ts.size, padding, padPx: 16, name: 'test' });
     const out: Record<string, string> = {};
     for (const f of files) out[f.name] = toB64(new Uint8Array(await f.blob.arrayBuffer()));
     return out;

@@ -53,7 +53,7 @@ jobs:
           curl -sfL -o "$L/presets/materials-catalog.json" "https://github.com/$GITHUB_REPOSITORY/releases/download/materials/materials-catalog.json" || echo "no materials catalog yet"
           cp -r source "$L/source"
 
-      - name: Set the LMP icon and file info (owned by H9_zy)
+      - name: Set the LMP icon and file info (owned by LeoDevRX)
         run: |
           cd tools && npm ci --silent && cd ..
           node tools/seticon.mjs build/LMP/LMP.exe lmp.ico build/LMP/LMP.exe "${{ steps.ver.outputs.v }}"

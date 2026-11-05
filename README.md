@@ -6,7 +6,7 @@
 
 <p align="center">Owned by <a href="https://github.com/LeoDevRX">LeoDevRX</a></p>
 
-LMP is a free program for painting textures on 3D models. Open a model, paint on it with layers, masks and smart materials, then export the textures for Roblox, Unreal, Unity or Blender.
+LMP is a free material painting program for 3D models. Open a model, paint on it with layers, masks and smart materials, then export the textures for whatever you're making: games, renders, animation, AR or the web. It exports for most engines and 3D programs (Unity, Unreal, Godot, Blender, Maya, 3ds Max, Roblox, Sketchfab, glTF and more), or you can set up your own export.
 
 It's a free alternative to paid material painting programs, for anyone who would rather not pay for a subscription or deal with licence restrictions. The controls are kept familiar, so if you've used Substance Painter, most things work the same way.
 
