@@ -41,8 +41,6 @@ Windows may say "Windows protected your PC" the first time you open it. That's b
 
 ## Notes
 
-LocalPaint was called LMP (Leo's Material Painter) before v1.01. Old .lmp project files open as before.
-
 LocalPaint is an independent project. It isn't made by, affiliated with or endorsed by Adobe. Substance, Substance 3D Painter and Substance 3D Designer are trademarks of Adobe; they're mentioned only to say which files LocalPaint can open.
 
 LocalPaint doesn't include any Adobe software or Substance materials. If you open your own .sbsar files and have Substance 3D Designer installed, LocalPaint uses the copy of Adobe's renderer that's already on your PC.
