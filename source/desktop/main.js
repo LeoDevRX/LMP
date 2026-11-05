@@ -1,6 +1,6 @@
 // LocalPaint desktop app (Electron). Runs LocalPaint.html in its own window with the fast GPU,
-// direct access to the presets folder next to LocalPaint.exe, and .lmp project files (open / save / save as,
-// double-click a .lmp in Explorer to open it).
+// direct access to the presets folder next to LocalPaint.exe, and .lp project files (open / save / save as,
+// double-click a .lp in Explorer to open it).
 const { app, BrowserWindow, ipcMain, session, shell, dialog, net } = require('electron');
 const crypto = require('crypto');
 const path = require('path');
@@ -24,7 +24,7 @@ const exeDir = path.dirname(process.execPath);
 }
 /** Scanned materials downloaded on first use live in presets/<SCANS>/<category>/<name>/. */
 const SCANS = 'Scanned materials';
-const PROJECT_EXTS = ['.lmp', '.tpaint'];
+const PROJECT_EXTS = ['.lp', '.lmp', '.tpaint'];
 
 // presets folder: next to LocalPaint.exe, else the user's documents.
 function presetsDir() {
@@ -60,7 +60,7 @@ ipcMain.handle('presets:write', (_e, name, data) => {
 });
 ipcMain.handle('presets:open', () => shell.openPath(presetsDir()));
 
-// ---------------------------------------------------------------- .lmp project files
+// ---------------------------------------------------------------- .lp project files (.lmp / .tpaint from older versions still open)
 
 let lastDir = '';
 function projectsDir() {
@@ -76,13 +76,13 @@ ipcMain.handle('project:save', async (e, name, data, filePath, saveAs) => {
   let target = filePath && !saveAs ? filePath : null;
   if (!target) {
     const win = BrowserWindow.fromWebContents(e.sender);
-    const def = filePath ? filePath.replace(/\.(tpaint)$/i, '.lmp') : path.join(projectsDir(), `${safeName(name)}.lmp`);
+    const def = filePath ? filePath.replace(/\.(tpaint|lmp)$/i, '.lp') : path.join(projectsDir(), `${safeName(name)}.lp`);
     const r = await dialog.showSaveDialog(win, {
       title: saveAs ? 'Save LocalPaint project as' : 'Save LocalPaint project', defaultPath: def,
-      filters: [{ name: 'LocalPaint project', extensions: ['lmp'] }],
+      filters: [{ name: 'LocalPaint project', extensions: ['lp'] }],
     });
     if (r.canceled || !r.filePath) return null;
-    target = r.filePath.toLowerCase().endsWith('.lmp') ? r.filePath : r.filePath + '.lmp';
+    target = r.filePath.toLowerCase().endsWith('.lp') ? r.filePath : r.filePath + '.lp';
   }
   const tmp = target + '.saving';
   fs.writeFileSync(tmp, Buffer.from(data));
@@ -97,7 +97,7 @@ ipcMain.handle('project:open', async (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   const r = await dialog.showOpenDialog(win, {
     title: 'Open LocalPaint project', defaultPath: projectsDir(), properties: ['openFile'],
-    filters: [{ name: 'LocalPaint project', extensions: ['lmp', 'tpaint'] }, { name: 'All files', extensions: ['*'] }],
+    filters: [{ name: 'LocalPaint project', extensions: ['lp', 'lmp', 'tpaint'] }, { name: 'All files', extensions: ['*'] }],
   });
   if (r.canceled || !r.filePaths[0]) return null;
   // The renderer checks the file type before requesting the contents. An accidental
@@ -118,7 +118,7 @@ ipcMain.handle('file:import', async (e) => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Import into LocalPaint', properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'Everything LocalPaint can open', extensions: ['lmp', 'tpaint', 'glb', 'gltf', 'fbx', 'obj', 'hdr', 'sbsar', 'spsm', 'tpsmart', 'tpmat', 'tptex', 'tpbrush', 'tpgraph', 'png', 'jpg', 'jpeg', 'webp'] },
+      { name: 'Everything LocalPaint can open', extensions: ['lp', 'lmp', 'tpaint', 'glb', 'gltf', 'fbx', 'obj', 'hdr', 'sbsar', 'spsm', 'spmsk', 'tpsmart', 'tpmat', 'tptex', 'tpbrush', 'tpgraph', 'png', 'jpg', 'jpeg', 'webp'] },
       { name: 'All files', extensions: ['*'] },
     ],
   });
@@ -130,20 +130,23 @@ ipcMain.handle('file:import', async (e) => {
   });
 });
 
-/** Make .lmp files open in LocalPaint and show its icon in Explorer (current user only, no admin needed). */
+/** Make .lp (and old .lmp) files open in LocalPaint and show its icon in Explorer (current user only, no admin needed). */
 function registerFileType() {
-  if (process.platform !== 'win32' || process.env.LMP_NO_ASSOC) return;
+  if (process.platform !== 'win32' || process.env.LMP_NO_ASSOC || process.env.LOCALPAINT_NO_ASSOC) return;
   const exe = process.execPath;
   if (/electron\.exe$/i.test(exe)) return; // not when running from a dev copy
   const icon = path.join(exeDir, 'localpaint-file.ico');
   const iconRef = fs.existsSync(icon) ? `"${icon}"` : `"${exe}",0`;
+  const P = 'HKCU\\Software\\Classes\\LocalPaint.Project';
   const keys = [
-    ['HKCU\\Software\\Classes\\.lmp', '', 'LMP.Project'],
-    ['HKCU\\Software\\Classes\\.lmp', 'Content Type', 'application/x-lmp-project'],
-    ['HKCU\\Software\\Classes\\LMP.Project', '', 'LocalPaint project'],
-    ['HKCU\\Software\\Classes\\LMP.Project\\DefaultIcon', '', iconRef],
-    ['HKCU\\Software\\Classes\\LMP.Project\\shell\\open', 'FriendlyAppName', 'LocalPaint'],
-    ['HKCU\\Software\\Classes\\LMP.Project\\shell\\open\\command', '', `"${exe}" "%1"`],
+    ...['.lp', '.lmp'].flatMap((ext) => [
+      [`HKCU\\Software\\Classes\\${ext}`, '', 'LocalPaint.Project'],
+      [`HKCU\\Software\\Classes\\${ext}`, 'Content Type', 'application/x-localpaint-project'],
+    ]),
+    [P, '', 'LocalPaint project'],
+    [P + '\\DefaultIcon', '', iconRef],
+    [P + '\\shell\\open', 'FriendlyAppName', 'LocalPaint'],
+    [P + '\\shell\\open\\command', '', `"${exe}" "%1"`],
   ];
   let i = 0;
   const next = () => {
@@ -166,18 +169,18 @@ function autosaveDir() {
   }
   return tries[tries.length - 1];
 }
-const metaOf = (f) => f.replace(/\.lmp$/i, '.json');
+const metaOf = (f) => f.replace(/\.(lp|lmp)$/i, '.json');
 
 /** Write an autosave (keeps the newest `keep` per project). */
 ipcMain.handle('autosave:write', (_e, name, data, thumb, projectPath, keep) => {
   const dir = autosaveDir();
   const base = safeName(name);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const file = path.join(dir, `${base}__${stamp}.lmp`);
+  const file = path.join(dir, `${base}__${stamp}.lp`);
   fs.writeFileSync(file + '.saving', Buffer.from(data));
   fs.renameSync(file + '.saving', file);
   fs.writeFileSync(metaOf(file), JSON.stringify({ name, time: Date.now(), projectPath: projectPath || '', thumb: thumb || '' }));
-  const mine = fs.readdirSync(dir).filter((f) => f.startsWith(base + '__') && f.endsWith('.lmp')).sort().reverse();
+  const mine = fs.readdirSync(dir).filter((f) => f.startsWith(base + '__') && /\.(lp|lmp)$/i.test(f)).sort().reverse();
   for (const old of mine.slice(Math.max(1, keep || 5))) {
     try { fs.unlinkSync(path.join(dir, old)); fs.unlinkSync(metaOf(path.join(dir, old))); } catch { /* fine */ }
   }
@@ -186,7 +189,7 @@ ipcMain.handle('autosave:write', (_e, name, data, thumb, projectPath, keep) => {
 ipcMain.handle('autosave:list', () => {
   const dir = autosaveDir();
   let files = [];
-  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')); } catch { return []; }
+  try { files = fs.readdirSync(dir).filter((f) => /\.(lp|lmp)$/i.test(f)); } catch { return []; }
   return files.map((f) => {
     const full = path.join(dir, f);
     let meta = {};
@@ -329,6 +332,31 @@ ipcMain.handle('cloud:get', async (_e, m) => {
     }
     return { ok: true, files: fs.readdirSync(dir).map((n) => ({ name: n, path: path.join(dir, n) })) };
   } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+
+// CC0 grunge library (grunges-catalog.json + grunge-*.jpg in the materials release), downloaded the first time a mask uses one.
+const grungeDir = () => path.join(app.getPath('userData'), 'grunges');
+ipcMain.handle('grunge:catalog', async () => {
+  const cache = path.join(grungeDir(), 'grunges-catalog.json');
+  try {
+    const r = await net.fetch(MAT_BASE + 'grunges-catalog.json', { headers: { 'User-Agent': 'LocalPaint' } });
+    if (r.ok) { const txt = await r.text(); const cat = JSON.parse(txt); if (cat?.grunges) { fs.mkdirSync(grungeDir(), { recursive: true }); fs.writeFileSync(cache, txt); return cat; } }
+  } catch { /* offline */ }
+  try { return JSON.parse(fs.readFileSync(cache, 'utf8')); } catch { return null; }
+});
+ipcMain.handle('grunge:get', async (_e, file) => {
+  const n = String(file || '');
+  if (!/^grunge-[\w.-]+\.(jpg|png)$/.test(n)) return null;
+  const f = path.join(grungeDir(), n);
+  try {
+    if (!fs.existsSync(f)) {
+      const b = await getBytes(MAT_BASE + n);
+      fs.mkdirSync(grungeDir(), { recursive: true });
+      fs.writeFileSync(f + '.part', b);
+      fs.renameSync(f + '.part', f);
+    }
+    return new Uint8Array(fs.readFileSync(f));
+  } catch { return null; }
 });
 
 ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
@@ -555,7 +583,7 @@ function createWindow() {
   ipcMain.on('app:quit', (ev) => { if (ev.sender === win.webContents) { allowClose = true; win.close(); } });
 }
 
-// One LocalPaint at a time: double-clicking another .lmp opens it in the running window.
+// One LocalPaint at a time: double-clicking another .lp opens it in the running window.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {

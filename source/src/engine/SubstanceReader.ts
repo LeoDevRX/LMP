@@ -256,7 +256,8 @@ export function translateSbs(info: SbsInfo): Translation {
 // TexPaint smart masks, and embedded materials go through readSbsar.
 
 import * as hdf5 from 'jsfive';
-import { GenSettings, GenType, defaultGen } from './Masks';
+import { GenSettings, GenType, defaultGen, painterStack } from './Masks';
+import type { SpInput } from './PainterGen';
 import type { BlendMode } from './TextureSet';
 
 export type SpNode =
@@ -474,25 +475,41 @@ export async function translateSpsm(bytes: Uint8Array, file: string): Promise<{ 
     return { blend, opacity: clamp01(pick.opacity ?? 1) };
   };
 
+  /** The fills of a Painter mask stack (bottom → top) with their generator / grunge, settings, blending and inputs. */
+  const maskEffects = (actions: any[]) => {
+    const out: { res: string; proj: number; blend: number; opacity: number; tw: Record<string, any>; inputs: Record<string, SpInput> }[] = [];
+    for (const a of actions) {
+      if (a?._class !== 'DataActionFill' || a.enabled === false) continue;
+      const bl: any[] = (a.perChannelBlending ?? []).filter(Boolean);
+      const mb = bl.find((b) => bits(b.channelTypes) === 2147483648) ?? bl[0];
+      for (const src of a.sources ?? []) {
+        const p = src?._class === 'DataSourceProcedural' ? src.procedural : null;
+        if (!p?.urlToSbsRes) continue;
+        const inputs: Record<string, SpInput> = {};
+        for (const si of p.sourcesInputs ?? []) {
+          const id = (si?.inputs ?? [])[0]?.identifier;
+          const r = si?.source?.procedural?.urlToSbsRes;
+          if (id && r) inputs[id] = { res: resName(r), tw: tweaks(si.source.procedural) };
+        }
+        out.push({ res: resName(p.urlToSbsRes), proj: a.projection ?? 0, blend: mb?.blendingMode ?? 2, opacity: clamp01(mb?.opacity ?? 1), tw: tweaks(p), inputs });
+      }
+    }
+    return out;
+  };
+
   const maskOf = (it: any, name: string): SpMask | undefined => {
     const items: any[] = it.maskActions?.items ?? [];
     const flat: any[] = [];
-    const walk = (xs: any[]) => { for (const x of xs) { if (x?._class === 'DataActionGroup') walk(x.actions?.items ?? x.items ?? []); else if (x) flat.push(x); } };
+    const walk = (xs: any[]) => { for (const x of xs) { if (x?._class === 'DataActionGroup') walk(x.actions?.items ?? x.items ?? x.subStack?.items ?? []); else if (x) flat.push(x); } };
     walk(items);
-    const procs = flat.flatMap((a) => (a.sources ?? []).filter((s: any) => s?._class === 'DataSourceProcedural').map((s: any) => s.procedural));
-    const best = procs.find((p: any) => /\/mg_/.test(p?.urlToSbsRes ?? '')) ?? procs[0];
     const base: 'white' | 'black' = it.maskInitial === 0 ? 'black' : 'white';
     if (flat.some((a) => /Paint/.test(a._class))) skipped.push(`hand-painted mask on “${name}”`);
-    if (procs.length > 1) skipped.push(`${procs.length - 1} extra mask generator(s) on “${name}” (LocalPaint uses one per mask)`);
-    if (flat.some((a) => /Filter/.test(a._class))) skipped.push(`mask filter on “${name}”`);
-    if (best?.urlToSbsRes) {
-      const g = genFrom(best.urlToSbsRes, tweaks(best));
-      // Grunge maps (not mask generators): use the real picture as the mask.
-      if (!/\/mg_/.test(best.urlToSbsRes)) {
-        const img = patternImage(best.urlToSbsRes);
-        if (img) return { base: 'black', gen: null, image: img, amount: g.amount, contrast: g.contrast, invert: g.invert };
-      }
-      return { base: 'black', gen: g };
+    if (flat.some((a) => /Filter|Levels/.test(a._class))) skipped.push(`mask filter on “${name}”`);
+    const effects = maskEffects(flat);
+    if (effects.length) {
+      // Painter's generators and grunges, rebuilt with LocalPaint's Painter-style generators (same settings).
+      const g = painterStack(effects);
+      if (g) return { base: 'black', gen: g };
     }
     if (base === 'black') return { base: 'black', gen: null };
     return undefined;
@@ -583,4 +600,48 @@ export async function translateSpsm(bytes: Uint8Array, file: string): Promise<{ 
   if (!root) throw new Error(`${file}: no layers LocalPaint can use.`);
   if (root.kind === 'group' && (!root.name || root.name === 'Folder')) root.name = file.replace(/\.[^.]+$/, '');
   return { root, skipped };
+}
+
+/** A Painter smart mask (.spmsk): its mask stack as LocalPaint mask settings. */
+export async function translateSpmsk(bytes: Uint8Array, file: string): Promise<{ name: string; gen: GenSettings; skipped: string[] }> {
+  let h: any;
+  try {
+    h = new hdf5.File(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, file);
+  } catch {
+    throw new Error(`${file} isn't a smart mask file Substance Painter 2018 or newer wrote.`);
+  }
+  let pre: Uint8Array | null = null;
+  try { const v = h.get('preset.bin')?.value; pre = v ? Uint8Array.from(v as ArrayLike<number>) : null; } catch { pre = null; }
+  if (!pre) throw new Error(`${file} has no mask inside.`);
+  const tree = parsePreset(pre);
+  const fills: any[] = [];
+  const skipped: string[] = [];
+  const walk = (n: any) => {
+    if (Array.isArray(n)) { n.forEach(walk); return; }
+    if (!n || typeof n !== 'object') return;
+    if (n._class === 'DataActionFill') { fills.push(n); return; }
+    if (/Filter|Levels/.test(n._class ?? '')) skipped.push('a mask filter');
+    if (/Paint/.test(n._class ?? '')) skipped.push('hand-painted strokes');
+    for (const v of Object.values(n)) if (v && typeof v === 'object') walk(v);
+  };
+  walk(tree);
+  const effects: { res: string; proj: number; blend: number; opacity: number; tw: Record<string, any>; inputs: Record<string, SpInput> }[] = [];
+  for (const a of fills) {
+    const bl: any[] = (a.perChannelBlending ?? []).filter(Boolean);
+    const mb = bl.find((b) => bits(b.channelTypes) === 2147483648) ?? bl[0];
+    for (const src of a.sources ?? []) {
+      const p = src?._class === 'DataSourceProcedural' ? src.procedural : null;
+      if (!p?.urlToSbsRes) continue;
+      const inputs: Record<string, SpInput> = {};
+      for (const si of p.sourcesInputs ?? []) {
+        const id = (si?.inputs ?? [])[0]?.identifier;
+        const r = si?.source?.procedural?.urlToSbsRes;
+        if (id && r) inputs[id] = { res: resName(r), tw: tweaks(si.source.procedural) };
+      }
+      effects.push({ res: resName(p.urlToSbsRes), proj: a.projection ?? 0, blend: mb?.blendingMode ?? 2, opacity: clamp01(mb?.opacity ?? 1), tw: tweaks(p), inputs });
+    }
+  }
+  const gen = painterStack(effects);
+  if (!gen) throw new Error(`${file} has no generators or grunges LocalPaint can rebuild.`);
+  return { name: file.replace(/\.spmsk$/i, '').replace(/^.*[\\/]/, ''), gen, skipped: [...new Set(skipped)] };
 }

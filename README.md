@@ -14,7 +14,7 @@ I built LocalPaint with help from Claude Opus 5.5, an AI model by Anthropic, to 
 
 **What it can do**
 - Paint colour, roughness, metal, height and glow in one stroke, with brushes, layers, folders and masks
-- Smart materials and smart masks (edge wear, dirt, rust) that follow your model's shape
+- Smart materials and smart masks (edge wear, dirt, dust, rust) that follow your model's shape, with Painter-style generators (Dirt, Metal Edge Wear, Mask Editor…)
 - 114 free scanned materials, plus Substance .sbsar materials with all their settings
 - Bake normal, AO, curvature and other mesh maps, including from a high poly model
 - A built-in Guide that walks you through each tool

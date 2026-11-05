@@ -38,7 +38,7 @@ export const GUIDES: Guide[] = [
         'Open a model. Pick one on the start screen or use File > Open model (FBX, OBJ or GLB). The model has to be UV unwrapped.',
         'Bake the mesh maps. Click Baking at the top right, then Bake selected textures.',
         'Paint. Drag a smart material from the Assets shelf onto the model, or press B and paint on a paint layer.',
-        'Save and export. Ctrl+S saves an .lmp project and Ctrl+Shift+E exports the textures.',
+        'Save and export. Ctrl+S saves an .lp project and Ctrl+Shift+E exports the textures.',
       ] },
       { h: 'Controls', table: [
         ['Orbit / pan / zoom', 'Right mouse (or Alt + left) / middle mouse / wheel'],
@@ -64,6 +64,15 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.05', steps: [
+        'Masks work like Substance Painter\'s now: Dirt, Metal Edge Wear, Dust, Mask Editor, Mask Builder, Light, Position, AO and Curvature generators with Painter\'s settings and maths.',
+        'Smart masks rebuilt from Painter\'s recipes (Dirt Cavities, Dust Occlusion, Edges Uber, Rust and more), using free CC0 grunge scans.',
+        'Painter smart masks (.spmsk) can be opened, and masks in .spsm smart materials come in with their whole stack.',
+        'A New project window like Painter\'s: template, resolution, normal format, baked maps, and an option to bake right after importing.',
+        'File > Export mesh: GLB with your textures inside, or OBJ.',
+        'Projects are now .lp files. Old .lmp files still open.',
+        'The Guide shows a few "Did you know?" tips under the search bar. They change every hour.',
+      ] },
       { h: 'New in v1.04', steps: ['Smaller downloads: build tools and temporary build output are excluded from release packages.'] },
       { h: 'New in v1.03', steps: ['Fixed download links, consistent handling of unsupported .spp files, and clearer messages for damaged projects.'] },
       { h: 'New in v1.02', steps: ['Bug fixes: opening a Substance Painter project (.spp) or another file that isn\'t a LocalPaint project now says what it is and what to do, instead of a confusing error.'] },
@@ -83,12 +92,12 @@ export const GUIDES: Guide[] = [
   },
   {
     id: 'about', title: 'About LocalPaint', cat: 'Start here',
-    sum: `LocalPaint v${VERSION}, owned by LeoDevRX.`,
+    sum: `Version ${VERSION} and who made it.`,
     tags: ['about', 'credits'], words: 'owner author made creator who license version leodevrx leo dev github copyright',
     body: [
       { p: `LocalPaint, version ${VERSION}.` },
       { p: 'This program is owned by **[LeoDevRX](https://github.com/LeoDevRX/LMP/commits?author=LeoDevRX)**.' },
-      { p: 'A personal and free alternative to paid material painting programs. Made with three.js and Electron.' },
+      { p: 'Made with three.js and Electron.' },
       { p: 'LocalPaint isn\'t made by, affiliated with or endorsed by Adobe. Substance, Substance 3D Painter and Substance 3D Designer are trademarks of Adobe; they\'re named only to say which files LocalPaint can open. LocalPaint doesn\'t include any Adobe software or Substance materials.' },
       { p: 'Scanned materials come from ambientCG and the HDR environments from Poly Haven, both CC0. Open-source licenses are in the licenses folder next to LocalPaint.exe.' },
     ],
@@ -118,26 +127,28 @@ export const GUIDES: Guide[] = [
     body: [
       { steps: [
         'Pick a model on the start screen, use File > Open model, or drag the model file into the 3D view.',
-        'New files use the texture size set in File > Settings (1024 unless you change it).',
+        'The New project window opens. Pick the project template (it sets the starting layers and the export template) and the document resolution.',
+        'Leave "Bake mesh maps after importing" on and LocalPaint bakes AO, curvature and the other mesh maps as soon as the model is in.',
+        'Under Advanced settings you can pick the normal map format (OpenGL or DirectX) and bring in mesh maps you already baked somewhere else.',
         'The model needs UVs. Unwrap it in Blender or similar first. If it has several materials they share one texture set.',
-        'Bake the mesh maps next, otherwise smart materials won\'t look right.',
       ] },
+      { tips: ['File > Export mesh saves the model back out as GLB (with your textures inside) or OBJ.'] },
     ],
     show: [{ label: 'Open the start window', act: 'open' }],
     related: ['baking', 'save-open'],
   },
   {
     id: 'save-open', title: 'Saving and opening projects', cat: 'Basics',
-    sum: 'Ctrl+S saves everything into one .lmp file.',
-    tags: ['save', 'open', 'file'], words: 'project lmp save as keep store recent reopen load double click',
+    sum: 'Ctrl+S saves everything into one .lp file.',
+    tags: ['save', 'open', 'file'], words: 'project lp lmp save as keep store recent reopen load double click',
     body: [
       { steps: [
         'Ctrl+S saves. The first time it asks where to put the file. Ctrl+Shift+S is Save as.',
-        'The file gets the model and texture set name and ends in .lmp. It holds the model, layers and masks.',
+        'The file gets the model and texture set name and ends in .lp. It holds the model, layers and masks.',
         'Ctrl+O opens a window with your recent projects and autosaves, plus a Browse button.',
-        'You can also double click an .lmp file in Windows to open it.',
+        'You can also double click an .lp file in Windows to open it.',
       ] },
-      { tips: ['If you close LocalPaint with unsaved changes it asks if you want to save first.'] },
+      { tips: ['If you close LocalPaint with unsaved changes it asks if you want to save first.', 'Projects from before v1.05 end in .lmp. They still open, and get saved as .lp.'] },
     ],
     show: [{ label: 'Recent projects', act: 'open' }],
     related: ['autosave'],
@@ -453,6 +464,12 @@ export const GUIDES: Guide[] = [
         'Bake the mesh maps first (Baking at the top right).',
         'Drag a smart mask from the shelf onto a layer, or choose one for the layer\'s mask in Properties.',
         'Move the sliders until it looks right.',
+      ] },
+      { h: 'Painter generators', p: 'Pick Painter generator as the mask type to get Dirt, Metal Edge Wear, Dust, Mask Editor, Mask Builder, Light, Position, Ambient Occlusion and Curvature with the same settings Substance Painter uses. Settings are grouped the same way (Texture, Ambient Occlusion, Curvature, World Space Normal…).' },
+      { tips: [
+        'Dirt Cavities, Dust Occlusion, Edges Uber, Rust, Surface Worn and the other smart masks at the top of the list are rebuilt from Painter\'s own settings.',
+        'Drop a Painter smart mask (.spmsk) onto LocalPaint and it comes in with its settings. It\'s added to Smart masks too.',
+        'Grunges are free CC0 scans that download the first time a mask uses one. Until then a pattern stands in for it.',
       ] },
     ],
     show: [{ label: 'Smart masks', act: 'shelf:mask', hl: '.shelf-sec', text: 'Smart masks' }],
@@ -1005,3 +1022,61 @@ export const TOURS: Record<string, TourStep[]> = {
     { at: '.menu.open button', has: 'Check for updates', t: 'Click Check for updates.', wait: 'click' },
   ],
 };
+
+// ------------------------------------------------------------------ "Did you know" suggestions (under the Guide search bar)
+
+/** A feature people often don't find on their own. Clicking it opens the guide `id`. */
+export interface GuideTip { text: string; id: string }
+
+export const GUIDE_TIPS: GuideTip[] = [
+  { text: 'You can open Substance .sbsar materials and smart materials straight from Painter.', id: 'substance-files' },
+  { text: 'Hold ~ and flick the mouse to jump to the front, back, side or top view.', id: 'view-pie' },
+  { text: 'Smart materials like rust and worn paint put wear on the edges by themselves.', id: 'smart-materials' },
+  { text: 'You can bake ambient occlusion, curvature and more right here, no other program needed.', id: 'baking' },
+  { text: 'There are export templates for Unity, Unreal, Godot, Blender, Roblox and lots more.', id: 'export' },
+  { text: 'You can make your own export template with exactly the maps your engine wants.', id: 'export' },
+  { text: 'Roblox SurfaceAppearance textures come out at the right size and layout with one click.', id: 'roblox' },
+  { text: 'Scanned materials are real photographed surfaces you can drop on your model.', id: 'scanned' },
+  { text: 'The Material Designer lets you build your own materials from nodes.', id: 'designer' },
+  { text: 'Mirror painting paints both sides of the model at once. Press X to turn it on.', id: 'symmetry' },
+  { text: 'Lazy mouse makes hand-drawn lines and outlines much cleaner.', id: 'lazy-mouse' },
+  { text: 'You can paint along a path and edit the curve afterwards.', id: 'path-tool' },
+  { text: 'Hold Shift and click to draw a straight line between two points.', id: 'straight-lines' },
+  { text: 'Drawing tablets work, and pen pressure can change size and strength.', id: 'pen-pressure' },
+  { text: 'Drag a material onto one part of the model and it only goes on that part.', id: 'drop-on-mesh' },
+  { text: 'Polygon fill (G) masks a whole part, a UV island or a face with one click.', id: 'poly-fill' },
+  { text: 'Anchor points make wear and dirt follow the details you painted by hand.', id: 'anchors' },
+  { text: 'A Shape generator puts a circle, star or heart on the model that you can drag around.', id: 'shapes' },
+  { text: 'Smart masks add edge wear, dirt in gaps or dust on top to any layer.', id: 'smart-masks' },
+  { text: 'Brush tips change the shape of every dab. A grunge tip looks like worn paint.', id: 'brush-tips' },
+  { text: 'You can save your favourite brush settings as presets.', id: 'brushes' },
+  { text: 'Ctrl + right-drag changes the brush size, Ctrl + left-drag the flow.', id: 'quick-adjust' },
+  { text: 'You can paint flat on the UVs in the 2D view (F3 or F4).', id: 'paint-2d' },
+  { text: 'Your own photos and textures can be used as materials, brush tips or masks.', id: 'import-images' },
+  { text: 'LocalPaint can show you where UVs overlap, the cause of strange dark spots.', id: 'uv-overlap' },
+  { text: 'The History panel lets you jump back to any step, not only the last one.', id: 'history' },
+  { text: 'Autosave keeps several backups, so lost work can usually be brought back.', id: 'autosave' },
+  { text: 'You can change the lighting and background to check your material.', id: 'display' },
+  { text: 'Every layer has its own blend mode and opacity, like in Painter.', id: 'layers' },
+  { text: 'LocalPaint updates itself when a new version is out.', id: 'updates' },
+  { text: 'Low performance mode makes LocalPaint run on older laptops.', id: 'performance' },
+  { text: 'There is a shortcut list for everything, Painter-style.', id: 'shortcuts' },
+  { text: 'Fill layers cover the whole model with a material, and a mask decides where it shows.', id: 'materials' },
+  { text: 'The eyedropper picks the whole material under the cursor, not just the colour.', id: 'picker' },
+  { text: 'Flow builds paint up slowly; stroke opacity caps how strong one stroke can get.', id: 'flow-opacity' },
+  { text: 'There is a quick tour of the screen on the Guide\'s home page.', id: 'getting-started' },
+  { text: 'File > Export mesh saves your model as a GLB with the textures already inside it.', id: 'open-model' },
+  { text: 'Painter\'s Dirt, Metal Edge Wear and Mask Editor generators are in LocalPaint, with the same settings.', id: 'smart-masks' },
+  { text: 'You can drop a Painter smart mask (.spmsk) straight onto LocalPaint.', id: 'smart-masks' },
+  { text: 'The New project window can bake the mesh maps for you as soon as the model is in.', id: 'open-model' },
+];
+
+/** The suggestions to show now. They change every hour (local time); `shift` shows the next set. */
+export function tipsNow(n = 3, shift = 0): GuideTip[] {
+  const slot = Math.floor((Date.now() - new Date().getTimezoneOffset() * 60000) / 3600000) + shift;
+  const a = GUIDE_TIPS.slice();
+  let h = (slot * 2654435761 + 17) >>> 0 || 1;
+  const rnd = () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a.slice(0, n);
+}

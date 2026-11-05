@@ -1,4 +1,4 @@
-// Bridge between LocalPaint.html and the app: presets folder, .lmp project files, importing files.
+// Bridge between LocalPaint.html and the app: presets folder, .lp project files, importing files.
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('texpaintNative', {
@@ -37,4 +37,6 @@ contextBridge.exposeInMainWorld('texpaintNative', {
   exportPickDir: (current) => ipcRenderer.invoke('export:pickDir', current),
   exportWrite: (dir, files) => ipcRenderer.invoke('export:write', dir, files),
   exportOpen: (dir) => ipcRenderer.invoke('export:open', dir),
+  grungeCatalog: () => ipcRenderer.invoke('grunge:catalog'),
+  grungeGet: (file) => ipcRenderer.invoke('grunge:get', file),
 });

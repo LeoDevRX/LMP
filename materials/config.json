@@ -178,31 +178,6 @@
       "count": 8
     },
     {
-      "cat": "chips",
-      "queries": [
-        "chip",
-        "chipped paint",
-        "paint peeling"
-      ],
-      "prefix": [
-        "Chip",
-        "PaintedMetal",
-        "PaintedPlaster"
-      ],
-      "count": 6
-    },
-    {
-      "cat": "rust",
-      "queries": [
-        "rust"
-      ],
-      "prefix": [
-        "Rust",
-        "Metal"
-      ],
-      "count": 6
-    },
-    {
       "cat": "concrete",
       "queries": [
         "concrete",
@@ -215,16 +190,26 @@
       "count": 6
     },
     {
-      "cat": "dust",
+      "cat": "rust",
       "queries": [
-        "dust",
-        "dirt",
-        "surface imperfections"
+        "rust",
+        "rusty metal",
+        "corroded"
       ],
       "prefix": [
-        "SurfaceImperfections",
-        "Ground",
-        "Smear"
+        "Rust",
+        "Metal0",
+        "Metal1"
+      ],
+      "exclude": [
+        "MetalWalkway",
+        "MetalPlates"
+      ],
+      "tags": [
+        "rust",
+        "rusty",
+        "corroded",
+        "corrosion"
       ],
       "count": 6
     }

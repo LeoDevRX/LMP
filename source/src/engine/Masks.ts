@@ -1,7 +1,9 @@
 /** Mask generators: procedural masks driven by the baked mesh maps. */
 import { GLSL_NOISE, PatternType } from './Procedural';
+import { SpSettings, SpInput, spDefaults, spFromPainter } from './PainterGen';
+import { PAINTER_RECIPES } from './painterRecipes';
 
-export type GenType = 'edge' | 'dirt' | 'ao' | 'gradient' | 'dust' | 'noise' | 'curvature' | 'thick' | 'id' | 'pattern' | 'shape';
+export type GenType = 'edge' | 'dirt' | 'ao' | 'gradient' | 'dust' | 'noise' | 'curvature' | 'thick' | 'id' | 'pattern' | 'shape' | 'painter';
 /** Shapes for the Shape generator. */
 export type ShapeKind = 'circle' | 'square' | 'rounded' | 'triangle' | 'star' | 'hexagon' | 'diamond' | 'ring' | 'heart' | 'cross'
   | 'capsule' | 'crescent' | 'brick' | 'paraboloid' | 'bell' | 'gaussian' | 'thorn' | 'pyramid' | 'cone' | 'gradation' | 'waves';
@@ -68,6 +70,8 @@ export interface GenSettings {
   fx?: MaskFx[];
   /** Invert the whole stack at the end. */
   outInvert?: boolean;
+  /** type 'painter': a Substance Painter-style generator (Dirt, Metal Edge Wear, Mask Editor…) with Painter's parameters. */
+  sp?: SpSettings;
 }
 
 export const GEN_LABEL: Record<GenType, string> = {
@@ -82,9 +86,10 @@ export const GEN_LABEL: Record<GenType, string> = {
   id: 'ID color selection',
   pattern: 'Procedural pattern',
   shape: 'Shape (circle, star…)',
+  painter: 'Painter generator',
 };
 export const GEN_TYPES = Object.keys(GEN_LABEL) as GenType[];
-const GEN_INDEX: Record<GenType, number> = { edge: 0, dirt: 1, ao: 2, gradient: 3, dust: 4, noise: 5, curvature: 6, thick: 8, id: 7, pattern: 9, shape: 10 };
+const GEN_INDEX: Record<GenType, number> = { edge: 0, dirt: 1, ao: 2, gradient: 3, dust: 4, noise: 5, curvature: 6, thick: 8, id: 7, pattern: 9, shape: 10, painter: 11 };
 
 export function defaultGen(type: GenType): GenSettings {
   const base: GenSettings = {
@@ -103,6 +108,7 @@ export function defaultGen(type: GenType): GenSettings {
     case 'id': return { ...base, amount: 1, contrast: 1, noise: 0, colors: [], tolerance: 0.1 };
     case 'pattern': return { ...base, amount: 0.5, contrast: 1 / 3, noise: 0, pattern: 'grunge', scale: 3 };
     case 'shape': return { ...base, amount: 1, contrast: 0.9, noise: 0, shape: 'circle', shapeSize: 0.2, shapeAspect: 1, shapeRot: 0 };
+    case 'painter': return { ...base, amount: 1, contrast: 1, noise: 0, sp: spDefaults('dirt') };
   }
 }
 
@@ -336,7 +342,7 @@ const DIRT = (l: number, s: number, n: number) => tg('ao', l, s, n); // TextureC
 const UPF = (l: number, s: number, n: number, inv = false) => tg('dust', l, s, n, { axis: 'y', flip: false, invert: inv });
 const GROUND = (l: number, s: number, n: number) => tg('gradient', l * 0.7, s * 0.6, n, { axis: 'y', flip: true });
 
-export interface SmartMaskPreset { id: string; label: string; build: () => GenSettings }
+export interface SmartMaskPreset { id: string; label: string; build: () => GenSettings; painter?: boolean }
 const stack = (base: GenSettings, ...rest: MaskFx[]): GenSettings => ({ ...base, fx: rest.length ? rest : undefined });
 export const SMART_MASKS: SmartMaskPreset[] = [
   { id: 'edge_wear', label: 'Edges Worn', build: () => EDGE(0.55, 0.12, 0.5) },
@@ -369,6 +375,23 @@ export const SMART_MASKS: SmartMaskPreset[] = [
   { id: 'cavity_grime', label: 'Cavity Grime', build: () => stack(tg('dirt', 0.55, 0.15, 0.6), fx(tp('grunge', 4, 44, 1.2), 'multiply', 0.8)) },
   { id: 'worn_paint_blotches', label: 'Worn Paint Blotches', build: () => stack(tp('grunge', 2.5, 45, 1.3), fx(EDGE(0.55, 0.15, 0.5), 'lighten')) },
 ];
+/** Painter's mask-stack blending codes → LocalPaint's mask effect blends. */
+export const PAINTER_FX_BLEND: Record<number, FxBlend> = { 2: 'normal', 4: 'multiply', 7: 'darken', 8: 'lighten', 9: 'add', 10: 'add', 5: 'subtract', 12: 'difference', 14: 'overlay', 15: 'screen', 16: 'overlay' };
+/** A Painter mask stack (bottom → top) as one LocalPaint mask. */
+export function painterStack(effects: { res: string; proj?: number; blend: number; opacity: number; tw: Record<string, any>; inputs?: Record<string, SpInput> }[]): GenSettings | null {
+  const list = effects.map((e) => ({ e, sp: spFromPainter(e.res, e.tw, e.inputs ?? {}, e.proj) }));
+  if (!list.length) return null;
+  const [first, ...rest] = list;
+  // The bottom fill's opacity scales it over the black mask, like in Painter.
+  const base = { ...defaultGen('painter'), seed: 7, sp: first.sp, blend: 'normal', opacity: Math.max(0, Math.min(1, first.e.opacity)) } as MaskFx;
+  const fx: MaskFx[] = rest.map(({ e, sp }) => ({ ...defaultGen('painter'), seed: 7, sp, blend: PAINTER_FX_BLEND[e.blend] ?? 'normal', opacity: Math.max(0, Math.min(1, e.opacity)) }));
+  return stack(base, ...fx);
+}
+const PAINTER_SMART: SmartMaskPreset[] = PAINTER_RECIPES.map((r) => ({
+  id: 'sp_' + r.name.toLowerCase().replace(/[^a-z0-9]+/g, '_'), label: r.name, painter: true,
+  build: () => painterStack(r.effects)!,
+}));
+SMART_MASKS.unshift(...PAINTER_SMART);
 export const findSmartMask = (id: string) => SMART_MASKS.find((m) => m.id === id || m.label.toLowerCase() === id.toLowerCase());
 /** A preset as mask settings (fresh copy); `invert` keeps the layer where the preset is not. */
 export function smartMask(id: string, invert = false): GenSettings {

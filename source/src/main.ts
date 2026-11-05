@@ -10,6 +10,8 @@ import {
 import { BrushPreset, BrushSettings, BUILTIN_TIPS, STARTER_BRUSHES, builtinTip, builtinTipThumb, imageTip, tipTexture, tipPreview } from './brushes';
 import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings, SHAPE_KINDS, SHAPE_LABEL, ShapeKind, MICRO_TYPES } from './engine/Masks';
 import { PATTERNS, PATTERN_LABEL, PatternType } from './engine/Procedural';
+import { GrungeLib } from './engine/GrungeLib';
+import { SP_DEFS, SP_KINDS, SpKind, SpParam, spDefaults, GRUNGE_CATS, GRUNGE_CAT_LABEL, parseGrungeRef } from './engine/PainterGen';
 import { MeshParts, PartMode, PART_LABEL, Part } from './engine/MeshParts';
 import { MaterialPreset, PresetShelf, ShelfItem , isDesktopApp, openNativePresets , splitMapName, MapSlot } from './engine/Presets';
 import { imageTexture } from './engine/images';
@@ -18,6 +20,8 @@ import { SmartPreview } from './engine/SmartPreview';
 import { findUVOverlaps, overlapTexture, overlapMesh, UVOverlap } from './engine/UVOverlap';
 import { BUILTINS, BuiltinId, LoadedModel, MODEL_EXTS, builtinModel, parseModel, demoHighPoly } from './engine/ModelLoader';
 import { saveFiles, downloadBlob, pixelsToPng } from './engine/Exporter';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import {
   ExportState, ExportTemplate, OutMap, ExpSrc, SrcInfo, MapMode, FileType, PadMode, Pix, SOURCES, MODE_SLOTS, PAD_LABEL, TEMPLATE_GROUPS, DEFAULT_EXPORT,
   loadExportState, saveExportState, allTemplates, fileName, channelsOf, compose, nearestFill, pad, encodePNG, encodeTGA, encodeJPG,
@@ -32,16 +36,16 @@ import SCAN_PREVIEWS from './assets/scanPreviews.json';
 import { libraryMaterials } from './materialLib';
 import { VERSION } from './version';
 import { Settings, loadSettings, saveSettings, weakComputer } from './settings';
-import { GUIDES, CATS, Guide, GuideShow, searchGuides, guideById, fmt as guideFmt, TOURS, TourStep } from './guide';
+import { GUIDES, CATS, Guide, GuideShow, searchGuides, guideById, tipsNow, fmt as guideFmt, TOURS, TourStep } from './guide';
 import { loadThumbs, saveThumb, flush as flushThumbs } from './thumbCache';
 import iconSmall from './assets/localpaint-32.png?inline';
 import iconBig from './assets/localpaint-256.png?inline';
 import { Designer } from './designer/DesignerUI';
 import { GraphRunner, GraphJSON, OUTPUT_CHANNELS, presetGraphs } from './designer/Graph';
-import { translateSpsm, Translation, SpNode } from './engine/SubstanceReader';
+import { translateSpsm, translateSpmsk, Translation, SpNode } from './engine/SubstanceReader';
 import { SBS_FILES, SBS_LOADED, SbsGraph, SbsParam, SbsState, SbsFeed, FEED_LABEL, registerSbs, newSbsState, graphOf, stateKey, visible, cliValue, isGlossy, readSbsPackage } from './engine/Substance';
 import { SbsNativeRunner, nativeFor } from './engine/SbsNative';
-import { el, slider, select, hexToRgb, rgbToHex, toast, pickFile, ICON2 as I } from './ui';
+import { el, slider, select, hexToRgb, rgbToHex, toast, pickFile, pickFiles, ICON2 as I } from './ui';
 
 const RESOLUTIONS = [512, 1024, 2048, 4096];
 const RES_LABEL = (r: number) => (r >= 1024 ? `${r / 1024}K` : `${r}`) + ` (${r} × ${r})`;
@@ -120,10 +124,13 @@ class App {
   };
   shelf = new PresetShelf();
   thumbs = new ThumbRenderer();
+  /** CC0 grunge library used by the Painter-style generators. */
+  grunges = new GrungeLib((window as any).texpaintNative);
+  private grungeCount(cat: string) { return this.grunges.count(cat); }
   /** Runs smart materials for real on a preview shape (made on first use). */
   private smartPrev: SmartPreview | null = null;
   private get smartPreview() {
-    if (!this.smartPrev) { this.smartPrev = new SmartPreview(this.gpu, this.settings.lowPerf ? 128 : 256); this.smartPrev.graphBaker = (g) => this.bakeGraph(g); this.smartPrev.scanResolver = (r) => this.scanImages(r); }
+    if (!this.smartPrev) { this.smartPrev = new SmartPreview(this.gpu, this.settings.lowPerf ? 128 : 256); this.smartPrev.graphBaker = (g) => this.bakeGraph(g); this.smartPrev.scanResolver = (r) => this.scanImages(r); this.smartPrev.grungeResolver = (r) => this.grunges.resolve(r); }
     return this.smartPrev;
   }
   private smartThumb(key: string, sm: any): Promise<string> {
@@ -214,7 +221,7 @@ class App {
   constructor() {
     // App icon: tab / window icon, the logo in the menu bar and on the loading screen.
     { const v = document.getElementById('brand-ver'); if (v) v.textContent = 'v' + VERSION; }
-    { const v = document.getElementById('splash-ver'); if (v) v.textContent = `v${VERSION} · owned by LeoDevRX`; }
+    { const v = document.getElementById('splash-ver'); if (v) v.textContent = `v${VERSION}`; }
     const fav = document.createElement('link'); fav.rel = 'icon'; fav.href = iconSmall; document.head.append(fav);
     document.querySelectorAll<HTMLElement>('.logo').forEach((e) => (e.style.backgroundImage = `url(${iconSmall})`));
     document.querySelectorAll<HTMLElement>('.splash-logo').forEach((e) => (e.style.backgroundImage = `url(${iconBig})`));
@@ -269,6 +276,7 @@ class App {
     this.ts = new TextureSet(this.gpu, model.geometries, res);
     this.ts.graphBaker = (g) => this.bakeGraph(g);
     this.ts.scanResolver = (r) => this.scanImages(r);
+    this.ts.grungeResolver = (r) => this.grunges.resolve(r);
     this.ts.onBakeStage = (k, st) => this.onBakeStage(k, st);
     if (bake) this.ts.bakeSettings = { ...bake };
     if (hs !== undefined) this.ts.heightStrength = hs;
@@ -341,14 +349,101 @@ class App {
     this.sel.clear();
   }
 
+  /** Opening a model goes through the New project window (like Painter's). */
   async openModelFile(file: File) {
     if (!(await this.confirmUnsaved('Load a new model anyway?'))) return;
+    await this.newProjectDialog(file);
+  }
+
+  /** Project-wide normal map format (New project window); affects imported normal maps and the default export. */
+  normalFormat: 'gl' | 'dx' = 'gl';
+
+  /** Painter-style New project window: mesh, template, resolution, normal format, baked maps to import. */
+  async newProjectDialog(file: File | null = null) {
+    const np = { ...this.settings.newProj };
+    let mesh = file;
+    const baked: { file: File; key: BakeKey }[] = [];
+    const guessKey = (n: string): BakeKey => {
+      const s = n.toLowerCase();
+      return /ambient|occlusion|_ao\b|\bao\b/.test(s) ? 'ao' : /curv/.test(s) ? 'curv' : /world.?space|wsn|_ws_?normal|normal_?ws/.test(s) ? 'wsn'
+        : /position|_pos\b/.test(s) ? 'pos' : /thick/.test(s) ? 'thick' : /\bid\b|_id\b|color_?id|material_?id/.test(s) ? 'id' : /height|displac/.test(s) ? 'height' : 'normal';
+    };
+    const KEYS: [BakeKey, string][] = [['ao', 'Ambient occlusion'], ['curv', 'Curvature'], ['normal', 'Normal'], ['wsn', 'World space normal'], ['pos', 'Position'], ['thick', 'Thickness'], ['id', 'ID'], ['height', 'Height']];
+    const sizes = [512, 1024, 2048, 4096].filter((s) => !this.settings.lowPerf || s <= 1024);
+    let res = this.newFileSize();
+    const meshName = el('span', { class: 'np-file' }, mesh ? mesh.name : 'No mesh selected');
+    const list = el('div', { class: 'np-list' });
+    const drawList = () => {
+      list.innerHTML = '';
+      if (!baked.length) list.append(el('p', { class: 'muted' }, 'None. LocalPaint can bake them for you instead.'));
+      baked.forEach((b, i) => list.append(el('div', { class: 'np-row' }, el('span', { class: 'np-file' }, b.file.name),
+        select<BakeKey>(KEYS.map(([k, l]) => ({ value: k, label: l })), b.key, (v) => { b.key = v; }),
+        el('button', { class: 'exp-ib', title: 'Remove', onclick: () => { baked.splice(i, 1); drawList(); } }, '×'))));
+    };
+    drawList();
+    const autoBake = el('input', { type: 'checkbox', checked: np.autoBake }) as HTMLInputElement;
+    const info = (t: string) => el('span', { class: 'np-info', title: t }, 'i');
+    const row = (label: string, tip: string, ...c: (HTMLElement | null)[]) => el('div', { class: 'np-field' }, el('label', {}, label), el('div', { class: 'np-ctl' }, ...c), info(tip));
+    const TEMPLATES: [string, string, string][] = [
+      ['pbr', 'PBR – Metallic Roughness', 'pbr-gl'], ['roblox', 'Roblox (SurfaceAppearance)', 'roblox'], ['unity', 'Unity (URP)', 'unity-urp'],
+      ['unreal', 'Unreal Engine (packed)', 'unreal'], ['godot', 'Godot 4', 'godot'], ['blender', 'Blender', 'blender'], ['empty', 'Empty (one paint layer)', 'pbr-gl'],
+    ];
+    if (!TEMPLATES.some(([v]) => v === np.template)) np.template = 'pbr';
+    const resSel = select<number>(sizes.map((s) => ({ value: s, label: `${s} x ${s}` })), sizes.includes(res) ? res : sizes[sizes.length - 1], (v) => { res = v; });
+    const tplSel = select<string>(TEMPLATES.map(([v, l]) => ({ value: v, label: l })), np.template, (v) => {
+      np.template = v as typeof np.template;
+      if (v === 'roblox' && res > 1024) { res = 1024; resSel.value = '1024'; }
+    });
+    const bakedBox = el('details', { class: 'np-sub' }, el('summary', {}, 'Import baked maps'),
+      el('p', { class: 'muted' }, 'Mesh maps you already baked in Painter, Marmoset or Blender. LocalPaint guesses each one\'s type from its name.'),
+      list, el('button', { onclick: async () => {
+        const fs = await pickFiles('.png,.jpg,.jpeg,.tga,.webp');
+        for (const f of fs) baked.push({ file: f, key: guessKey(f.name) });
+        drawList();
+      } }, 'Add…'));
+    const adv = el('details', { class: 'np-adv' }, el('summary', {}, 'Advanced settings'),
+      row('Normal map format', 'Which way the green channel of normal maps points. OpenGL: Blender, Unity, Godot, Roblox. DirectX: Unreal, 3ds Max.',
+        select<string>([{ value: 'gl', label: 'OpenGL' }, { value: 'dx', label: 'DirectX' }], np.normal, (v) => { np.normal = v as 'gl' | 'dx'; })),
+      bakedBox) as HTMLDetailsElement;
+    adv.open = true;
+    const content = el('div', { class: 'np' },
+      el('div', { class: 'np-h' }, 'Basic settings'),
+      row('3D mesh', 'The model to paint (FBX, OBJ, glTF / GLB).', meshName, el('button', { class: 'np-select', onclick: async () => { const f = await pickFile(MODEL_EXTS.map((e) => '.' + e).join(',')); if (f) { mesh = f; meshName.textContent = f.name; meshName.classList.remove('none'); } } }, 'Select…')),
+      row('Project template', 'Starting layers and which export template the project uses.', tplSel),
+      row('Document resolution (px)', 'Size of the textures you paint. You can change it later in Texture set settings.', resSel),
+      el('label', { class: 'check-row np-check', title: 'Bakes ambient occlusion, curvature, world space normal, position, thickness and ID. Smart masks and generators need them.' }, autoBake, ' Bake mesh maps after importing'),
+      adv);
+    if (!mesh) meshName.classList.add('none');
+    for (;;) {
+      const r = await this.modal({ title: 'New project', text: '', icon: 'info', wide: true, content, buttons: [['Create', 'ok', 'primary'], ['Cancel', 'cancel']] });
+      if (r !== 'ok') return;
+      if (mesh) break;
+      toast('Select a 3D mesh first', true);
+    }
+    np.autoBake = autoBake.checked;
+    this.settings.newProj = np; saveSettings(this.settings);
     try {
-      toast(`Loading ${file.name}…`);
-      const m = await parseModel(file.name, await file.arrayBuffer());
-      this.setModel(m, this.newFileSize());
-      this.newDefaultLayers();
-      toast(`Loaded ${file.name}`);
+      toast(`Loading ${mesh!.name}…`);
+      const m = await parseModel(mesh!.name, await mesh!.arrayBuffer());
+      this.setModel(m, res);
+      if (np.template === 'empty') { this.ts.addPaintLayer('Layer 1'); this.ts.clearHistory(); this.sel.clear(); }
+      else this.newDefaultLayers();
+      this.normalFormat = np.normal;
+      this.exportPreset = TEMPLATES.find(([v]) => v === np.template)?.[2] ?? 'pbr-gl';
+      if (np.normal === 'dx' && this.exportPreset === 'pbr-gl') this.exportPreset = 'pbr-dx';
+      if (this.exp) this.exp.template = this.exportPreset;
+      for (const b of baked) {
+        try {
+          const tex = await imageTexture(await b.file.arrayBuffer(), b.file.name);
+          this.ts.importMeshMap(b.key, tex, b.key === 'normal' && np.normal === 'dx');
+          tex.dispose();
+        } catch (e) { console.warn(e); toast(`Couldn't use ${b.file.name}`, true); }
+      }
+      if (baked.length) { this.applyViews(); this.updateBakeStatus(); this.sbsMeshStamp++; }
+      this.buildAll();
+      toast(`Loaded ${mesh!.name}`);
+      const missing = (['ao', 'curv', 'wsn', 'pos'] as BakeKey[]).filter((k) => !this.ts.baked.has(k));
+      if (np.autoBake && missing.length) setTimeout(() => void this.startBake(), 300);
     } catch (e: any) {
       console.error(e);
       toast(e?.message ?? 'Could not load model', true);
@@ -369,7 +464,7 @@ class App {
 
   private projectSettings() {
     return {
-      brush: this.brush, brushTipPng: this.brush.tip ? this.tipPng.get(this.brush.tip) : undefined, exportPreset: this.exportPreset,
+      brush: this.brush, brushTipPng: this.brush.tip ? this.tipPng.get(this.brush.tip) : undefined, exportPreset: this.exportPreset, normalFormat: this.normalFormat,
       heightStrength: this.ts.heightStrength, bake: this.ts.bakeSettings, high: this.ts.highSettings,
     };
   }
@@ -406,7 +501,7 @@ class App {
   async confirmUnsaved(action: string): Promise<boolean> {
     if (!this.modified) return true;
     const r = await this.modal({
-      title: `Save changes to “${this.projectName()}.lmp”?`,
+      title: `Save changes to “${this.projectName()}.lp”?`,
       text: `You have unsaved changes. ${action}`, icon: 'warn',
       buttons: [['Save', 'save', 'primary'], ["Don't save", 'discard', 'danger'], ['Cancel', 'cancel']],
     });
@@ -421,7 +516,7 @@ class App {
     if (!this.modified) { native.quit(); return; }
     const r = await this.modal({
       title: 'Quit LocalPaint?',
-      text: `“${this.projectName()}.lmp” has unsaved changes. Save them before quitting?`, icon: 'warn',
+      text: `“${this.projectName()}.lp” has unsaved changes. Save them before quitting?`, icon: 'warn',
       buttons: [['Save now', 'save', 'primary'], ['Quit without saving', 'discard', 'danger'], ['Cancel', 'cancel']],
     });
     if (r === 'save') { await this.saveProject(false); if (!this.modified) native.quit(); }
@@ -580,12 +675,22 @@ class App {
       el('div', { class: 'guide-title' }, el('span', { class: 'guide-ico' }, '?'), el('b', {}, 'Guide'), el('span', { class: 'grow' }),
         el('button', { class: 'guide-x', title: 'Close (Esc / F1)', onclick: () => this.closeGuide() }, '×')),
       el('div', { class: 'guide-search' }, input));
+    const tips = el('div', { class: 'guide-dyk' });
+    const drawTips = () => {
+      tips.innerHTML = '';
+      tips.append(el('div', { class: 'guide-dyk-h' }, el('span', {}, 'Did you know?'),
+        el('button', { class: 'guide-dyk-more', title: 'Show other ones (they also change every hour)', onclick: () => { this.guideTipShift++; drawTips(); } }, '↻')));
+      for (const t of tipsNow(3, this.guideTipShift)) tips.append(el('button', { class: 'guide-dyk-item', onclick: () => this.guideGo(t.id) }, t.text));
+    };
+    drawTips();
+    head.append(tips);
     p.append(head, body);
     const show = () => {
       body.innerHTML = '';
       body.scrollTop = 0;
       const id = this.guideStack[this.guideStack.length - 1];
       const g = id ? guideById(id) : undefined;
+      tips.style.display = g || this.guideQuery.trim() ? 'none' : '';
       if (g) this.renderGuidePage(body, g);
       else if (this.guideQuery.trim()) this.renderGuideResults(body, this.guideQuery);
       else this.renderGuideHome(body);
@@ -597,6 +702,8 @@ class App {
     });
     show();
   }
+
+  private guideTipShift = 0;
 
   private guideRow(g: Guide, sub = true) {
     return el('button', { class: 'guide-row', onclick: () => this.guideGo(g.id) }, el('b', {}, g.title), sub ? el('span', {}, g.sum) : null);
@@ -621,7 +728,6 @@ class App {
       body.append(el('h4', {}, c), ...list.map((g) => this.guideRow(g, false)));
     }
     body.append(el('h4', {}, 'About'), this.guideRow(guideById('about')!, true));
-    body.append(el('div', { class: 'guide-credit' }, `LocalPaint v${VERSION} · owned by LeoDevRX`));
   }
 
   private renderGuideResults(body: HTMLElement, q: string) {
@@ -663,7 +769,6 @@ class App {
     }
     const rel = (g.related ?? []).map(guideById).filter(Boolean) as Guide[];
     if (rel.length) body.append(el('h4', {}, 'Related'), ...rel.map((r) => this.guideRow(r)));
-    if (g.id === 'about' || g.id === 'getting-started') body.append(el('div', { class: 'guide-credit' }, `LocalPaint v${VERSION} · owned by LeoDevRX`));
   }
 
   /** "Show me": do the thing (switch tool, open a panel…) and point at it. */
@@ -897,7 +1002,7 @@ class App {
       tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
       pane.innerHTML = '';
       if (t === 'recent') {
-        if (!recent.length) pane.append(el('p', { class: 'note' }, 'No recent projects yet. Saved .lmp files show up here.'));
+        if (!recent.length) pane.append(el('p', { class: 'note' }, 'No recent projects yet. Saved .lp files show up here.'));
         for (const r of recent) pane.append(card(r.thumb, r.name, `${r.path} · ${when(r.time)}`, async () => {
           close(); if (await this.confirmUnsaved('Open this project anyway?')) this.openProjectFromPath(r.path);
         }));
@@ -916,7 +1021,7 @@ class App {
     tabs.append(el('span', { class: 'grow' }), el('button', { class: 'lmp-btn', onclick: async () => {
       close();
       if (native?.openProject) { if (!(await this.confirmUnsaved('Open another project anyway?'))) return; const r = await native.openProject(); if (r) await this.openProjectFromPath(r.path, r.data); }
-      else { const f = await pickFile('.lmp,.tpaint'); if (f) this.openProjectFile(f); }
+      else { const f = await pickFile('.lp,.lmp,.tpaint'); if (f) this.openProjectFile(f); }
     } }, 'Browse…'));
     const models = el('div', { class: 'start-models' });
     for (const b of BUILTINS) {
@@ -933,7 +1038,7 @@ class App {
       el('div', { class: 'lmp-modal-head' }, el('span', { class: 'lmp-modal-logo', style: { backgroundImage: `url(${iconSmall})` } }), el('span', {}, 'LocalPaint'), el('span', { class: 'grow' }),
         el('button', { class: 'start-x', title: 'Close (Esc)', onclick: close }, '×')),
       el('div', { class: 'start-body' },
-        el('div', { class: 'start-left' }, logo, el('h2', {}, "LocalPaint"), el('div', { class: 'start-ver' }, `v${VERSION} · owned by LeoDevRX`),
+        el('div', { class: 'start-left' }, logo, el('h2', {}, "LocalPaint"), el('div', { class: 'start-ver' }, `v${VERSION}`),
           el('h4', {}, 'New file'), models,
           el('button', { class: 'lmp-btn guide-btn', onclick: () => { close(); this.openGuide('getting-started'); } }, 'Getting started')),
         el('div', { class: 'start-right' }, tabs, pane)),
@@ -1015,10 +1120,10 @@ class App {
   projectPath = '';
   private projectName() { return this.projectPath ? this.projectPath.split(/[\\/]/).pop()!.replace(/\.(lmp|tpaint)$/i, '') : (this.model?.name || 'Untitled'); }
   updateTitle() {
-    document.title = `${this.modified ? '• ' : ''}${this.projectName()}.lmp — LocalPaint`;
+    document.title = `${this.modified ? '• ' : ''}${this.projectName()}.lp — LocalPaint`;
   }
 
-  /** Save the project as a .lmp file (Ctrl+S); `saveAs` always asks where (Ctrl+Shift+S). */
+  /** Save the project as a .lp file (Ctrl+S); `saveAs` always asks where (Ctrl+Shift+S). */
   async saveProject(saveAs = false) {
     const name = this.projectName();
     const native = (window as any).texpaintNative;
@@ -1028,18 +1133,18 @@ class App {
         const p = await native.saveProject(name, await blob.arrayBuffer(), this.projectPath || null, saveAs);
         if (!p) return;
         this.projectPath = p;
-        native.recentAdd?.(p, p.split(/[\\/]/).pop()!.replace(/\.lmp$/i, ''), this.snapshotThumb());
+        native.recentAdd?.(p, p.split(/[\\/]/).pop()!.replace(/\.(lp|lmp)$/i, ''), this.snapshotThumb());
         this.modified = false;
         this.updateTitle();
         toast(`Saved ${p.split(/[\\/]/).pop()}`);
         return;
       }
-      const fileName = `${name}.lmp`;
+      const fileName = `${name}.lp`;
       const picker = (window as any).showSaveFilePicker;
       if (picker) {
         const h = await picker({
           suggestedName: fileName, id: 'lmp-project',
-          types: [{ description: 'LocalPaint project', accept: { 'application/json': ['.lmp'] } }],
+          types: [{ description: 'LocalPaint project', accept: { 'application/json': ['.lp'] } }],
         });
         const w = await h.createWritable();
         await w.write(blob); await w.close();
@@ -1065,7 +1170,7 @@ class App {
       if (r) await this.openProjectFromPath(r.path, r.data);
       return;
     }
-    const f = await pickFile('.lmp,.tpaint');
+    const f = await pickFile('.lp,.lmp,.tpaint');
     if (f) this.openProjectFile(f);
   }
 
@@ -1075,7 +1180,7 @@ class App {
       checkProjectFileName(path);
       if (!data) data = (await native.readProject(path)).data as ArrayBuffer;
       await this.openProjectText(new TextDecoder().decode(data));
-      this.projectPath = /\.lmp$/i.test(path) ? path : '';
+      this.projectPath = /\.lp$/i.test(path) ? path : '';
       this.updateTitle();
       if (this.projectPath) setTimeout(() => native?.recentAdd?.(path, this.projectName(), this.snapshotThumb()), 800);
       toast(`Opened ${path.split(/[\\/]/).pop()}`);
@@ -1094,7 +1199,7 @@ class App {
       if (files.length) await this.dropFiles(files);
       return;
     }
-    const f = await pickFile('.lmp,.tpaint,.glb,.gltf,.fbx,.obj,.hdr,.sbsar,.spsm,.tpsmart,.tpmat,.tptex,.tpbrush,.tpgraph,.png,.jpg,.jpeg,.webp');
+    const f = await pickFile('.lp,.lmp,.tpaint,.glb,.gltf,.fbx,.obj,.hdr,.sbsar,.spsm,.spmsk,.tpsmart,.tpmat,.tptex,.tpbrush,.tpgraph,.png,.jpg,.jpeg,.webp');
     if (f) await this.openAny(f);
   }
 
@@ -1121,6 +1226,7 @@ class App {
       if (!this.brush.values.emit) this.brush.values.emit = [0.2, 0.9, 1];
     }
     if (s.exportPreset) this.exportPreset = s.exportPreset;
+    this.normalFormat = s.normalFormat === 'dx' ? 'dx' : 'gl';
     this.modified = false;
     this.buildAll();
   }
@@ -1149,13 +1255,13 @@ class App {
       if (this.mode === 'bake') return this.loadHighPoly(file);
       return this.openModelFile(file);
     }
-    if (ext === 'tpaint' || ext === 'lmp') return this.openProjectFile(file);
+    if (ext === 'lp' || ext === 'tpaint' || ext === 'lmp') return this.openProjectFile(file);
     if (ext === 'hdr') {
       try { await this.vp.loadHDR(file); this.buildFlyout(); toast(`Environment: ${file.name}`); }
       catch { toast('Could not read that HDR file', true); }
       return;
     }
-    if (ext === 'sbsar' || ext === 'spsm') { await this.translateSubstance([file]); return; }
+    if (ext === 'sbsar' || ext === 'spsm' || ext === 'spmsk') { await this.translateSubstance([file]); return; }
     if (['tpsmart', 'tpmat', 'tptex', 'tpbrush', 'png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
       await this.shelf.addFiles([file]);
       this.buildShelf();
@@ -1208,6 +1314,13 @@ class App {
     else if (this.settings.startScreen && this.native) this.openWindow('recent');
     if (this.settings.checkUpdates) setTimeout(() => this.checkForUpdates(false), 2500);
     void this.findSbsEngine().then(() => this.loadSbsLibrary());
+    this.grunges.onLoad = () => {
+      // A grunge arrived: masks with Painter generators render again with the real texture.
+      this.ts.grungeVersion++;
+      for (const l of this.ts.allLayers) if (l.mask?.gen && JSON.stringify(l.mask.gen).includes('"sp"')) this.ts.maskChanged(l);
+      if (this.smartPrev) this.smartPrev.grungeVersion++;
+    };
+    void this.grunges.loadCatalog();
     this.sbsTimer = window.setInterval(() => this.sbsTick(), 120);
   }
 
@@ -1753,7 +1866,7 @@ class App {
     }
     let files = all.filter((f) => !projects.includes(f));
     if (!files.length) return;
-    const sub = files.filter((f) => /\.(sbsar|spsm)$/i.test(f.name));
+    const sub = files.filter((f) => /\.(sbsar|spsm|spmsk)$/i.test(f.name));
     if (sub.length) { await this.translateSubstance(sub); files = files.filter((f) => !sub.includes(f)); if (!files.length) return; }
     const imgs = files.filter((f) => /\.(png|jpe?g|webp|bmp|tga|tiff?)$/i.test(f.name));
     if (imgs.length && imgs.length === files.length) { await this.importImages(imgs); return; }
@@ -2833,6 +2946,7 @@ class App {
         ['Import…', () => this.importDialog(), 'Ctrl+I'],
         '-',
         ['Export textures…', () => this.openExport(), 'Ctrl+Shift+E'],
+        ['Export mesh…', () => this.exportMeshDialog()],
         '-',
         ['Settings…', () => this.openSettings()],
         ['Check for updates…', () => this.checkForUpdates(true)],
@@ -3016,7 +3130,7 @@ class App {
   private buildStatus() {
     const m = this.model;
     document.getElementById('status-model')!.textContent =
-      `LocalPaint v${VERSION} · ${m.name} · ${m.triangles.toLocaleString()} tris · ${this.ts.size}×${this.ts.size}`;
+      `${m.name} · ${m.triangles.toLocaleString()} tris · ${this.ts.size}×${this.ts.size}`;
     document.getElementById('status-hints')!.textContent = this.mode === 'bake'
       ? 'Baking mode · RMB orbit · MMB pan · Wheel zoom · Esc back to painting'
       : 'LMB paint · RMB / Alt+LMB orbit · MMB pan · Wheel zoom · [ ] size · B/E/P tools · F2/F3/F4 layout · 1–0 views · hold ~ camera views · M mask · F1 Guide';
@@ -3491,7 +3605,7 @@ class App {
     }
     if (it.kind === 'graph') { this.setMode('design'); await this.designer.open(it.graph); this.designLinked = -1; this.buildProperties(); toast(`Opened graph “${it.name}” — click Add as fill layer to use it`); return; }
     if (it.kind === 'unsupported') {
-      if (/\.(sbsar|spsm)$/i.test(it.file) && it.src) { await this.translateSubstance([await it.src()]); return; }
+      if (/\.(sbsar|spsm|spmsk)$/i.test(it.file) && it.src) { await this.translateSubstance([await it.src()]); return; }
       toast(`${it.reason} can't be translated (only .sbsar materials and .spsm smart materials can).`, true);
       return;
     }
@@ -3554,6 +3668,19 @@ class App {
       toast(`Reading ${f.name}…`);
       try {
         const bytes = new Uint8Array(await f.arrayBuffer());
+        if (/\.spmsk$/i.test(f.name)) {
+          // A Painter smart mask: its generators and grunges with the same settings, on LocalPaint's Painter-style generators.
+          const { name, gen, skipped } = await translateSpmsk(bytes, f.name);
+          const id = 'user_' + name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+          if (!findSmartMask(id)) {
+            SMART_MASKS.push({ id, label: name, build: () => structuredClone(gen) });
+            this.shelf.items = [...this.shelf.items, { kind: 'mask', name, file: 'mask:' + id, preset: id }];
+            this.buildShelf();
+          }
+          this.applySmartMaskTo(this.ts.activeLayer, id);
+          toast(`Smart mask “${name}” added to Smart masks and put on the selected layer.${skipped.length ? ' Not carried over: ' + skipped.join(', ') + '.' : ''}`);
+          continue;
+        }
         if (/\.spsm$/i.test(f.name)) {
           const { root, skipped } = await translateSpsm(bytes, f.name);
           let count = 0;
@@ -5515,6 +5642,7 @@ class App {
     const out: HTMLElement[] = [];
     const sl = (label: string, key: 'amount' | 'contrast', min: number, max: number, step: number) =>
       slider(label, { min, max, step, value: g[key], onInput: (v) => { pre(kp + key); g[key] = v; live(); } }).el;
+    if (g.type === 'painter') return this.spControls(g, pre, live, kp);
     if (g.type === 'shape') {
       const ss = select<string>(SHAPE_KINDS.map((k) => ({ value: k, label: SHAPE_LABEL[k] })), g.shape ?? 'circle', (v) => { pre(kp + 'shape'); g.shape = v as ShapeKind; live(); });
       const moving = !!layer && this.shapeMove?.g === g;
@@ -5564,6 +5692,76 @@ class App {
     out.push(el('label', { class: 'check-row' }, inv, ' Invert'));
     if (MICRO_TYPES.includes(g.type)) out.push(...this.microControls(g, pre, live, kp, layer));
     return out;
+  }
+
+  /** Controls of a Painter-style generator, grouped like Painter's (Texture, Ambient Occlusion, Curvature…). */
+  private spControls(g: GenSettings, pre: (k: string) => void, live: () => void, kp: string): HTMLElement[] {
+    const sp = (g.sp ??= spDefaults('dirt'));
+    const def = SP_DEFS[sp.kind];
+    const kindSel = select<string>(SP_KINDS.map((k) => ({ value: k, label: SP_DEFS[k].label })), sp.kind, (v) => {
+      pre(kp + 'spkind'); g.sp = spDefaults(v as SpKind); live(); this.buildProperties();
+    });
+    const out: HTMLElement[] = [el('div', { class: 'row' }, el('label', {}, 'Generator'), kindSel), el('p', { class: 'note' }, def.desc)];
+    const groups = new Map<string, HTMLElement[]>();
+    const refresh = () => this.buildProperties();
+    const ctl = (d: SpParam): HTMLElement => {
+      const key = kp + 'sp:' + d.id;
+      const cur = sp.p[d.id] ?? d.def;
+      const set = (v: SpParam['def'], rebuild = false) => { pre(key); sp.p[d.id] = v; live(); if (rebuild) refresh(); };
+      const gated = SP_DEFS[sp.kind].params.some((x) => x.if === d.id);
+      switch (d.kind) {
+        case 'b': {
+          const c = el('input', { type: 'checkbox', checked: !!cur }) as HTMLInputElement;
+          c.addEventListener('change', () => set(c.checked, gated));
+          return el('label', { class: 'check-row' }, c, ' ' + d.label);
+        }
+        case 'i': return slider(d.label, { min: d.min ?? 1, max: d.max ?? 32, step: 1, value: Number(cur), onInput: (v) => set(v) }).el;
+        case 'enum': return el('div', { class: 'row' }, el('label', {}, d.label), select<string>(d.opts!.map(([v, l]) => ({ value: String(v), label: l })), String(cur), (v) => set(Number(v))));
+        case 'grunge': return el('div', { class: 'row' }, el('label', {}, d.label), this.grungeSelect(String(cur), (v) => set(v)));
+        case 'vec3': {
+          const a = (cur as [number, number, number]).slice() as [number, number, number];
+          return el('div', { class: 'sp-vec' }, el('div', { class: 'sp-vec-h' }, d.label), ...['X', 'Y', 'Z'].map((ax, k) =>
+            slider(ax, { min: 0, max: 1, step: 0.01, value: a[k], onInput: (v) => { a[k] = v; set([a[0], a[1], a[2]]); } }).el));
+        }
+        default: return slider(d.label, { min: d.min ?? 0, max: d.max ?? 1, step: (d.max ?? 1) - (d.min ?? 0) > 4 ? 0.1 : 0.005, value: Number(cur), fmt: (v) => v.toFixed(3), onInput: (v) => set(v) }).el;
+      }
+    };
+    for (const d of def.params) {
+      if (d.if && !sp.p[d.if]) continue;
+      const k = d.grp ?? '';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(ctl(d));
+    }
+    for (const [name, list] of groups) {
+      if (!name) { out.push(...list); continue; }
+      const det = el('details', { class: 'sp-grp' }, el('summary', {}, name), ...list) as HTMLDetailsElement;
+      const openKey = `${sp.kind}:${name}`;
+      det.open = this.spOpen.has(openKey);
+      det.addEventListener('toggle', () => { if (det.open) this.spOpen.add(openKey); else this.spOpen.delete(openKey); });
+      out.push(det);
+    }
+    out.push(el('div', { class: 'row' }, el('label', {}, ''), el('button', { class: 'grow', onclick: () => { pre(kp + 'seed:' + Math.random()); g.seed = Math.round(Math.random() * 1000); live(); } }, 'New random seed')));
+    return out;
+  }
+  private spOpen = new Set<string>();
+
+  /** Grunge picker: the CC0 grunge library by category (procedural stand-ins until it has downloaded). */
+  private grungeSelect(cur: string, onChange: (v: string) => void): HTMLSelectElement {
+    const opts: { value: string; label: string }[] = [];
+    for (const cat of GRUNGE_CATS) {
+      const n = this.grungeCount(cat);
+      if (!n) { opts.push({ value: `grunge:${cat}`, label: `${GRUNGE_CAT_LABEL[cat]} (pattern)` }); continue; }
+      for (let k = 0; k < n; k++) { const g = this.grunges.info(cat, k)!; opts.push({ value: `grunge:${cat}/${g.id}`, label: `${GRUNGE_CAT_LABEL[cat]} · ${g.name}` }); }
+    }
+    // Keep the current choice in the list even when it isn't downloaded / known yet.
+    let value = cur;
+    if (!opts.some((o) => o.value === cur)) {
+      const { cat, n, id } = parseGrungeRef(cur);
+      const g = id ? this.grunges.byId(id) : this.grunges.info(cat, n);
+      const match = g && opts.find((o) => o.value === `grunge:${g.cat}/${g.id}`);
+      if (match) value = match.value; else opts.unshift({ value: cur, label: `${GRUNGE_CAT_LABEL[cat] ?? cat}${id ? ' · ' + id : n ? ' ' + (n + 1) : ''}` });
+    }
+    return select<string>(opts, value, onChange);
   }
 
   /** "Micro details" (Substance anchor points): pick an anchor whose height details this generator follows. */
@@ -5624,7 +5822,7 @@ class App {
     } else if (m.gen) {
       const g = m.gen;
       gen.append(...this.genControls(g, pre, live, 'g', layer));
-      if (g.type !== 'pattern' && g.type !== 'shape') out.push(group('Grunge breakup', ...this.noiseControls(g, pre, live, 'g')));
+      if (g.type !== 'pattern' && g.type !== 'shape' && g.type !== 'painter') out.push(group('Grunge breakup', ...this.noiseControls(g, pre, live, 'g')));
       // Effect stack (Substance's mask layers / TextureCraft's effects): more generators and patterns blended on top.
       const fxBox = group('Mask effects', el('p', { class: 'note' }, 'Stack more generators and patterns on the one above (bottom → top). Multiply cuts away, Lighten adds more.'));
       (g.fx ?? []).forEach((e, k) => {
@@ -5634,7 +5832,7 @@ class App {
         const blendSel = select<string>(FX_BLENDS.map((b) => ({ value: b, label: FX_BLEND_LABEL[b] })), e.blend, (v) => { pre(kp + 'blend'); e.blend = v as MaskFx['blend']; live(); });
         const on = el('input', { type: 'checkbox', checked: e.on !== false, title: 'Enabled' }) as HTMLInputElement;
         on.addEventListener('change', () => { pre(kp + 'on'); e.on = on.checked; live(); });
-        const head = el('div', { class: 'fx-head' }, on, el('b', { class: 'grow' }, `${k + 1}. ${e.type === 'pattern' ? PATTERN_LABEL[e.pattern ?? 'grunge'] : GEN_LABEL[e.type]}`),
+        const head = el('div', { class: 'fx-head' }, on, el('b', { class: 'grow' }, `${k + 1}. ${e.type === 'pattern' ? PATTERN_LABEL[e.pattern ?? 'grunge'] : e.type === 'painter' && e.sp ? SP_DEFS[e.sp.kind].label : GEN_LABEL[e.type]}`),
           el('button', { title: 'Move up', disabled: k === g.fx!.length - 1, onclick: () => { pre('order:' + Math.random()); const f = g.fx!; [f[k], f[k + 1]] = [f[k + 1], f[k]]; live(); this.buildProperties(); } }, '▲'),
           el('button', { title: 'Move down', disabled: k === 0, onclick: () => { pre('order:' + Math.random()); const f = g.fx!; [f[k], f[k - 1]] = [f[k - 1], f[k]]; live(); this.buildProperties(); } }, '▼'),
           el('button', { title: 'Remove this effect', onclick: () => { pre('rm:' + Math.random()); g.fx!.splice(k, 1); if (!g.fx!.length) g.fx = undefined; live(); this.buildProperties(); } }, '×'));
@@ -5643,7 +5841,7 @@ class App {
           el('div', { class: 'row' }, el('label', {}, 'Blend'), blendSel),
           slider('Opacity', { min: 0, max: 1, step: 0.01, value: e.opacity, fmt: (v) => Math.round(v * 100) + '%', onInput: (v) => { pre(kp + 'op'); e.opacity = v; live(); } }).el,
           ...this.genControls(e, pre, live, kp, layer),
-          ...(e.type !== 'pattern' && e.type !== 'noise' && e.type !== 'shape' ? this.noiseControls(e, pre, live, kp) : []));
+          ...(e.type !== 'pattern' && e.type !== 'noise' && e.type !== 'shape' && e.type !== 'painter' ? this.noiseControls(e, pre, live, kp) : []));
         fxBox.append(box);
       });
       const addSel = select<string>([{ value: '', label: '+ Add effect…' },
@@ -5663,7 +5861,7 @@ class App {
       fxBox.append(el('div', { class: 'row' }, addSel), el('label', { class: 'check-row' }, outInv, ' Invert the whole mask'), el('div', { class: 'row' }, presetSel));
       out.push(fxBox);
       const need: Partial<Record<GenType, BakeKey>> = { edge: 'curv', dirt: 'ao', ao: 'ao', curvature: 'curv', thick: 'thick', id: 'id' };
-      const nk = [g, ...(g.fx ?? [])].map((e) => need[e.type]).find((k) => k && !ts.baked.has(k));
+      const nk = [g, ...(g.fx ?? [])].flatMap((e) => e.type === 'painter' ? ['ao', 'curv'] as BakeKey[] : [need[e.type]]).find((k) => k && !ts.baked.has(k));
       if (ts.baking) out.push(el('p', { class: 'note warn' }, 'Mesh maps are baking — this mask updates when they finish.'));
       else if (nk) out.push(el('div', { class: 'note warn' }, `This mask needs the ${BAKE_ITEMS.find(([k]) => k === nk)![1]} map, which isn't baked yet. `,
         el('button', { class: 'link', onclick: () => { this.bakeItem = nk; this.setMode('bake'); } }, 'Go to Baking')));
@@ -6030,6 +6228,118 @@ class App {
     }
   }
 
+  // ================================================================ export mesh
+
+  /** File > Export mesh: the model as GLB (optionally with the painted textures inside) or OBJ (+ MTL + textures). */
+  async exportMeshDialog() {
+    if (!this.model) return;
+    const st = this.settings.meshExport;
+    const sizes = [512, 1024, 2048, 4096];
+    const fmtSel = select<string>([
+      { value: 'glb', label: 'GLB with textures (one file)' }, { value: 'glb-mesh', label: 'GLB, mesh only' },
+      { value: 'obj', label: 'OBJ + MTL with textures' }, { value: 'obj-mesh', label: 'OBJ, mesh only' },
+    ], st.format, (v) => { st.format = v as typeof st.format; sizeRow.style.display = v.endsWith('-mesh') ? 'none' : ''; });
+    const sizeRow = el('div', { class: 'np-field' }, el('label', {}, 'Texture size'), el('div', { class: 'np-ctl' },
+      select<number>([{ value: 0, label: `Texture set size (${this.ts.size})` }, ...sizes.map((v) => ({ value: v, label: `${v} x ${v}` }))], st.size, (v) => { st.size = v; })), el('span'));
+    sizeRow.style.display = st.format.endsWith('-mesh') ? 'none' : '';
+    const orig = el('input', { type: 'checkbox', checked: st.original }) as HTMLInputElement;
+    const nameIn = el('input', { type: 'text', value: this.expName || 'mesh' }) as HTMLInputElement;
+    const content = el('div', { class: 'np' },
+      el('div', { class: 'np-field' }, el('label', {}, 'File name'), el('div', { class: 'np-ctl' }, nameIn), el('span')),
+      el('div', { class: 'np-field' }, el('label', {}, 'Format'), el('div', { class: 'np-ctl' }, fmtSel), el('span')),
+      sizeRow,
+      el('label', { class: 'check-row np-check', title: 'Off: the mesh is centered and scaled to fit LocalPaint\'s view, like you see it here.' }, orig, ' Keep the original size and position'),
+      el('p', { class: 'muted' }, this.native ? 'Saved to the export folder from Export textures.' : 'You pick where to save it.'));
+    const r = await this.modal({ title: 'Export mesh', text: '', icon: 'info', wide: true, content, buttons: [['Export', 'ok', 'primary'], ['Cancel', 'cancel']] });
+    if (r !== 'ok') return;
+    st.original = orig.checked;
+    saveSettings(this.settings);
+    const name = (nameIn.value.trim() || 'mesh').replace(/[\\/:*?"<>|]+/g, '_');
+    try {
+      toast('Exporting mesh…');
+      const files = await this.buildMeshFiles(st.format, st.size || this.ts.size, st.original, name);
+      if (this.native?.exportWrite) {
+        this.exp ??= loadExportState();
+        const data = await Promise.all(files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.blob.arrayBuffer()) })));
+        const w = await this.native.exportWrite(this.exp.dir, data);
+        if (!w?.ok) throw new Error(w?.error ?? 'could not write the files');
+        toast(`Saved ${files[0].name} to ${w.dir}`);
+        if (this.exp.openAfter) this.native.exportOpen(w.dir);
+      } else if (files.length === 1) {
+        downloadBlob(files[0].blob, files[0].name);
+      } else {
+        const msg = await saveFiles(files);
+        if (msg !== 'cancelled') toast(msg);
+      }
+    } catch (e: any) {
+      console.error(e);
+      toast('Export failed: ' + (e?.message ?? e), true);
+    }
+  }
+
+  /** The mesh files (shared by Export mesh and the tests). */
+  async buildMeshFiles(format: 'glb' | 'glb-mesh' | 'obj' | 'obj-mesh', size: number, original: boolean, name: string): Promise<{ name: string; blob: Blob }[]> {
+    const xf = this.model.xf;
+    const withTex = !format.endsWith('-mesh');
+    const geos = this.model.geometries.map((g) => {
+      const c = new THREE.BufferGeometry();
+      for (const a of ['position', 'normal', 'uv', 'color'] as const) if (g.attributes[a]) c.setAttribute(a, g.attributes[a].clone());
+      if (g.index) c.setIndex(g.index.clone());
+      if (original) { c.scale(1 / xf.scale, 1 / xf.scale, 1 / xf.scale); c.translate(xf.center[0], xf.center[1], xf.center[2]); }
+      return c;
+    });
+    const out: { name: string; blob: Blob }[] = [];
+    const scene = new THREE.Scene();
+    const mat = new THREE.MeshStandardMaterial({ name: name + '_mat', color: 0xffffff });
+    const texs: THREE.Texture[] = [];
+    if (withTex) {
+      this.exp ??= loadExportState();
+      const isGlb = format === 'glb';
+      const t = this.expTemplate(isGlb ? 'gltf' : 'pbr-gl');
+      const files = await this.expBuild(t, { size, padding: 'infinite', padPx: 16, name });
+      // Template map names are "<texture set>_<suffix>".
+      const bySuffix = (sfx: string) => files[t.maps.findIndex((x) => x.name.endsWith('_' + sfx))];
+      if (isGlb) {
+        const tex = async (map: string, srgb: boolean) => {
+          const f = bySuffix(map);
+          if (!f) return null;
+          const tx = new THREE.Texture(await createImageBitmap(f.blob, { imageOrientation: 'none' } as ImageBitmapOptions));
+          tx.flipY = true; tx.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; tx.needsUpdate = true;
+          texs.push(tx);
+          return tx;
+        };
+        mat.map = await tex('baseColor', true);
+        const orm = await tex('occlusionRoughnessMetallic', false);
+        mat.aoMap = orm; mat.roughnessMap = orm; mat.metalnessMap = orm; mat.roughness = 1; mat.metalness = 1;
+        mat.normalMap = await tex('normal', false);
+        const em = await tex('emissive', true);
+        if (em) { mat.emissiveMap = em; mat.emissive.set(0xffffff); }
+      } else {
+        out.push(...files);
+        const fn = (m: string) => bySuffix(m)?.name;
+        const lines = [`# LocalPaint ${VERSION}`, `newmtl ${name}_mat`, 'Ka 1 1 1', 'Kd 1 1 1', 'Ks 0 0 0', 'd 1', 'illum 2'];
+        const add = (key: string, m: string) => { const f = fn(m); if (f) lines.push(`${key} ${f}`); };
+        add('map_Kd', 'BaseColor'); add('map_Pr', 'Roughness'); add('map_Pm', 'Metallic'); add('norm', 'Normal'); add('map_Bump', 'Normal'); add('map_Ke', 'Emissive'); add('map_Ka', 'AmbientOcclusion');
+        out.unshift({ name: `${name}.mtl`, blob: new Blob([lines.join('\n') + '\n'], { type: 'text/plain' }) });
+      }
+    }
+    geos.forEach((g, i) => { const m = new THREE.Mesh(g, mat); m.name = geos.length > 1 ? `${name}_${i + 1}` : name; scene.add(m); });
+    try {
+      if (format.startsWith('glb')) {
+        const buf = await new GLTFExporter().parseAsync(scene, { binary: true, onlyVisible: false }) as ArrayBuffer;
+        out.unshift({ name: `${name}.glb`, blob: new Blob([buf], { type: 'model/gltf-binary' }) });
+      } else {
+        let txt = new OBJExporter().parse(scene);
+        // OBJExporter already writes "usemtl" for the named material.
+        txt = (withTex ? `mtllib ${name}.mtl\n` : '') + (withTex ? txt : txt.replace(/^usemtl .*$/gm, ''));
+        out.unshift({ name: `${name}.obj`, blob: new Blob([txt], { type: 'text/plain' }) });
+      }
+    } finally {
+      geos.forEach((g) => g.dispose()); texs.forEach((t) => { (t.image as ImageBitmap)?.close?.(); t.dispose(); }); mat.dispose();
+    }
+    return out;
+  }
+
   // ================================================================ test hooks
 
   async exportForTest(presetId: string, size?: number, padding: PadMode = 'none') {
@@ -6040,6 +6350,23 @@ class App {
     for (const f of files) out[f.name] = toB64(new Uint8Array(await f.blob.arrayBuffer()));
     return out;
   }
+  async meshForTest(format: 'glb' | 'glb-mesh' | 'obj' | 'obj-mesh', size = 256, original = true) {
+    const files = await this.buildMeshFiles(format, size, original, 'test');
+    const out: Record<string, string> = {};
+    for (const f of files) out[f.name] = toB64(new Uint8Array(await f.blob.arrayBuffer()));
+    return out;
+  }
+  /** Render a Painter-style generator as the active layer's mask (flat, base64 PNG). */
+  async painterMaskForTest(kind: SpKind, p: Record<string, any> = {}, size = 256, fx?: MaskFx[]) {
+    let l = this.ts.allLayers.find((x) => x.name === '__sp');
+    if (!l) { l = this.ts.addFillLayer('__sp'); this.ts.addMask(l, { base: 'black', gen: null }); }
+    this.ts.activeId = l.id;
+    const sp = spDefaults(kind); Object.assign(sp.p, p);
+    l.mask!.gen = { ...defaultGen('painter'), seed: 7, sp, fx };
+    this.ts.maskChanged(l);
+    return await this.viewForTest('mask', size);
+  }
+  smartMaskIds() { return SMART_MASKS.filter((m) => m.painter).map((m) => m.id); }
   async projectForTest() {
     const blob = await serializeProject(this.ts, this.model.name, this.model.source, this.projectSettings());
     return await blob.text();

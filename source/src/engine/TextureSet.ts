@@ -6,7 +6,8 @@ import { MeshParts, idColor } from './MeshParts';
 import { bakeThickness, downsample, ThicknessSettings, DEFAULT_THICK } from './Thickness';
 import { RayBaker, SAMPLE_FLOATS } from './RayBaker';
 import { FRAG_GEN, FRAG_MICRO, GenSettings, LayerMaskSpec, axisVec, genIndex, MaskFx, FX_BLENDS, SHAPE_KINDS, usesMicro } from './Masks';
-import { FRAG_PROC, ProcSource, patternIndex, procKey } from './Procedural';
+import { FRAG_PROC, ProcSource, patternIndex, procKey, PatternType } from './Procedural';
+import { SpKind, SpSettings, spShader, spPack, spGlobalBlur, spGrungeParams, parseGrungeRef, GRUNGE_FALLBACK, FRAG_SP_PACK, FRAG_SP_PACK2, FRAG_SP_BLUR, SP_MAXP } from './PainterGen';
 import type { GraphJSON } from '../designer/Graph';
 import type { SbsState } from './Substance';
 
@@ -1668,7 +1669,7 @@ void main() {
       m.dirty = false;
       return;
     }
-    const key = `${JSON.stringify(g)}#${this.meshVersion}#${this.size}${usesMicro(g) ? '#a' + this.anchorVersion : ''}`;
+    const key = `${JSON.stringify(g)}#${this.meshVersion}#${this.size}${usesMicro(g) ? '#a' + this.anchorVersion : ''}${JSON.stringify(g).includes('"sp"') ? '#g' + this.grungeVersion : ''}`;
     if (!m.genRT || m.genRT.width !== this.size || m.genKey !== key) {
       if (!m.genRT || m.genRT.width !== this.size) { m.genRT?.dispose(); m.genRT = makeRT(this.size); }
       this.renderGenStack(m, g, m.genRT);
@@ -1704,6 +1705,12 @@ void main() {
     effects.forEach((e, k) => {
       const last = k === effects.length - 1;
       const target = last ? out : this.maskTmp[k % 2];
+      if (e.type === 'painter' && e.sp) {
+        const fe = e as MaskFx;
+        this.runPainterGen(e.sp, prev, target, Math.max(0, FX_BLENDS.indexOf(fe.blend ?? 'normal')), Math.max(0, Math.min(1, fe.opacity ?? 1)), last && !!g.outInvert, e.seed);
+        prev = target;
+        return;
+      }
       this.setGenUniforms(e);
       u.hasPrev.value = !!prev;
       u.prevMap.value = prev ? prev.texture : null;
@@ -1740,6 +1747,140 @@ void main() {
     u.useMicro.value = !!md;
     u.microMap.value = md;
     u.microAmt.value = g.micro?.amount ?? 1;
+  }
+
+  // ------------------------------------------------------------ Painter-style generators (PainterGen.ts)
+
+  /** Gives the grunge texture for a `grunge:<category>/<n>` reference, or null while it isn't downloaded (set by the app). */
+  grungeResolver: ((ref: string) => THREE.Texture | null) | null = null;
+  /** Bump when grunge textures arrive, so masks that use them re-render. */
+  grungeVersion = 0;
+  private spMats = new Map<SpKind, THREE.ShaderMaterial>();
+  private spParams = new Float32Array(SP_MAXP);
+  private spPyr: RT[] = [];
+  private spPyrKey = '';
+  private spTmp: RT[] = [];
+  private matSpPack = quadShader(FRAG_SP_PACK, { uMesh: { value: null }, uPos: { value: null } });
+  private matSpPack2 = quadShader(FRAG_SP_PACK2, { uSrc: { value: null }, uMesh: { value: null } });
+  private matSpBlur = quadShader(FRAG_SP_BLUR, { uSrc: { value: null }, uDir: { value: new THREE.Vector2() } });
+
+  private spMat(kind: SpKind) {
+    let m = this.spMats.get(kind);
+    if (!m) {
+      m = quadShader(spShader(kind), {
+        uPos: { value: null }, uNrm: { value: null }, uMesh: { value: null },
+        uL0: { value: null }, uL1: { value: null }, uL2: { value: null }, uL3: { value: null }, uL4: { value: null }, uL5: { value: null },
+        uG0: { value: null }, uG1: { value: null }, uGOk0: { value: false }, uGOk1: { value: false }, uGPat0: { value: 0 }, uGPat1: { value: 0 },
+        uBmin: { value: new THREE.Vector3() }, uBmax: { value: new THREE.Vector3() }, uSize: { value: 1024 }, uSeed: { value: 0 },
+        P: { value: this.spParams }, uStage: { value: 2 }, uSrc: { value: null }, uHasPrev: { value: false }, uPrev: { value: null },
+        uFxBlend: { value: 0 }, uFxOp: { value: 1 }, uOutInv: { value: false },
+      });
+      this.spMats.set(kind, m);
+    }
+    return m;
+  }
+
+  /** Blur `src` (sigma in texels of `src`) with a separable Gaussian; `tmp` is the same size. */
+  private spBlur(src: RT, tmp: RT, out: RT, sigma: number) {
+    const u = this.matSpBlur.uniforms;
+    const w = src.width;
+    // One pass of the 9-tap kernel is sigma ≈ 1.5; spread the taps for a wider blur.
+    const step = Math.max(0.5, sigma / 1.5);
+    u.uSrc.value = src.texture; (u.uDir.value as THREE.Vector2).set(step / w, 0);
+    this.gpu.run(this.matSpBlur, tmp);
+    u.uSrc.value = tmp.texture; (u.uDir.value as THREE.Vector2).set(0, step / w);
+    this.gpu.run(this.matSpBlur, out);
+    u.uSrc.value = null;
+  }
+
+  /** The blurred mesh maps (6 levels, each half the size and twice the blur of the one before). */
+  private spPyramid(): RT[] {
+    const key = `${this.meshVersion}#${this.size}`;
+    if (this.spPyrKey === key && this.spPyr.length === 6) return this.spPyr;
+    this.spPyr.forEach((r) => r.dispose());
+    this.spPyr = [];
+    const S = this.size;
+    const full = makeRT(S, { type: THREE.HalfFloatType }), full2 = makeRT(S, { type: THREE.HalfFloatType });
+    const pu = this.matSpPack.uniforms;
+    pu.uMesh.value = this.meshRT.texture; pu.uPos.value = this.posRT.texture;
+    this.gpu.run(this.matSpPack, full);
+    // Pad the islands outwards first so blurring doesn't pull in the empty background.
+    const du = this.matDilate.uniforms;
+    du.texel.value.set(1 / S, 1 / S);
+    let a = full, b = full2;
+    for (const off of [1, 2, 4, 8, 16, 32]) { du.src.value = a.texture; du.off.value = off; this.gpu.run(this.matDilate, b); [a, b] = [b, a]; }
+    du.src.value = null;
+    const p2 = this.matSpPack2.uniforms;
+    p2.uSrc.value = a.texture; p2.uMesh.value = this.meshRT.texture;
+    this.gpu.run(this.matSpPack2, b);
+    p2.uSrc.value = null;
+    let src = b;
+    let size = S;
+    for (let k = 0; k < 6; k++) {
+      const lvl = makeRT(size, { type: THREE.HalfFloatType });
+      const tmp = makeRT(size, { type: THREE.HalfFloatType });
+      if (src.width !== size) {
+        this.matCopy.uniforms.src.value = src.texture;
+        this.gpu.run(this.matCopy, lvl);
+        this.matCopy.uniforms.src.value = null;
+        this.spBlur(lvl, tmp, lvl === tmp ? tmp : lvl, 1.5);
+      } else {
+        this.spBlur(src, tmp, lvl, 1.5);
+      }
+      tmp.dispose();
+      this.spPyr.push(lvl);
+      src = lvl;
+      size = Math.max(32, size >> 1);
+    }
+    full.dispose(); full2.dispose();
+    this.spPyrKey = key;
+    return this.spPyr;
+  }
+
+  private spGrunge(ref: string | undefined): { tex: THREE.Texture | null; pat: number } {
+    const r = ref ?? 'grunge:soft';
+    const { cat } = parseGrungeRef(r);
+    return { tex: this.grungeResolver?.(r) ?? null, pat: patternIndex((GRUNGE_FALLBACK[cat] ?? 'clouds') as PatternType) };
+  }
+
+  /** Run one Painter-style generator into `target`, blended over `prev`. */
+  private runPainterGen(sp: SpSettings, prev: RT | null, target: RT, blend: number, opacity: number, outInv: boolean, seed: number) {
+    const m = this.spMat(sp.kind);
+    const u = m.uniforms;
+    const pyr = this.spPyramid();
+    spPack(sp, this.spParams);
+    u.uPos.value = this.posRT.texture; u.uNrm.value = this.nrmRT.texture; u.uMesh.value = this.meshRT.texture;
+    pyr.forEach((r, k) => { u['uL' + k].value = r.texture; });
+    const gs = spGrungeParams(sp.kind);
+    for (let k = 0; k < 2; k++) {
+      // Dirt mixes two built-in grunges; generators with one grunge input use slot 0.
+      const ref = gs[k] ? String(sp.p[gs[k].id] ?? gs[k].def)
+        : sp.kind === 'dirt' && k === 1 ? 'grunge:soft/SurfaceImperfections015' : sp.kind === 'builder' && k === 1 ? 'grunge:spots/SurfaceImperfections001' : 'grunge:clouds';
+      // Built-in grunges when "Use Custom Grunge" is off (CC0 lookalikes of Painter's: spots + grunge map for Dirt, scratches for edge wear).
+      const builtin = !sp.p.Use_Custom_Grunge && !sp.p.Grunge_Use_Custom_Grunge && k === 0
+        ? sp.kind === 'dirt' ? 'grunge:spots/SurfaceImperfections001' : sp.kind === 'wear' ? 'grunge:scratches/Scratches002' : sp.kind === 'fiberwear' ? 'grunge:scratches/Scratches005' : sp.kind === 'builder' ? 'grunge:soft/SurfaceImperfections016' : null
+        : null;
+      const gr = this.spGrunge(builtin ?? ref);
+      u['uG' + k].value = gr.tex; u['uGOk' + k].value = !!gr.tex; u['uGPat' + k].value = gr.pat;
+    }
+    u.uBmin.value.copy(this.bboxMin); u.uBmax.value.copy(this.bboxMax);
+    u.uSize.value = this.size; u.uSeed.value = Math.max(0, Math.round(seed ?? 0));
+    u.uHasPrev.value = !!prev; u.uPrev.value = prev ? prev.texture : null;
+    u.uFxBlend.value = blend; u.uFxOp.value = opacity; u.uOutInv.value = outInv;
+    const gb = spGlobalBlur(sp);
+    if (gb > 0) {
+      if (this.spTmp.length !== 2 || this.spTmp[0].width !== this.size) { this.spTmp.forEach((t) => t.dispose()); this.spTmp = [makeRT(this.size, { type: THREE.HalfFloatType }), makeRT(this.size, { type: THREE.HalfFloatType })]; }
+      u.uStage.value = 0;
+      this.gpu.run(m, this.spTmp[0]);
+      this.spBlur(this.spTmp[0], this.spTmp[1], this.spTmp[0], gb * 16 * (this.size / 1024));
+      u.uStage.value = 1; u.uSrc.value = this.spTmp[0].texture;
+      this.gpu.run(m, target);
+      u.uSrc.value = null;
+    } else {
+      u.uStage.value = 2;
+      this.gpu.run(m, target);
+    }
+    u.uPrev.value = null;
   }
 
   /** Where a Shape generator sits: its centre, facing and size (defaults to the front of the model). */
@@ -2399,6 +2540,42 @@ void main() {
 uniform sampler2D src; uniform int mode; varying vec2 vUv;
 void main() { vec4 s = texture2D(src, vUv); vec3 c = mode == 0 ? vec3(s.r) : mode == 1 ? vec3(s.g) : mode == 2 ? vec3(s.b) : s.rgb; gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0); }`,
   { src: { value: null }, mode: { value: 0 } });
+  private matMeshIn = quadShader(/* glsl */ `
+uniform sampler2D src; uniform sampler2D prev; uniform int mode; uniform bool flipG; varying vec2 vUv;
+void main() {
+  vec4 s = texture2D(src, vUv);
+  vec4 p = texture2D(prev, vUv);
+  float g = dot(s.rgb, vec3(0.3333));
+  if (mode == 0) gl_FragColor = vec4(g, p.g, p.b, 1.0);
+  else if (mode == 1) gl_FragColor = vec4(p.r, g, p.b, 1.0);
+  else if (mode == 2) gl_FragColor = vec4(p.r, p.g, g, 1.0);
+  else { vec3 c = s.rgb; if (flipG) c.g = 1.0 - c.g; gl_FragColor = vec4(c, 1.0); }
+}`, { src: { value: null }, prev: { value: null }, mode: { value: 0 }, flipG: { value: false } });
+  /**
+   * Use a mesh map baked somewhere else (Painter, Marmoset, Blender…) instead of baking it here.
+   * `flipG` = it's a DirectX normal map.
+   */
+  importMeshMap(key: BakeKey, tex: THREE.Texture, flipG = false) {
+    const u = this.matMeshIn.uniforms;
+    const into = (rt: RT, mode: number) => {
+      const tmp = makeRT(this.size, { type: rt.texture.type });
+      u.src.value = tex; u.prev.value = rt.texture; u.mode.value = mode; u.flipG.value = flipG;
+      this.gpu.run(this.matMeshIn, tmp);
+      this.matCopy.uniforms.src.value = tmp.texture;
+      this.gpu.run(this.matCopy, rt);
+      this.matCopy.uniforms.src.value = null;
+      tmp.dispose();
+    };
+    if (key === 'ao') into(this.meshRT, 0);
+    else if (key === 'curv') into(this.meshRT, 1);
+    else if (key === 'thick') into(this.meshRT, 2);
+    else into(key === 'normal' ? this.bakedNRT : key === 'wsn' ? this.wsnRT : key === 'pos' ? this.posNRT : key === 'id' ? this.idRT : this.bakedHRT, 3);
+    u.src.value = u.prev.value = null;
+    this.baked.add(key);
+    this.meshVersion++;
+    this.markAll();
+  }
+
   /** One baked mesh map as RGBA8 pixels (rows bottom-up), for Substance image inputs; null when it isn't baked. */
   meshMapPixels(key: BakeKey, size: number): Uint8Array | null {
     if (!this.baked.has(key)) return null;

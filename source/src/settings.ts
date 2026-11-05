@@ -26,12 +26,17 @@ export interface Settings {
   sbsPath: string;
   /** Ask before deleting folders / paint layers (Ctrl+Z always brings them back). */
   confirmDelete: boolean;
+  /** New project window: last choices. */
+  newProj: { template: string; normal: 'gl' | 'dx'; autoBake: boolean };
+  meshExport: { format: 'glb' | 'glb-mesh' | 'obj' | 'obj-mesh'; size: number; original: boolean };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   autosave: true, autosaveMinutes: 3, autosaveKeep: 5, defaultSize: 1024, pixelRatio: 0, historyLimit: 25,
   lowPerf: false, perfAsked: false, welcomed: false, startScreen: true, checkUpdates: true, envName: 'studio_small_09_1k',
   sbsAdobe: true, sbsPath: '', confirmDelete: false,
+  newProj: { template: 'pbr', normal: 'gl', autoBake: true },
+  meshExport: { format: 'glb', size: 0, original: true },
 };
 
 const KEY = 'lmp-settings';

@@ -301,13 +301,17 @@ export class PresetShelf {
     }
     for (const f of this.extraFiles) list.push({ name: f.name, file: async () => f });
     // Folder files come first, so a linked copy of a starter asset replaces the built-in one.
-    const seen = new Set<string>();
-    this.items = [...(await scanFiles(list)), ...this.builtins].filter((it) => {
+    // A built-in with a newer "rev" (e.g. a fixed smart material) replaces an older copy left in the folder.
+    const rev = (it: ShelfItem) => Number((it as any).smart?.rev ?? 0) || 0;
+    const pick = new Map<string, ShelfItem>();
+    const order: string[] = [];
+    for (const it of [...(await scanFiles(list)), ...this.builtins]) {
       const k = it.kind + ':' + it.name.toLowerCase();
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
+      const cur = pick.get(k);
+      if (!cur) { pick.set(k, it); order.push(k); }
+      else if (rev(it) > rev(cur)) pick.set(k, it);
+    }
+    this.items = order.map((k) => pick.get(k)!);
   }
 
   /** Save any JSON preset into the linked folder (or download it). Returns a status message. */

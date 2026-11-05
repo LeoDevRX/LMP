@@ -14,11 +14,11 @@ Double-click **LocalPaint.exe**. It runs in its own window on your fast graphics
 
 - The **presets** folder next to LocalPaint.exe loads automatically, so there's no "Link folder" step.
 - Saved materials, brushes and graphs go into that folder too.
-- **Projects are .lmp files.**
-  - **File → Save** (Ctrl+S) suggests the model's name, e.g. `Test vase.lmp`. After the first save, Ctrl+S just overwrites that file.
+- **Projects are .lp files** (older `.lmp` and `.tpaint` projects still open).
+  - **File → Save** (Ctrl+S) suggests the model's name, e.g. `Test vase.lp`. After the first save, Ctrl+S just overwrites that file.
   - **Save as…** (Ctrl+Shift+S) asks where to save a copy, and **Open project…** (Ctrl+O) opens one. Old `.tpaint` projects open too.
   - **Import…** (Ctrl+I) brings in models, HDRIs, Substance files, presets and textures.
-  - In File Explorer, `.lmp` files show the LocalPaint icon. Double-click one to open it in LocalPaint; if LocalPaint is already open, the file opens in that window.
+  - In File Explorer, `.lp` files show the LocalPaint icon. Double-click one to open it in LocalPaint; if LocalPaint is already open, the file opens in that window.
 - **F11** switches to full screen. **F12** opens developer tools, which help when reporting a problem.
 
 
@@ -295,7 +295,7 @@ Baked maps are saved inside the `.tpaint` project, so you don't need the high po
   - **Colors and values** set in each layer (base color, roughness, metal, height, emissive) come over exactly.
   - **Materials inside it** (e.g. Granite Rock Mossy) use the texture previews Substance stored in the file. That's the material at its default settings, 512 px.
   - **Grunge maps** become real picture masks.
-  - **Mask generators** become LocalPaint smart masks: MG Dirt → Dirt, edge wear → Edge wear, Mask Builder / Mask Editor → the closest one. Bake mesh maps in the Baking tab so they show.
+  - **Mask generators** come in as LocalPaint's Painter generators with the same settings (Dirt, Metal Edge Wear, Dust, Mask Editor, Mask Builder, Light, Position, AO, Curvature), with the whole mask stack. Grunges are swapped for free CC0 lookalikes. Painter smart masks (.spmsk) open too. Bake mesh maps in the Baking tab so they show.
   - **Not carried over:** filters (blur, sharpen), hand-painted strokes, and extra generators beyond the first on a mask. The message after translating lists what was skipped.
 - The layer's **Properties → Source** shows what was read and what was guessed.
 - Refine the result with the fill settings (projection, scale, adjustments) and smart masks, then **Save material** to keep it.

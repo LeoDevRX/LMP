@@ -69,15 +69,80 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "edge",
-          "amount": 0.3,
-          "contrast": 0.6,
-          "noise": 0.6,
-          "noiseScale": 7,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 7
+          "seed": 7,
+          "sp": {
+            "kind": "wear",
+            "p": {
+              "Wear_Level": 0.42,
+              "Wear_Contrast": 0.55,
+              "Grunge_Amount": 0.55,
+              "Curvature_Weight": 0.7,
+              "Edges_Smoothness": 0.6,
+              "Ambient_Occlusion_Masking": 0.5
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Grime",
+      "visible": true,
+      "opacity": 0.85,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.16,
+          0.15,
+          0.13
+        ],
+        "rough": 0.8,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 21,
+          "sp": {
+            "kind": "dirt",
+            "p": {
+              "dirt_level": 0.5,
+              "dirt_contrast": 0.45,
+              "grunge_amount": 0.45,
+              "edges_masking": 0.6,
+              "Use_Triplanar": true
+            }
+          }
         }
       }
     },
@@ -115,17 +180,55 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "dust",
-          "amount": 0.4,
-          "contrast": 0.45,
-          "noise": 0.55,
-          "noiseScale": 7,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 33
+          "seed": 33,
+          "sp": {
+            "kind": "dust",
+            "p": {
+              "level": 0.62,
+              "contrast": 0.4,
+              "occlusion_amount": 0.65,
+              "noise_opacity": 0.3,
+              "noise_scale": 160
+            }
+          },
+          "fx": [
+            {
+              "type": "painter",
+              "amount": 1,
+              "contrast": 1,
+              "noise": 0,
+              "noiseScale": 8,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 11,
+              "sp": {
+                "kind": "grunge",
+                "p": {
+                  "grunge": "grunge:soft/1",
+                  "scale": 1.5,
+                  "triplanar": true,
+                  "triplanar_contrast": 0.5,
+                  "balance": 0.6,
+                  "contrast": 0.2,
+                  "invert": false
+                }
+              },
+              "blend": "multiply",
+              "opacity": 0.75
+            }
+          ]
         }
       }
     }
-  ]
+  ],
+  "rev": 2
 }

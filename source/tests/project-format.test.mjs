@@ -20,7 +20,7 @@ test('Substance project filenames are rejected before loading their contents', (
   for (const name of ['sample.spp', 'D:\\Art\\MY PROJECT.SPP', '/art/model.spp']) {
     assert.throws(() => checkProjectFileName(name), rejected(/Substance Painter/));
   }
-  for (const name of ['sample.lmp', 'old.tpaint', 'material.sbsar', 'smart.spsm']) {
+  for (const name of ['sample.lp', 'sample.lmp', 'old.tpaint', 'material.sbsar', 'smart.spsm']) {
     assert.doesNotThrow(() => checkProjectFileName(name));
   }
 });

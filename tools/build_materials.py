@@ -137,6 +137,9 @@ def grunges(cfg):
                 aid = a['assetId']
                 if aid in used: continue
                 if c.get('prefix') and not any(aid.startswith(x) for x in c['prefix']): continue
+                if any(aid.startswith(x) for x in c.get('exclude', [])): continue
+                tags = {t.lower() for t in (a.get('tags') or [])}
+                if c.get('tags') and not tags & set(c['tags']): continue
                 url, _ = link(a, size)
                 if url: used.add(aid); picked.append((a, url))
         for a, url in picked:

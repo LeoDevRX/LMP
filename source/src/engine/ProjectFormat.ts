@@ -24,20 +24,20 @@ export async function parseProject(text: string): Promise<ProjectFile> {
   const head = text.slice(0, 16);
   if (/^\uFFFD?HDF\r\n\x1a\n/.test(head)) {
     throw new NotProjectError('This is a binary HDF5 file',
-      'This file is not a LocalPaint project, even if it was renamed to .lmp. If it is a Substance Painter .spp project, export its textures from Painter, then open the original model and import those textures in LocalPaint. For .spsm smart materials, use File > Import.');
+      'This file is not a LocalPaint project, even if it was renamed to .lp. If it is a Substance Painter .spp project, export its textures from Painter, then open the original model and import those textures in LocalPaint. For .spsm smart materials, use File > Import.');
   }
   if (/^PK(?:\x03\x04|\x05\x06|\x07\x08)/.test(head)) {
     throw new NotProjectError('This is a ZIP archive',
-      'Extract it first, then open the .lmp project inside it. Use File > Import for models, textures or Substance materials.');
+      'Extract it first, then open the .lp project inside it. Use File > Import for models, textures or Substance materials.');
   }
   let f: unknown;
   try { f = JSON.parse(text.replace(/^\uFEFF/, '')); } catch {
     throw new NotProjectError('This is not a LocalPaint project',
-      'LocalPaint projects are .lmp files saved with File > Save. To bring in a model, textures or Substance materials, use File > Import (Ctrl+I).');
+      'LocalPaint projects are .lp files saved with File > Save. To bring in a model, textures or Substance materials, use File > Import (Ctrl+I).');
   }
   if (!record(f) || f.format !== 'texpaint-project') {
     throw new NotProjectError('This is not a LocalPaint project',
-      'This file does not contain a LocalPaint project. Use a .lmp or .tpaint file saved by LocalPaint.');
+      'This file does not contain a LocalPaint project. Use a .lp file saved by LocalPaint (older .lmp and .tpaint files work too).');
   }
   if (![1, 2, 3].includes(f.version)) {
     throw new NotProjectError('Unsupported project version',
@@ -52,7 +52,7 @@ export async function parseProject(text: string): Promise<ProjectFile> {
       !Number.isInteger(f.resolution) || f.resolution <= 0 ||
       !Number.isInteger(f.activeIndex) || typeof f.name !== 'string') {
     throw new NotProjectError('This project is incomplete or damaged',
-      'The project is missing required model, layer or size information. Try an autosave or another copy of the .lmp file.');
+      'The project is missing required model, layer or size information. Try an autosave or another copy of the project.');
   }
   return f as unknown as ProjectFile;
 }
