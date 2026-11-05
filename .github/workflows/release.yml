@@ -5,7 +5,7 @@ name: Build LMP release
 on:
   push:
     branches: [main]
-    paths: ['app/**', 'presets/**', 'source/src/version.ts', 'tools/**', 'notes/**', '.github/workflows/release.yml']
+    paths: ['app/**', 'presets/**', 'source/src/version.ts', 'tools/seticon.mjs', 'tools/package.json', 'notes/**', '.github/workflows/release.yml']
   workflow_dispatch:
 
 permissions:

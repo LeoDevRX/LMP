@@ -1,0 +1,37 @@
+# Builds the scanned-materials release (CC0 scans from ambientCG) that LMP downloads materials from.
+# Runs when materials/config.json or the builder changes, or by hand.
+name: Build scanned materials
+
+on:
+  push:
+    branches: [main]
+    paths: ['materials/config.json', 'tools/build_materials.py', '.github/workflows/materials.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materials:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download and pack the scans
+        run: |
+          pip install --quiet pillow
+          python tools/build_materials.py
+          ls out | wc -l
+          du -sh out
+      - name: Publish them as the "materials" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Scanned materials for LMP. LMP downloads these by itself when you use one, so you don't need to download anything here. All materials are CC0 from ambientCG.com."
+          if ! gh release view materials >/dev/null 2>&1; then
+            gh release create materials --title "Scanned materials (used by LMP)" --notes "$NOTES" --target "$GITHUB_SHA" --latest=false
+          fi
+          gh release upload materials out/* --clobber
