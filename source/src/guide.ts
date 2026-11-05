@@ -61,50 +61,19 @@ export const GUIDES: Guide[] = [
   },
   {
     id: 'whats-new', title: `What's new in v${VERSION}`, cat: 'Start here',
-    sum: 'Substance materials with all their settings, updates, shapes and more.',
+    sum: 'What LMP can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
-      { h: 'New in v3.00', steps: [
-        'Substance materials (.sbsar) now come in with all their settings, like Painter\'s Substance material mode: presets, seed, the same groups, colours, sliders, on/off switches and image inputs.',
-        'If Substance 3D Designer is on your PC, LMP uses Adobe\'s own renderer for them, so they look exactly like in Painter. Without it, LMP uses its own version.',
-        'Simple Diffuse works fully in LMP, brush strokes and all.',
-        'Other materials get a much better stand-in: real panels, bricks, tiles, planks or lava cracks depending on the material, and their sliders do something.',
-        'Your Substance Painter materials show up on the shelf by themselves under Substance materials.',
+      { h: 'In v1.00', steps: [
+        'Paint colour, roughness, metal, height and glow in one stroke, with brushes, layers, folders and masks.',
+        'Smart materials and smart masks (edge wear, dirt, rust) that follow the shape of your model, with anchor points for micro details.',
+        'Shapes you can place and move on the model, or tile over the UVs.',
+        '114 free scanned materials, and Substance .sbsar materials with all their settings (exact with Adobe\'s engine if Substance 3D Designer is installed).',
+        'Bake normal, AO, curvature, thickness and other mesh maps, including from a high poly.',
+        'Hold ~ for Blender-style camera views (front, top, left…).',
+        'Autosave, history, UV overlap check, and this Guide with walk-throughs.',
+        'LMP checks for updates and can install them for you.',
       ] },
-      { h: 'New in v2.01', steps: [
-        'Anchor points like Substance: right click a layer > Add anchor point, then set Micro details on an Edge wear, Dirt, AO or Curvature mask. Wear and dirt follow your painted and shape details.',
-        'Shapes: 21 shapes (soft ones too), UV tiling mode, move / rotate / resize handles on the model, and Height detail (press in / stick out).',
-      ] },
-      { h: 'New in v2.00', steps: [
-        'Scanned materials: 114 real photo-scanned materials (metal, rust, painted metal, sci-fi plates, wood, stone, fabric, leather and more) with colour, roughness, metal, normal and height maps. Each one downloads the first time you use it.',
-        'Realistic smart materials built from those scans the way Substance builds them: Rusty Metal, Heavy Rust, Chipped Red Paint, Sci-Fi Panels, Worn Diamond Plate, Old Wood Planks, Mossy Rock and more.',
-        'The 3D view is lit by a real studio photo by default, so metals reflect like in Substance. Change it in Display settings.',
-        'New guide: how to bring a Substance material into LMP with its exact look.',
-      ] },
-      { h: 'New in v1.04', steps: [
-        'Walk me through it: many guides can now show you how, step by step. A pointer moves to each button and a small note under it says what to do.',
-      ] },
-      { h: 'New in v1.03', steps: [
-        'Updates now download one small file and the GitHub download page is simpler: just download LMP-vX.XX.zip.',
-      ] },
-      { h: 'New in v1.02', steps: [
-        'LMP tells you when a new version is out and can update itself with one click (Update now). If you pick Later, an Update button stays in the top bar.',
-        'Shape generator: right click a layer > Add generator > Shape. Pick a circle, star, heart and more, then drag it on the model to move it.',
-      ] },
-      { h: 'New in v1.00', steps: [
-        'Autosave. LMP saves a backup every few minutes, and if it closes by accident it asks to restore it next time.',
-        'History panel (H). Shows your last 25 changes. Click one to go back to it.',
-        'Start window with your recent projects and autosaves.',
-        'Settings (File > Settings) for autosave, texture size, render scale, undo steps and low performance mode.',
-        'Smoothing (lazy mouse) for steadier strokes.',
-        'Pen pressure for drawing tablets.',
-        'Layer thumbnails now show what is painted on each layer.',
-        'Smart material previews now show the real material instead of a plain colour.',
-        'More brushes, including Gubby.',
-        'Overlapping UVs show as dark spots on the model and in the 2D view (press O), so you can find them and fix them in Blender.',
-        'This Guide (F1).',
-      ] },
-      { p: 'The 3D + 2D layout key moved from F1 to F4, since F1 now opens the Guide.' },
     ],
     related: ['autosave', 'history', 'lazy-mouse', 'pen-pressure'],
   },
@@ -715,6 +684,17 @@ export const GUIDES: Guide[] = [
       { tips: ['The full download page is github.com/LeoDevRX/LMP/releases.'] },
     ],
     show: [{ label: 'Check for updates', act: 'updates' }],
+  },
+  {
+    id: 'view-pie', title: 'Jump to front, top, side views', cat: 'Basics',
+    sum: 'Hold ~ for a ring of views, like Blender.',
+    tags: ['view', 'camera', 'shortcut'], words: 'blender pie tilde ~ backtick front back left right top bottom view camera snap orthographic numpad angle frame zoom fit',
+    body: [{ steps: [
+      'Put the mouse over the 3D view and hold the ~ key (left of 1).',
+      'A ring of views pops up around the mouse: Top, Bottom, Left, Right, Front, Back, a 3/4 view and Frame model.',
+      'Move the mouse toward the one you want and let go of ~. The camera swings there and zooms to fit the model.',
+    ] }, { tips: ['Just tap ~ and the ring stays open, so you can click a view instead.', 'Esc closes it.'] }],
+    related: ['shortcuts'],
   },
   {
     id: 'shortcuts', title: 'Keyboard shortcuts', cat: 'Help & settings',

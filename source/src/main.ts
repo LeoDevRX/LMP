@@ -955,7 +955,7 @@ class App {
     const st = { ...this.settings };
     const num = (label: string, key: 'autosaveMinutes' | 'autosaveKeep' | 'historyLimit', min: number, max: number, unit = '') =>
       slider(label, { min, max, step: 1, value: st[key], fmt: (v) => `${v}${unit}`, onInput: (v) => { st[key] = v; } }).el;
-    const check = (label: string, key: 'autosave' | 'lowPerf' | 'startScreen' | 'checkUpdates', note?: string) => {
+    const check = (label: string, key: 'autosave' | 'lowPerf' | 'startScreen' | 'checkUpdates' | 'confirmDelete', note?: string) => {
       const c = el('input', { type: 'checkbox', checked: st[key] }) as HTMLInputElement;
       c.addEventListener('change', () => { st[key] = c.checked; });
       return el('label', { class: 'check-row', title: note ?? '' }, c, ' ' + label);
@@ -966,6 +966,8 @@ class App {
       el('div', { class: 'row' }, el('label', {}, 'Texture size'), select<number>([512, 1024, 2048, 4096].map((v) => ({ value: v, label: `${v} × ${v}` })), st.defaultSize, (v) => { st.defaultSize = v; })),
       check('Show the start screen when LMP opens', 'startScreen'),
       check('Check for updates when LMP starts', 'checkUpdates'),
+      el('h4', {}, 'Layers'),
+      check('Ask before deleting folders and paint layers', 'confirmDelete', 'Off: they\'re deleted right away. Ctrl+Z brings them back either way.'),
       el('h4', {}, 'Performance'),
       check('Low performance mode (weaker devices)', 'lowPerf', 'Sharper-but-slower things are turned down: render scale 1, smaller previews, lighter bakes, fewer undo steps'),
       el('div', { class: 'row' }, el('label', {}, 'Render scale'), select<number>([{ value: 0, label: 'Automatic' }, { value: 1, label: '1× (fastest)' }, { value: 1.5, label: '1.5×' }, { value: 2, label: '2× (sharpest)' }], st.pixelRatio, (v) => { st.pixelRatio = v; })),
@@ -1701,6 +1703,9 @@ class App {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     window.addEventListener('keydown', (e) => this.onKey(e));
+    window.addEventListener('pointermove', (e) => { this.mouseX = e.clientX; this.mouseY = e.clientY; if (this.pie) this.pieMove(e.clientX, e.clientY); }, true);
+    window.addEventListener('keyup', (e) => { if (e.code === 'Backquote' && this.pie) this.pieRelease(); });
+    window.addEventListener('blur', () => this.closePie());
     window.addEventListener('click', () => document.querySelectorAll('.menu.open').forEach((m) => m.classList.remove('open')));
 
     let depth = 0;
@@ -2397,6 +2402,12 @@ class App {
       return;
     }
     if (t && (t.tagName === 'INPUT' && ['text', 'search', 'number'].includes((t as HTMLInputElement).type))) return;
+    if (this.pie && e.key === 'Escape') { e.preventDefault(); this.closePie(); return; }
+    if (e.code === 'Backquote' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      if (!e.repeat && !this.pie) this.openPie();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && k === 'z' && !e.shiftKey) { e.preventDefault(); this.undo(); return; }
     if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); this.redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k === 'g' && this.mode === 'paint') { e.preventDefault(); this.groupLayers(this.selection()); return; }
@@ -2840,7 +2851,7 @@ class App {
     const rows: [string, string][] = [
       ['Paint / Erase / Picker', 'B / E / P'], ['Brush size / hardness', '[ ]  /  { }'],
       ['Orbit / Pan / Zoom', 'RMB or Alt+LMB / MMB / Wheel'], ['Frame model (or 2D view)', 'F'],
-      ['Guide', 'F1'], ['Layouts 3D / 2D / 3D+2D', 'F2 / F3 / F4'], ['History panel', 'H'], ['Straight line', 'Shift+click'], ['Path tool / polygon fill', 'L / G'], ['X symmetry', 'X'], ['Views (both panes)', '1 – 9, 0'],
+      ['Guide', 'F1'], ['Layouts 3D / 2D / 3D+2D', 'F2 / F3 / F4'], ['History panel', 'H'], ['Straight line', 'Shift+click'], ['Path tool / polygon fill', 'L / G'], ['X symmetry', 'X'], ['Views (both panes)', '1 – 9, 0'], ['Camera views (front, top, left…)', 'Hold ~'],
       ['Paint the layer mask', 'M'], ['UV wireframe', 'W'], ['UV overlaps (dark spots)', 'O'], ['Brush size / hardness', 'Ctrl + right-drag ←→ / ↑↓'], ['Brush flow / rotation', 'Ctrl + left-drag ←→ / ↑↓'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Y'], ['Select several layers / assets', 'Ctrl+click · Shift+click'], ['Group / duplicate / delete selected layers', 'Ctrl+G / Ctrl+D / Delete'],
       ['Save / Save as / Open / Import', 'Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+I'], ['Export textures', 'Ctrl+Shift+E'], ['Leave Baking mode / close panel', 'Esc'],
     ];
@@ -2989,7 +3000,7 @@ class App {
       `LMP v${VERSION} · ${m.name} · ${m.triangles.toLocaleString()} tris · ${this.ts.size}×${this.ts.size}`;
     document.getElementById('status-hints')!.textContent = this.mode === 'bake'
       ? 'Baking mode · RMB orbit · MMB pan · Wheel zoom · Esc back to painting'
-      : 'LMB paint · RMB / Alt+LMB orbit · MMB pan · Wheel zoom · [ ] size · B/E/P tools · F2/F3/F4 layout · 1–0 views · M mask · F1 Guide';
+      : 'LMB paint · RMB / Alt+LMB orbit · MMB pan · Wheel zoom · [ ] size · B/E/P tools · F2/F3/F4 layout · 1–0 views · hold ~ camera views · M mask · F1 Guide';
   }
 
   // ================================================================ display settings flyout
@@ -4874,7 +4885,7 @@ class App {
   async deleteLayers(list: Layer[]) {
     if (!list.length) return;
     const risky = list.some((l) => l.kind === 'paint' || l.kind === 'group');
-    if (list.length > 1 || risky) {
+    if (this.settings.confirmDelete && (list.length > 1 || risky)) {
       const r = await this.modal({
         title: list.length > 1 ? `Delete ${list.length} layers?` : `Delete “${list[0].name}”?`,
         text: list.length === 1 && list[0].kind === 'group' ? 'The folder and everything in it will be removed. Ctrl+Z brings it back.' : 'Ctrl+Z brings it back.',
@@ -4887,6 +4898,74 @@ class App {
     this.sel.clear();
     this.modified = true;
     this.refresh();
+  }
+
+  // ---------------------------------------------------------------- view pie (Blender's ~ menu)
+
+  private mouseX = 0;
+  private mouseY = 0;
+  private pie: { root: HTMLElement; x: number; y: number; t0: number; pick: number; moved: boolean } | null = null;
+  private static PIE: { label: string; key: string; dir: [number, number, number] | null; ang: number }[] = [
+    { label: 'Top', key: 'top', dir: [0, 1, 0], ang: -90 },
+    { label: 'Front', key: 'front', dir: [0, 0, 1], ang: -45 },
+    { label: 'Right', key: 'right', dir: [1, 0, 0], ang: 0 },
+    { label: '3/4 view', key: 'persp', dir: [1, 0.55, 1.3], ang: 45 },
+    { label: 'Bottom', key: 'bottom', dir: [0, -1, 0], ang: 90 },
+    { label: 'Frame model', key: 'frame', dir: null, ang: 135 },
+    { label: 'Left', key: 'left', dir: [-1, 0, 0], ang: 180 },
+    { label: 'Back', key: 'back', dir: [0, 0, -1], ang: -135 },
+  ];
+
+  /** Hold ~ (the key left of 1): a ring of views around the mouse, like Blender. Move toward one and let go. */
+  private openPie() {
+    const vpEl = this.vp.renderer.domElement.getBoundingClientRect();
+    const inside = this.mouseX >= vpEl.left && this.mouseX <= vpEl.right && this.mouseY >= vpEl.top && this.mouseY <= vpEl.bottom;
+    const x = inside ? this.mouseX : vpEl.left + vpEl.width / 2, y = inside ? this.mouseY : vpEl.top + vpEl.height / 2;
+    const root = el('div', { class: 'view-pie', style: { left: `${x}px`, top: `${y}px` } });
+    root.append(el('div', { class: 'pie-center' }), el('div', { class: 'pie-title' }, 'View'));
+    App.PIE.forEach((p, i) => {
+      const r = 118, a = (p.ang * Math.PI) / 180;
+      const b = el('button', { class: 'pie-item', style: { left: `${Math.cos(a) * r}px`, top: `${Math.sin(a) * r}px` }, onclick: (e: MouseEvent) => { e.stopPropagation(); this.pieApply(i); } }, p.label);
+      b.dataset.i = String(i);
+      root.append(b);
+    });
+    document.body.append(root);
+    this.pie = { root, x, y, t0: performance.now(), pick: -1, moved: false };
+    root.addEventListener('pointerdown', (e) => { if ((e.target as HTMLElement).classList.contains('view-pie') || (e.target as HTMLElement).classList.contains('pie-center')) { e.stopPropagation(); this.closePie(); } });
+  }
+  private pieMove(mx: number, my: number) {
+    const p = this.pie!;
+    const dx = mx - p.x, dy = my - p.y;
+    const d = Math.hypot(dx, dy);
+    let pick = -1;
+    if (d > 28) {
+      p.moved = true;
+      const ang = (Math.atan2(dy, dx) * 180) / Math.PI;
+      let best = 999;
+      App.PIE.forEach((it, i) => { const diff = Math.abs(((ang - it.ang + 540) % 360) - 180); if (diff < best) { best = diff; pick = i; } });
+    }
+    p.pick = pick;
+    p.root.querySelectorAll('.pie-item').forEach((b) => b.classList.toggle('on', +(b as HTMLElement).dataset.i! === pick));
+    const c = p.root.querySelector('.pie-center') as HTMLElement;
+    c.style.setProperty('--a', `${Math.atan2(dy, dx)}rad`);
+    c.classList.toggle('aim', pick >= 0);
+  }
+  /** Let go of ~: pick what the mouse points at. A quick tap leaves the ring open to click. */
+  private pieRelease() {
+    const p = this.pie!;
+    if (p.pick >= 0) this.pieApply(p.pick);
+    else if (performance.now() - p.t0 > 350 || p.moved) this.closePie();
+  }
+  private pieApply(i: number) {
+    const it = App.PIE[i];
+    this.closePie();
+    if (!it.dir) this.vp.viewFrom(this.vp.camera.position.clone().sub(this.vp.controls.target));
+    else this.vp.viewFrom(new THREE.Vector3(...it.dir));
+    toast(`View: ${it.label}`);
+  }
+  private closePie() {
+    this.pie?.root.remove();
+    this.pie = null;
   }
 
   /** Put layers in a new folder (Ctrl+G). */

@@ -374,6 +374,40 @@ export class Viewport {
     for (const m of this.meshes) m.material = mat;
   }
 
+  private camAnim = 0;
+  /**
+   * Blender-style view: look from a direction (e.g. front = +Z) at the model, framed to fit.
+   * Animates for a moment, like Blender's smooth view.
+   */
+  viewFrom(dir: THREE.Vector3, ms = 260) {
+    const vf = THREE.MathUtils.degToRad(this.camera.fov);
+    const hf = 2 * Math.atan(Math.tan(vf / 2) * Math.max(0.2, this.camera.aspect));
+    const dist = 1.12 / Math.sin(Math.min(vf, hf) / 2);
+    const d = dir.clone().normalize();
+    // Straight up / down would lock the orbit; tilt a hair so it still turns.
+    if (Math.abs(d.y) > 0.999) d.set(0, Math.sign(d.y), 0.0015).normalize();
+    const fromT = this.controls.target.clone();
+    const fromOff = this.camera.position.clone().sub(fromT);
+    const fromDist = fromOff.length();
+    const fromDir = fromOff.normalize();
+    const q0 = new THREE.Quaternion(), q1 = new THREE.Quaternion().setFromUnitVectors(fromDir, d);
+    const t0 = performance.now();
+    const id = ++this.camAnim;
+    const step = () => {
+      if (id !== this.camAnim) return;
+      const t = Math.min(1, (performance.now() - t0) / ms);
+      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const q = q0.clone().slerp(q1, e);
+      const cur = fromDir.clone().applyQuaternion(q).normalize();
+      if (t >= 1) cur.copy(d);
+      this.controls.target.lerpVectors(fromT, new THREE.Vector3(), e);
+      this.camera.position.copy(this.controls.target).addScaledVector(cur, fromDist + (dist - fromDist) * e);
+      this.controls.update();
+      if (t < 1) requestAnimationFrame(step);
+    };
+    step();
+  }
+
   frame() {
     // Fit the unit sphere in whichever of the vertical / horizontal FOV is smaller.
     const vf = THREE.MathUtils.degToRad(this.camera.fov);

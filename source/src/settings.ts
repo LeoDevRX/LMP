@@ -24,12 +24,14 @@ export interface Settings {
   sbsAdobe: boolean;
   /** Where sbsrender.exe is, if the user pointed LMP at it ('' = look in the usual places). */
   sbsPath: string;
+  /** Ask before deleting folders / paint layers (Ctrl+Z always brings them back). */
+  confirmDelete: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   autosave: true, autosaveMinutes: 3, autosaveKeep: 5, defaultSize: 1024, pixelRatio: 0, historyLimit: 25,
   lowPerf: false, perfAsked: false, welcomed: false, startScreen: true, checkUpdates: true, envName: 'studio_small_09_1k',
-  sbsAdobe: true, sbsPath: '',
+  sbsAdobe: true, sbsPath: '', confirmDelete: false,
 };
 
 const KEY = 'lmp-settings';
