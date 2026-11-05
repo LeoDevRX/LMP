@@ -61,10 +61,14 @@ export const GUIDES: Guide[] = [
   },
   {
     id: 'whats-new', title: `What's new in v${VERSION}`, cat: 'Start here',
-    sum: 'Autosave, history, the Guide, smoothing, pen pressure and more.',
+    sum: 'Updates, shapes, autosave, history, the Guide and more.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
-      { h: 'Added in this version', steps: [
+      { h: 'New in v1.02', steps: [
+        'LMP tells you when a new version is out and can update itself with one click (Update now). If you pick Later, an Update button stays in the top bar.',
+        'Shape generator: right click a layer > Add generator > Shape. Pick a circle, star, heart and more, then drag it on the model to move it.',
+      ] },
+      { h: 'New in v1.00', steps: [
         'Autosave. LMP saves a backup every few minutes, and if it closes by accident it asks to restore it next time.',
         'History panel (H). Shows your last 25 changes. Click one to go back to it.',
         'Start window with your recent projects and autosaves.',
@@ -363,6 +367,21 @@ export const GUIDES: Guide[] = [
     related: ['paint-2d', 'open-model'],
   },
   {
+    id: 'shapes', title: 'Shapes (move a shape on the model)', cat: 'Layers & materials',
+    sum: 'A mask generator that puts a circle, star, heart and more on the model.',
+    tags: ['shape', 'mask', 'smart'], words: 'shape shapes circle square star heart triangle hexagon ring diamond cross plus sticker decal logo spot move drag place position generator projection stencil',
+    body: [
+      { steps: [
+        'Right click a layer and choose Add generator > Shape (circle, star…). The layer now only shows inside the shape.',
+        'Drag on the 3D view to move the shape. It turns to face whatever surface you drag over. Press Esc or Done when it\'s in place.',
+        'In Properties change the shape, size, stretch, rotation and how hard the edge is. Tick Invert to cut the shape out instead.',
+        'To move it again later, select the layer\'s mask and click "Move: drag it on the model".',
+      ] },
+      { tips: ['You can add a shape to an existing mask too: Properties > Mask effects > Add effect > Generator: Shape. Multiply cuts it out of the mask, Lighten adds it.'] },
+    ],
+    related: ['masks', 'smart-masks'],
+  },
+  {
     id: 'poly-fill', title: 'Filling a whole part', cat: 'Painting',
     sum: 'G fills a triangle, UV island, part or the whole object.',
     tags: ['fill', 'mask'], words: 'polygon fill bucket island part object triangle face select whole area paint bucket',
@@ -588,6 +607,21 @@ export const GUIDES: Guide[] = [
     related: ['settings'],
   },
   {
+    id: 'updates', title: 'Updating LMP', cat: 'Help & settings',
+    sum: 'LMP checks for new versions and can update itself.',
+    tags: ['update', 'settings'], words: 'update updates upgrade new version newer latest outdated out of date download github release check',
+    body: [
+      { steps: [
+        'When LMP starts it asks GitHub if there is a newer version. If there is, a window tells you what\'s new.',
+        'Click Update now. LMP downloads only the changed files (a few MB), then restarts. Your projects and autosaves aren\'t touched.',
+        'If you click Later, an orange Update button stays in the top bar next to the Guide button until you update.',
+        'You can check yourself any time with File > Check for updates, and turn the start check off in File > Settings.',
+      ] },
+      { tips: ['The full download page is github.com/LeoDevRX/LMP/releases.'] },
+    ],
+    show: [{ label: 'Check for updates', act: 'updates' }],
+  },
+  {
     id: 'shortcuts', title: 'Keyboard shortcuts', cat: 'Help & settings',
     sum: 'All the keys in one list.',
     tags: ['shortcut'], words: 'keys keyboard shortcuts hotkeys hotkey controls list buttons',
@@ -612,7 +646,7 @@ const SYN: Record<string, string[]> = {
   open: ['open', 'opening', 'load', 'reopen', 'recent'],
   new: ['new', 'start', 'fresh', 'begin', 'create', 'blank'],
   model: ['model', 'mesh', 'fbx', 'obj', 'glb', 'gltf', 'object', 'character', '3d'],
-  import: ['import', 'drag', 'drop', 'add', 'bring', 'insert'],
+  import: ['import', 'drag', 'drop', 'bring', 'insert'],
   image: ['image', 'images', 'png', 'jpg', 'jpeg', 'photo', 'picture', 'texture', 'textures', 'decal', 'sticker', 'logo'],
   symmetry: ['symmetry', 'symmetric', 'mirror', 'mirrored', 'mirroring', 'both', 'sides', 'flip', 'reflect'],
   pressure: ['pressure', 'pen', 'tablet', 'wacom', 'huion', 'stylus', 'sensitivity', 'sensitive'],
@@ -620,12 +654,13 @@ const SYN: Record<string, string[]> = {
   color: ['color', 'colour', 'colors', 'colours', 'paint', 'tint', 'hue'],
   erase: ['erase', 'eraser', 'rubber', 'remove', 'wipe'],
   brush: ['brush', 'brushes', 'stroke', 'strokes', 'draw', 'drawing'],
-  alpha: ['alpha', 'alphas', 'stamp', 'shape', 'tip', 'tips', 'grunge', 'splatter'],
+  alpha: ['alpha', 'alphas', 'stamp', 'tip', 'tips', 'grunge', 'splatter'],
+  shape: ['shape', 'shapes', 'circle', 'square', 'star', 'heart', 'triangle', 'hexagon', 'ring', 'diamond', 'decal', 'sticker', 'generator'],
   size: ['size', 'bigger', 'smaller', 'radius', 'resize', 'big', 'small', 'width', 'thick', 'thin'],
   flow: ['flow', 'build', 'buildup'],
   opacity: ['opacity', 'transparent', 'transparency', 'faint', 'strength', 'see'],
   paint: ['paint', 'painting', 'draw', 'colour'],
-  fill: ['fill', 'bucket', 'polygon', 'island', 'part', 'parts', 'whole', 'triangle', 'face'],
+  fill: ['fill', 'shape', 'shapes', 'circle', 'star', 'heart', 'decal', 'sticker', 'bucket', 'polygon', 'island', 'part', 'parts', 'whole', 'triangle', 'face'],
   layer: ['layer', 'layers', 'folder', 'group', 'blend', 'stack', 'order', 'reorder'],
   mask: ['mask', 'masks', 'masking', 'hide', 'reveal', 'only', 'black', 'white'],
   smart: ['smart', 'automatic', 'auto', 'procedural', 'generator'],
@@ -647,7 +682,7 @@ const SYN: Record<string, string[]> = {
   start: ['start', 'started', 'begin', 'beginner', 'tutorial', 'intro', 'learn', 'basics', 'first', 'howto', 'help', 'welcome'],
   setup: ['setup', 'set', 'install', 'configure'],
   about: ['about', 'credits', 'credit', 'owner', 'owned', 'author', 'made', 'creator', 'version', 'h9_zy', 'h9zy', 'h9'],
-  update: ['update', 'updates', 'changelog', 'changes', 'whats', 'latest', 'release'],
+  update: ['update', 'updates', 'updating', 'upgrade', 'changelog', 'changes', 'whats', 'latest', 'release', 'outdated', 'version', 'newer'],
   tip: ['tip', 'tips'],
 };
 

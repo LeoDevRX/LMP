@@ -1,7 +1,14 @@
 /** Mask generators: procedural masks driven by the baked mesh maps. */
 import { GLSL_NOISE, PatternType } from './Procedural';
 
-export type GenType = 'edge' | 'dirt' | 'ao' | 'gradient' | 'dust' | 'noise' | 'curvature' | 'thick' | 'id' | 'pattern';
+export type GenType = 'edge' | 'dirt' | 'ao' | 'gradient' | 'dust' | 'noise' | 'curvature' | 'thick' | 'id' | 'pattern' | 'shape';
+/** Shapes for the Shape generator. */
+export type ShapeKind = 'circle' | 'square' | 'rounded' | 'triangle' | 'star' | 'hexagon' | 'diamond' | 'ring' | 'heart' | 'cross';
+export const SHAPE_KINDS: ShapeKind[] = ['circle', 'square', 'rounded', 'triangle', 'star', 'hexagon', 'diamond', 'ring', 'heart', 'cross'];
+export const SHAPE_LABEL: Record<ShapeKind, string> = {
+  circle: 'Circle', square: 'Square', rounded: 'Rounded square', triangle: 'Triangle', star: 'Star', hexagon: 'Hexagon',
+  diamond: 'Diamond', ring: 'Ring', heart: 'Heart', cross: 'Cross / plus',
+};
 /** How an effect combines with the effects below it (Substance / TextureCraft mask layers). */
 export type FxBlend = 'normal' | 'multiply' | 'lighten' | 'darken' | 'add' | 'subtract' | 'screen' | 'overlay' | 'difference';
 export const FX_BLENDS: FxBlend[] = ['normal', 'multiply', 'lighten', 'darken', 'add', 'subtract', 'screen', 'overlay', 'difference'];
@@ -34,6 +41,16 @@ export interface GenSettings {
   /** Pattern generator: which pattern and its size (cells across the model). */
   pattern?: PatternType;
   scale?: number;
+  /** Shape generator: which shape, where it sits on the model (model space) and which way it faces. */
+  shape?: ShapeKind;
+  shapeAt?: [number, number, number];
+  shapeNormal?: [number, number, number];
+  /** Half width as a fraction of the model's size. */
+  shapeSize?: number;
+  /** Width ÷ height. */
+  shapeAspect?: number;
+  /** Degrees. */
+  shapeRot?: number;
   /** Extra effects (bottom → top) blended over this one, like Substance's mask stack. */
   fx?: MaskFx[];
   /** Invert the whole stack at the end. */
@@ -51,9 +68,10 @@ export const GEN_LABEL: Record<GenType, string> = {
   thick: 'Thickness',
   id: 'ID color selection',
   pattern: 'Procedural pattern',
+  shape: 'Shape (circle, star…)',
 };
 export const GEN_TYPES = Object.keys(GEN_LABEL) as GenType[];
-const GEN_INDEX: Record<GenType, number> = { edge: 0, dirt: 1, ao: 2, gradient: 3, dust: 4, noise: 5, curvature: 6, thick: 8, id: 7, pattern: 9 };
+const GEN_INDEX: Record<GenType, number> = { edge: 0, dirt: 1, ao: 2, gradient: 3, dust: 4, noise: 5, curvature: 6, thick: 8, id: 7, pattern: 9, shape: 10 };
 
 export function defaultGen(type: GenType): GenSettings {
   const base: GenSettings = {
@@ -71,6 +89,7 @@ export function defaultGen(type: GenType): GenSettings {
     case 'thick': return { ...base, amount: 0.5, contrast: 0.3, noise: 0, invert: true };
     case 'id': return { ...base, amount: 1, contrast: 1, noise: 0, colors: [], tolerance: 0.1 };
     case 'pattern': return { ...base, amount: 0.5, contrast: 1 / 3, noise: 0, pattern: 'grunge', scale: 3 };
+    case 'shape': return { ...base, amount: 1, contrast: 0.9, noise: 0, shape: 'circle', shapeSize: 0.2, shapeAspect: 1, shapeRot: 0 };
   }
 }
 
@@ -120,7 +139,32 @@ uniform sampler2D prevMap;
 uniform int fxBlend;
 uniform float fxOpacity;
 uniform bool outInv;
+uniform int shpKind;
+uniform vec3 shpC;
+uniform vec3 shpN;
+uniform vec3 shpU;
+uniform vec3 shpV;
+uniform vec2 shpHalf;
+uniform float shpSoft;
 ${GLSL_NOISE}
+// Signed distance of the Shape generator's shapes (negative inside, ~1 unit = half size).
+float sdShape(int k, vec2 q) {
+  if (k == 1) { vec2 d = abs(q) - 1.0; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
+  if (k == 2) { vec2 d = abs(q) - 0.7; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - 0.3; }
+  if (k == 3) { q.y += 0.25; const float k3 = 1.7320508; q.x = abs(q.x) - 1.0; q.y = q.y + 1.0 / k3;
+    if (q.x + k3 * q.y > 0.0) q = vec2(q.x - k3 * q.y, -k3 * q.x - q.y) / 2.0; q.x -= clamp(q.x, -2.0, 0.0); return -length(q) * sign(q.y); }
+  if (k == 4) { float a = atan(q.x, q.y); float r = length(q); float seg = 6.2831853 / 5.0;
+    float m = mod(a + seg * 0.5, seg) - seg * 0.5; float rr = mix(0.45, 1.0, pow(abs(cos(m * 2.5)), 6.0)); return r - rr; }
+  if (k == 5) { vec2 p = abs(q); return max(p.x * 0.8660254 + p.y * 0.5, p.y) - 0.92; }
+  if (k == 6) return (abs(q.x) + abs(q.y)) * 0.7071 - 0.7071;
+  if (k == 7) return abs(length(q) - 0.72) - 0.28;
+  if (k == 8) { vec2 p = vec2(abs(q.x), -q.y * 1.05 + 0.2); p *= 1.15;
+    if (p.y + p.x > 1.0) return (sqrt(dot(p - vec2(0.25, 0.75), p - vec2(0.25, 0.75))) - 0.35355) / 1.15;
+    return sqrt(min(dot(p - vec2(0.0, 1.0), p - vec2(0.0, 1.0)), dot(p - 0.5 * max(p.x + p.y, 0.0), p - 0.5 * max(p.x + p.y, 0.0)))) * sign(p.x - p.y) / 1.15; }
+  if (k == 9) { vec2 p = abs(q); vec2 a = p - vec2(1.0, 0.33); vec2 b = p - vec2(0.33, 1.0);
+    float da = length(max(a, 0.0)) + min(max(a.x, a.y), 0.0); float db = length(max(b, 0.0)) + min(max(b.x, b.y), 0.0); return min(da, db); }
+  return length(q) - 1.0;
+}
 float fxMix(int m, float a, float b) {
   if (m == 1) return a * b;
   if (m == 2) return max(a, b);
@@ -165,10 +209,20 @@ void main() {
       }
     }
     else if (type == 8) raw = M.b;
+    else if (type == 10) {
+      // Shape: projected onto the model like a decal, facing shpN.
+      vec3 d = P.xyz - shpC;
+      vec2 q = vec2(dot(d, shpU) / shpHalf.x, dot(d, shpV) / shpHalf.y);
+      float sd = sdShape(shpKind, q);
+      float face = smoothstep(0.15, 0.45, dot(n, shpN));
+      // Like a sticker: only surfaces close to where it was placed, so it doesn't smear over edges.
+      float depth = abs(dot(d, shpN)) / max(max(shpHalf.x, shpHalf.y), 1e-4);
+      raw = (1.0 - smoothstep(-shpSoft, shpSoft, sd)) * face * (1.0 - smoothstep(0.35, 0.7, depth));
+    }
     else raw = cv;
     // Noise breakup (TextureCraft's: world perlin fbm around the threshold).
-    if (noiseAmt > 0.0 && type != 5 && type != 7 && type != 9) raw += (fbmPerlin(pn * noiseScale, 4, us) - 0.5) * noiseAmt;
-    if (type == 7) v = raw; // ID selection: exact regions, no threshold
+    if (noiseAmt > 0.0 && type != 5 && type != 7 && type != 9 && type != 10) raw += (fbmPerlin(pn * noiseScale, 4, us) - 0.5) * noiseAmt;
+    if (type == 7 || type == 10) v = raw; // ID selection and shapes: exact regions, no threshold
     else if (type == 9) v = patShape(raw, contrast * 3.0, amount - 0.5, false); // patterns: contrast/balance, no threshold
     else {
       float th = 1.0 - amount;

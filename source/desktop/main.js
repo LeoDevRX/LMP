@@ -1,7 +1,8 @@
 // LMP (Leo's Material Painter) desktop app (Electron). Runs LMP.html in its own window with the fast GPU,
 // direct access to the presets folder next to LMP.exe, and .lmp project files (open / save / save as,
 // double-click a .lmp in Explorer to open it).
-const { app, BrowserWindow, ipcMain, session, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, dialog, net } = require('electron');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
@@ -202,6 +203,67 @@ ipcMain.handle('recent:add', (_e, p, name, thumb) => {
   return true;
 });
 ipcMain.handle('recent:remove', (_e, p) => { try { fs.writeFileSync(recentFile(), JSON.stringify(readRecent().filter((r) => r.path !== p))); } catch { /* fine */ } return true; });
+
+// ---------------------------------------------------------------- updates (GitHub releases)
+
+const REPO = 'LeoDevRX/LMP';
+const RELEASES = `https://github.com/${REPO}/releases/latest`;
+async function getJSON(url) {
+  const r = await net.fetch(url, { headers: { 'User-Agent': 'LMP-updater', Accept: 'application/vnd.github+json' } });
+  if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
+  return r.json();
+}
+async function getBytes(url) {
+  const r = await net.fetch(url, { headers: { 'User-Agent': 'LMP-updater' } });
+  if (!r.ok) throw new Error(`Download failed (${r.status})`);
+  return Buffer.from(await r.arrayBuffer());
+}
+/** The newest release: { version, notes, url, hasUpdateFiles } or null when offline. */
+ipcMain.handle('update:check', async () => {
+  try {
+    const rel = await getJSON(`https://api.github.com/repos/${REPO}/releases/latest`);
+    return {
+      version: String(rel.tag_name || '').replace(/^v/i, ''), notes: rel.body || '', url: rel.html_url || RELEASES,
+      hasUpdateFiles: (rel.assets || []).some((a) => a.name === 'lmp-update.json'),
+    };
+  } catch (e) { return { error: String(e.message || e) }; }
+});
+/** Download the changed app files of the newest release, check them, and swap them in. Needs a restart after. */
+ipcMain.handle('update:install', async () => {
+  const appDir = __dirname;
+  try {
+    const rel = await getJSON(`https://api.github.com/repos/${REPO}/releases/latest`);
+    const assets = new Map((rel.assets || []).map((a) => [a.name, a.browser_download_url]));
+    if (!assets.has('lmp-update.json')) throw new Error('This release has no update files');
+    const manifest = JSON.parse((await getBytes(assets.get('lmp-update.json'))).toString('utf8'));
+    const files = (manifest.files || []).filter((f) => /^[\w.-]+$/.test(f.name) && !f.name.startsWith('.'));
+    if (!files.length) throw new Error('The update has no files');
+    // Download and check everything first, so a dropped connection never leaves a half-updated LMP.
+    const got = [];
+    for (const f of files) {
+      if (!assets.has(f.name)) throw new Error(`Missing ${f.name} in the release`);
+      const b = await getBytes(assets.get(f.name));
+      const sha = crypto.createHash('sha256').update(b).digest('hex');
+      if (f.sha256 && sha !== f.sha256) throw new Error(`${f.name} didn't download correctly`);
+      got.push([f.name, b]);
+    }
+    fs.accessSync(appDir, fs.constants.W_OK);
+    for (const [name, b] of got) fs.writeFileSync(path.join(appDir, name + '.new'), b);
+    for (const [name] of got) {
+      const target = path.join(appDir, name);
+      if (fs.existsSync(target)) fs.copyFileSync(target, target + '.bak');
+      fs.renameSync(target + '.new', target);
+    }
+    return { ok: true, version: manifest.version };
+  } catch (e) {
+    const msg = String(e.message || e);
+    return { ok: false, error: /EACCES|EPERM|EROFS/.test(msg) ? 'LMP can\'t write to its own folder (it may be in a protected place like Program Files).' : msg, url: RELEASES };
+  }
+});
+ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
+ipcMain.handle('shell:open', (_e, url) => {
+  if (/^https:\/\/github\.com\/LeoDevRX\//i.test(String(url))) shell.openExternal(String(url));
+});
 
 // ---------------------------------------------------------------- window
 

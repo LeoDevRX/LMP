@@ -5,7 +5,7 @@ name: Build LMP release
 on:
   push:
     branches: [main]
-    paths: ['app/**', 'presets/**', 'source/src/version.ts', 'tools/**', '.github/workflows/release.yml']
+    paths: ['app/**', 'presets/**', 'source/src/version.ts', 'tools/**', 'notes/**', '.github/workflows/release.yml']
   workflow_dispatch:
 
 permissions:
@@ -63,6 +63,14 @@ jobs:
           zip -qr -9 "../LMP-v$V.zip" LMP
           zip -qr -9 "../LMP-v$V-update.zip" LMP/resources/app LMP/README.md LMP/source
           cd ..
+          # Files the in-app updater downloads (LMP 1.02+), with checksums.
+          mkdir -p upd && cp build/LMP/resources/app/* upd/
+          node -e '
+            const fs=require("fs"),c=require("crypto");
+            const files=fs.readdirSync("upd").map(n=>({name:n,size:fs.statSync("upd/"+n).size,sha256:c.createHash("sha256").update(fs.readFileSync("upd/"+n)).digest("hex")}));
+            fs.writeFileSync("upd/lmp-update.json", JSON.stringify({version:process.argv[1],files},null,1));
+          ' "$V"
+          cat upd/lmp-update.json
           ls -lh LMP-v*.zip
 
       - name: Publish the release
@@ -76,7 +84,10 @@ jobs:
 
           **Already have LMP:** download the small LMP-v$V-update.zip, extract it into the folder that holds your LMP folder and replace files when Windows asks."
           # A rebuild of the same version replaces its release (and tag) so it points at this commit.
+          if [ -f "notes/v$V.md" ]; then NOTES="$(cat "notes/v$V.md")
+
+          $NOTES"; fi
           if gh release view "v$V" >/dev/null 2>&1; then
             gh release delete "v$V" --cleanup-tag --yes
           fi
-          gh release create "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" --target "$GITHUB_SHA" --title "LMP v$V" --notes "$NOTES" --latest
+          gh release create "v$V" "LMP-v$V.zip" "LMP-v$V-update.zip" upd/* --target "$GITHUB_SHA" --title "LMP v$V" --notes "$NOTES" --latest

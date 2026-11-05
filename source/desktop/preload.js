@@ -22,4 +22,8 @@ contextBridge.exposeInMainWorld('texpaintNative', {
   recentList: () => ipcRenderer.invoke('recent:list'),
   recentAdd: (p, name, thumb) => ipcRenderer.invoke('recent:add', p, name, thumb),
   recentRemove: (p) => ipcRenderer.invoke('recent:remove', p),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+  relaunch: () => ipcRenderer.invoke('app:relaunch'),
+  openUrl: (url) => ipcRenderer.invoke('shell:open', url),
 });

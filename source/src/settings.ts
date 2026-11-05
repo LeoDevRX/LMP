@@ -16,11 +16,13 @@ export interface Settings {
   welcomed: boolean;
   /** Show the start screen when LMP opens. */
   startScreen: boolean;
+  /** Ask GitHub for a newer LMP when it starts. */
+  checkUpdates: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   autosave: true, autosaveMinutes: 3, autosaveKeep: 5, defaultSize: 1024, pixelRatio: 0, historyLimit: 25,
-  lowPerf: false, perfAsked: false, welcomed: false, startScreen: true,
+  lowPerf: false, perfAsked: false, welcomed: false, startScreen: true, checkUpdates: true,
 };
 
 const KEY = 'lmp-settings';

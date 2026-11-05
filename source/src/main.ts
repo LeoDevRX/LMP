@@ -8,7 +8,7 @@ import {
   PaintTarget, BlendMode, BLEND_LABEL, GroupLayer, BakeKey, IdSource, ID_SOURCE_LABEL, DEFAULT_XF, DEFAULT_ADJ, FillAdjust,
 } from './engine/TextureSet';
 import { BrushPreset, BrushSettings, BUILTIN_TIPS, STARTER_BRUSHES, builtinTip, builtinTipThumb, imageTip, tipTexture, tipPreview } from './brushes';
-import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings } from './engine/Masks';
+import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings, SHAPE_KINDS, SHAPE_LABEL, ShapeKind } from './engine/Masks';
 import { PATTERNS, PATTERN_LABEL, PatternType } from './engine/Procedural';
 import { MeshParts, PartMode, PART_LABEL, Part } from './engine/MeshParts';
 import { MaterialPreset, PresetShelf, ShelfItem , isDesktopApp, openNativePresets , splitMapName } from './engine/Presets';
@@ -248,6 +248,7 @@ class App {
 
   setModel(model: LoadedModel, resolution?: number, skipBake = false) {
     this.projectPath = '';
+    this.shapeMove = null; document.body.classList.remove('moving-shape');
     this.shelfOpen?.clear();
     const bake = this.ts?.bakeSettings;
     const hs = this.ts?.heightStrength;
@@ -464,6 +465,66 @@ class App {
   }
 
 
+  // ================================================================ updates
+
+  /** The newer release on GitHub, if there is one. */
+  updateInfo: { version: string; url: string; notes: string; hasUpdateFiles: boolean } | null = null;
+  private static newer(a: string, b: string) {
+    const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d > 0; }
+    return false;
+  }
+  async checkForUpdates(manual = false) {
+    const native = this.native;
+    if (!native?.updateCheck) { if (manual) toast('Updates are checked in the LMP app'); return; }
+    if (manual) toast('Checking for updates…');
+    const r = await native.updateCheck();
+    if (!r || r.error) { if (manual) toast('Couldn\'t reach GitHub. Check your internet connection and try again.', true); return; }
+    if (!App.newer(r.version, VERSION)) { this.updateInfo = null; this.showUpdateButton(); if (manual) toast(`You have the latest version (v${VERSION})`); return; }
+    this.updateInfo = r;
+    this.showUpdateButton();
+    this.showUpdatePopup();
+  }
+  /** Purple "Update" button in the top bar while a newer version is out (stays until you update). */
+  private showUpdateButton() {
+    document.getElementById('update-btn')?.remove();
+    const u = this.updateInfo;
+    if (!u) return;
+    const b = el('button', { id: 'update-btn', class: 'update-top', title: `LMP v${u.version} is out (you have v${VERSION}). Click to update.`, onclick: (e: Event) => { e.stopPropagation(); this.showUpdatePopup(); } },
+      el('span', { class: 'arrow' }, '↑'), `Update to v${u.version}`);
+    const guide = document.getElementById('guide-btn');
+    if (guide) guide.after(b); else document.getElementById('menus')?.append(b);
+  }
+  private async showUpdatePopup() {
+    const u = this.updateInfo;
+    if (!u) return;
+    const notes = el('div', { class: 'update-notes' });
+    const lines = u.notes.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && !/^\*\*(new install|already have)/i.test(x)).slice(0, 8);
+    for (const l of lines) { const p = el('p', {}); p.innerHTML = guideFmt(l.replace(/^[-*]\s*/, '')); notes.append(p); }
+    const r = await this.modal({
+      title: `LMP v${u.version} is out`,
+      text: `You have v${VERSION}. Updating downloads only the changed files (a few MB) and restarts LMP. Your projects, autosaves and presets stay as they are.`,
+      icon: 'info', wide: true, content: lines.length ? notes : undefined,
+      buttons: [['Update now', 'update', 'primary'], ['Later', 'later']],
+    });
+    if (r === 'update') this.installUpdate();
+  }
+  private async installUpdate() {
+    const u = this.updateInfo, native = this.native;
+    if (!u || !native) return;
+    if (!u.hasUpdateFiles) { native.openUrl(u.url); toast('Opened the download page in your browser'); return; }
+    if (!(await this.confirmUnsaved('Update and restart LMP?'))) return;
+    const box = el('div', { class: 'lmp-modal-wrap' }, el('div', { class: 'lmp-modal' },
+      el('div', { class: 'lmp-modal-body' }, el('span', { class: 'spin big' }), el('div', {}, el('h3', {}, `Updating to v${u.version}…`), el('p', {}, 'Downloading the new files. LMP restarts by itself when it\'s done.')))));
+    document.body.append(box);
+    const res = await native.updateInstall();
+    box.remove();
+    if (res?.ok) { this.modified = false; toast(`Updated to v${res.version || u.version}. Restarting…`); setTimeout(() => native.relaunch(), 700); return; }
+    const r = await this.modal({ title: 'The update didn\'t finish', text: `${res?.error ?? 'Something went wrong.'} Nothing was changed. You can download the new version from GitHub instead.`, icon: 'warn',
+      buttons: [['Open download page', 'open', 'primary'], ['Close', 'close']] });
+    if (r === 'open') native.openUrl(res?.url || u.url);
+  }
+
   // ================================================================ Guide (F1)
 
   private guidePanel: HTMLElement | null = null;
@@ -603,6 +664,7 @@ class App {
     else if (a === 'display') { if (!this.flyout.classList.contains('open')) this.toggleFlyout(); }
     else if (a === 'shortcuts') this.showShortcuts();
     else if (a === 'overlap') { if (!this.showOverlap) this.toggleOverlap(true); }
+    else if (a === 'updates') this.checkForUpdates(true);
     if (s.hl) setTimeout(() => this.guideHighlight(s.hl!, s.text), 120);
   }
   private guideHighlight(sel: string, text?: string) {
@@ -706,7 +768,7 @@ class App {
     const st = { ...this.settings };
     const num = (label: string, key: 'autosaveMinutes' | 'autosaveKeep' | 'historyLimit', min: number, max: number, unit = '') =>
       slider(label, { min, max, step: 1, value: st[key], fmt: (v) => `${v}${unit}`, onInput: (v) => { st[key] = v; } }).el;
-    const check = (label: string, key: 'autosave' | 'lowPerf' | 'startScreen', note?: string) => {
+    const check = (label: string, key: 'autosave' | 'lowPerf' | 'startScreen' | 'checkUpdates', note?: string) => {
       const c = el('input', { type: 'checkbox', checked: st[key] }) as HTMLInputElement;
       c.addEventListener('change', () => { st[key] = c.checked; });
       return el('label', { class: 'check-row', title: note ?? '' }, c, ' ' + label);
@@ -716,6 +778,7 @@ class App {
       el('h4', {}, 'New files'),
       el('div', { class: 'row' }, el('label', {}, 'Texture size'), select<number>([512, 1024, 2048, 4096].map((v) => ({ value: v, label: `${v} × ${v}` })), st.defaultSize, (v) => { st.defaultSize = v; })),
       check('Show the start screen when LMP opens', 'startScreen'),
+      check('Check for updates when LMP starts', 'checkUpdates'),
       el('h4', {}, 'Performance'),
       check('Low performance mode (weaker devices)', 'lowPerf', 'Sharper-but-slower things are turned down: render scale 1, smaller previews, lighter bakes, fewer undo steps'),
       el('div', { class: 'row' }, el('label', {}, 'Render scale'), select<number>([{ value: 0, label: 'Automatic' }, { value: 1, label: '1× (fastest)' }, { value: 1.5, label: '1.5×' }, { value: 2, label: '2× (sharpest)' }], st.pixelRatio, (v) => { st.pixelRatio = v; })),
@@ -927,6 +990,7 @@ class App {
     if (session.crashed) this.openWindow('autosave', true);
     else if (!this.settings.welcomed) { this.settings.welcomed = true; saveSettings(this.settings); this.openGuide('getting-started'); }
     else if (this.settings.startScreen && this.native) this.openWindow('recent');
+    if (this.settings.checkUpdates) setTimeout(() => this.checkForUpdates(false), 2500);
   }
 
   // ================================================================ baking
@@ -1179,6 +1243,7 @@ class App {
       if (this.wantsAdjust(e)) { e.preventDefault(); this.startAdjust(e); return; }
       if (e.button === 0 && !e.altKey) {
         const uv = this.uv.toUV(e.clientX, e.clientY, rect());
+        if (this.shapeMove) { toast('Drag the shape on the 3D view (left)', true); return; }
         if (this.idPick >= 0) { this.pickIdColor(uv); return; }
         if (this.tool === 'fill' && this.mode === 'paint') { this.startBox('2d', e.clientX, e.clientY); return; }
         this.setPressure(e);
@@ -1376,6 +1441,14 @@ class App {
         this.startAdjust(e);
         return;
       }
+      if (e.button === 0 && !e.altKey && this.shapeMove) {
+        controls.enabled = false;
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* not an active pointer */ }
+        this.ts.checkpoint('Move shape');
+        this.shapeDragging = true;
+        this.moveShapeTo(e.clientX, e.clientY);
+        return;
+      }
       if (e.button === 0 && !e.altKey) {
         controls.enabled = false;
         try { canvas.setPointerCapture(e.pointerId); } catch { /* not an active pointer */ }
@@ -1394,6 +1467,7 @@ class App {
     canvas.addEventListener('pointermove', (e) => {
       if (this.adjust) { this.moveAdjust(e); return; }
       this.hover = { x: e.clientX, y: e.clientY };
+      if (this.shapeDragging) { this.moveShapeTo(e.clientX, e.clientY); return; }
       if (this.box?.pane === '3d') { this.moveBox(e.clientX, e.clientY); return; }
       if (this.pathDrag) { this.pathMove3(e.clientX, e.clientY); return; }
       if (this.tool === 'picker') this.updatePickPreview(e.clientX, e.clientY, this.vp.pick(e.clientX, e.clientY)?.uv);
@@ -1408,6 +1482,7 @@ class App {
     });
     const end = (e: PointerEvent) => {
       if (this.adjust) { this.endAdjust(); controls.enabled = true; return; }
+      if (this.shapeDragging) { this.shapeDragging = false; controls.enabled = true; this.queueLayerThumbs(); return; }
       if (this.box?.pane === '3d') this.endBox(e.ctrlKey || e.metaKey);
       if (this.pathDrag) this.pathUp();
       if (this.stroke) { this.lastEnd3 = this.stroke.hit.point.clone(); this.stroke = null; this.ts.endStroke(); this.queueLayerThumbs(); }
@@ -2156,6 +2231,7 @@ class App {
     else if (k === 'o') this.toggleOverlap();
     else if (k === 'escape') {
       if (this.guideOpen) this.closeGuide();
+      else if (this.shapeMove) { this.shapeMove = null; document.body.classList.remove('moving-shape'); this.buildToolbar(); this.buildProperties(); }
       else if (this.tool === 'path' && (this.path.p3.length || this.path.p2.length)) this.clearPath();
       else if (this.flyout.classList.contains('open')) this.flyout.classList.remove('open');
       else if (this.mode === 'bake') this.setMode('paint');
@@ -2526,6 +2602,7 @@ class App {
         ['Export textures…', () => this.openExport(), 'Ctrl+Shift+E'],
         '-',
         ['Settings…', () => this.openSettings()],
+        ['Check for updates…', () => this.checkForUpdates(true)],
       ]),
       menu('Edit', () => [
         ['Undo', () => this.undo(), 'Ctrl+Z'],
@@ -2649,6 +2726,12 @@ class App {
         el('span', { class: 'tb-note' }, 'Pick the maps on the left, set up the high poly and cage, then click Bake selected textures.'),
         el('button', { class: 'tb-back', onclick: () => this.setMode('paint') }, '← Back to painting'),
         right);
+      return;
+    }
+    if (this.shapeMove) {
+      host.append(el('div', { class: 'tb-title' }, 'Move shape'),
+        el('span', { class: 'tb-note' }, `Drag on the 3D view to move the shape on “${this.shapeMove.layer.name}”. Size, stretch and rotation are in Properties.`),
+        el('button', { class: 'primary', onclick: () => this.toggleShapeMove(this.shapeMove!.layer, this.shapeMove!.g) }, 'Done (Esc)'), right);
       return;
     }
     const title = { paint: 'Paint', erase: 'Eraser', picker: 'Material picker', fill: 'Polygon fill', path: 'Path' }[this.tool];
@@ -3525,9 +3608,46 @@ class App {
   }
 
   /** Substance-style: add a mask; a black mask means "paint white to reveal". */
+  // ---------------------------------------------------------------- Shape generator: place and move
+
+  /** The Shape generator being moved (dragging on the 3D view places it). */
+  shapeMove: { layer: Layer; g: GenSettings } | null = null;
+  private shapeDragging = false;
+  private shapeQueued: { x: number; y: number } | null = null;
+  /** Put a new shape where the middle of the 3D view hits the model. */
+  private placeShapeAtView(g: GenSettings) {
+    const r = this.vp.canvas.getBoundingClientRect(), v = this.vp.region;
+    const hit = this.vp.pick(r.left + v.x + v.w / 2, r.top + v.y + v.h / 2);
+    if (hit) { g.shapeAt = hit.point.toArray() as [number, number, number]; g.shapeNormal = hit.normal.clone().normalize().toArray() as [number, number, number]; }
+  }
+  toggleShapeMove(layer: Layer, g: GenSettings) {
+    this.shapeMove = this.shapeMove?.g === g ? null : { layer, g };
+    document.body.classList.toggle('moving-shape', !!this.shapeMove);
+    if (this.shapeMove) toast('Drag on the model to move the shape. Esc when done.');
+    this.buildToolbar(); this.buildProperties();
+  }
+  private moveShapeTo(x: number, y: number) {
+    this.shapeQueued = { x, y };
+    requestAnimationFrame(() => {
+      const q = this.shapeQueued, sm = this.shapeMove;
+      if (!q || !sm) return;
+      this.shapeQueued = null;
+      const hit = this.vp.pick(q.x, q.y);
+      if (!hit) return;
+      sm.g.shapeAt = hit.point.toArray() as [number, number, number];
+      sm.g.shapeNormal = hit.normal.clone().normalize().toArray() as [number, number, number];
+      this.ts.maskChanged(sm.layer);
+      this.modified = true;
+      this.poke();
+    });
+  }
+
   addMaskTo(layer: Layer, base: 'white' | 'black', gen: GenType | null) {
-    this.ts.addMask(layer, { base, gen: gen ? defaultGen(gen) : null });
+    const g = gen ? defaultGen(gen) : null;
+    if (g?.type === 'shape') this.placeShapeAtView(g);
+    this.ts.addMask(layer, { base, gen: g });
     this.ts.activeId = layer.id;
+    if (g?.type === 'shape' && layer.mask?.gen) { this.shapeMove = { layer, g: layer.mask.gen }; document.body.classList.add('moving-shape'); toast('Shape added. Drag on the model to move it, then press Esc (or Done) when it\'s where you want it.'); }
     this.paintTarget = 'mask';
     this.modified = true;
     if (base === 'black' && !gen) {
@@ -4040,7 +4160,7 @@ class App {
       item('Add white mask', () => this.addMaskTo(l, 'white', null)),
       el('div', { class: 'ctx-sub ctx-scroll' }, el('span', { class: 'muted' }, 'Smart mask presets'),
         ...SMART_MASKS.map((p) => item(p.label, () => this.applySmartMaskTo(l, p.id)))),
-      el('div', { class: 'ctx-sub' }, el('span', { class: 'muted' }, 'Add smart mask (one generator)'),
+      el('div', { class: 'ctx-sub' }, el('span', { class: 'muted' }, 'Add generator (black mask + generator)'),
         ...GEN_TYPES.map((t) => item(GEN_LABEL[t], () => this.addMaskTo(l, 'black', t)))),
       item('Remove mask', () => { ts.removeMask(l); this.paintTarget = 'content'; this.modified = true; }, !l.mask),
       el('hr'),
@@ -4473,10 +4593,26 @@ class App {
   }
 
   /** Controls of one generator (the mask's main one or a stacked effect). */
-  private genControls(g: GenSettings, pre: (k: string) => void, live: () => void, kp: string): HTMLElement[] {
+  private genControls(g: GenSettings, pre: (k: string) => void, live: () => void, kp: string, layer?: Layer): HTMLElement[] {
     const out: HTMLElement[] = [];
     const sl = (label: string, key: 'amount' | 'contrast', min: number, max: number, step: number) =>
       slider(label, { min, max, step, value: g[key], onInput: (v) => { pre(kp + key); g[key] = v; live(); } }).el;
+    if (g.type === 'shape') {
+      const ss = select<string>(SHAPE_KINDS.map((k) => ({ value: k, label: SHAPE_LABEL[k] })), g.shape ?? 'circle', (v) => { pre(kp + 'shape'); g.shape = v as ShapeKind; live(); });
+      const moving = !!layer && this.shapeMove?.g === g;
+      const inv = el('input', { type: 'checkbox', checked: g.invert }) as HTMLInputElement;
+      inv.addEventListener('change', () => { pre(kp + 'invert'); g.invert = inv.checked; live(); });
+      out.push(el('div', { class: 'row' }, el('label', {}, 'Shape'), ss),
+        layer ? el('div', { class: 'row' }, el('button', { class: 'grow' + (moving ? ' primary' : ''), onclick: () => this.toggleShapeMove(layer, g) },
+          moving ? 'Done moving (Esc)' : 'Move: drag it on the model')) : el('span', {}),
+        slider('Size', { min: 0.01, max: 1.5, step: 0.005, value: g.shapeSize ?? 0.2, fmt: (v) => Math.round(v * 100) + '%', onInput: (v) => { pre(kp + 'size'); g.shapeSize = v; live(); } }).el,
+        slider('Stretch', { min: 0.2, max: 5, step: 0.01, value: g.shapeAspect ?? 1, fmt: (v) => v.toFixed(2), onInput: (v) => { pre(kp + 'aspect'); g.shapeAspect = v; live(); } }).el,
+        slider('Rotation', { min: -180, max: 180, step: 1, value: g.shapeRot ?? 0, fmt: (v) => Math.round(v) + '°', onInput: (v) => { pre(kp + 'rot'); g.shapeRot = v; live(); } }).el,
+        sl('Hard edge', 'contrast', 0, 1, 0.01),
+        el('label', { class: 'check-row' }, inv, ' Invert (hide inside the shape)'),
+        el('p', { class: 'note' }, 'The shape is projected onto the model like a sticker. Click "Move" and drag on the 3D view to place it; it turns to face the surface you drag over.'));
+      return out;
+    }
     if (g.type === 'pattern') {
       const ps = select<string>(PATTERNS.map((p) => ({ value: p, label: PATTERN_LABEL[p] })), g.pattern ?? 'grunge', (v) => { pre(kp + 'pat'); g.pattern = v as PatternType; live(); });
       out.push(el('div', { class: 'row' }, el('label', {}, 'Pattern'), ps),
@@ -4512,7 +4648,7 @@ class App {
     const pre = (k: string) => ts.checkpoint('Edit mask', `mask:${layer.id}:${k}`);
     const out: HTMLElement[] = [];
     const genSel = select<string>([{ value: '', label: 'None (paint only)' }, ...GEN_TYPES.map((t) => ({ value: t, label: GEN_LABEL[t] }))],
-      m.gen?.type ?? '', (v) => { pre('type'); const keep = m.gen ? { fx: m.gen.fx, outInvert: m.gen.outInvert } : {}; m.gen = v ? { ...defaultGen(v as GenType), ...keep } : null; live(); this.buildProperties(); });
+      m.gen?.type ?? '', (v) => { pre('type'); const keep = m.gen ? { fx: m.gen.fx, outInvert: m.gen.outInvert } : {}; m.gen = v ? { ...defaultGen(v as GenType), ...keep } : null; if (m.gen?.type === 'shape') this.placeShapeAtView(m.gen); live(); this.buildProperties(); });
     const gen = group(`Generator · ${layer.name}`, el('div', { class: 'row' }, el('label', {}, 'Type'), genSel));
     out.push(gen);
     if (m.gen?.type === 'id') {
@@ -4544,14 +4680,14 @@ class App {
         el('button', { class: 'link', onclick: () => { this.bakeItem = 'id'; this.setMode('bake'); } }, 'Go to Baking')));
     } else if (m.gen) {
       const g = m.gen;
-      gen.append(...this.genControls(g, pre, live, 'g'));
-      if (g.type !== 'pattern') out.push(group('Grunge breakup', ...this.noiseControls(g, pre, live, 'g')));
+      gen.append(...this.genControls(g, pre, live, 'g', layer));
+      if (g.type !== 'pattern' && g.type !== 'shape') out.push(group('Grunge breakup', ...this.noiseControls(g, pre, live, 'g')));
       // Effect stack (Substance's mask layers / TextureCraft's effects): more generators and patterns blended on top.
       const fxBox = group('Mask effects', el('p', { class: 'note' }, 'Stack more generators and patterns on the one above (bottom → top). Multiply cuts away, Lighten adds more.'));
       (g.fx ?? []).forEach((e, k) => {
         const kp = `fx${k}`;
         const typeSel = select<string>([...GEN_TYPES.filter((t) => t !== 'id').map((t) => ({ value: t, label: GEN_LABEL[t] }))], e.type,
-          (v) => { pre(kp + 'type'); const ne: MaskFx = { ...defaultGen(v as GenType), blend: e.blend, opacity: e.opacity, on: e.on }; g.fx![k] = ne; live(); this.buildProperties(); });
+          (v) => { pre(kp + 'type'); const ne: MaskFx = { ...defaultGen(v as GenType), blend: e.blend, opacity: e.opacity, on: e.on }; if (ne.type === 'shape') this.placeShapeAtView(ne); g.fx![k] = ne; live(); this.buildProperties(); });
         const blendSel = select<string>(FX_BLENDS.map((b) => ({ value: b, label: FX_BLEND_LABEL[b] })), e.blend, (v) => { pre(kp + 'blend'); e.blend = v as MaskFx['blend']; live(); });
         const on = el('input', { type: 'checkbox', checked: e.on !== false, title: 'Enabled' }) as HTMLInputElement;
         on.addEventListener('change', () => { pre(kp + 'on'); e.on = on.checked; live(); });
@@ -4563,8 +4699,8 @@ class App {
           el('div', { class: 'row' }, el('label', {}, 'Type'), typeSel),
           el('div', { class: 'row' }, el('label', {}, 'Blend'), blendSel),
           slider('Opacity', { min: 0, max: 1, step: 0.01, value: e.opacity, fmt: (v) => Math.round(v * 100) + '%', onInput: (v) => { pre(kp + 'op'); e.opacity = v; live(); } }).el,
-          ...this.genControls(e, pre, live, kp),
-          ...(e.type !== 'pattern' && e.type !== 'noise' ? this.noiseControls(e, pre, live, kp) : []));
+          ...this.genControls(e, pre, live, kp, layer),
+          ...(e.type !== 'pattern' && e.type !== 'noise' && e.type !== 'shape' ? this.noiseControls(e, pre, live, kp) : []));
         fxBox.append(box);
       });
       const addSel = select<string>([{ value: '', label: '+ Add effect…' },
@@ -4573,6 +4709,7 @@ class App {
         if (!v) return;
         pre('add:' + Math.random());
         const base = v.startsWith('p:') ? { ...defaultGen('pattern'), pattern: v.slice(2) as PatternType } : defaultGen(v.slice(2) as GenType);
+        if (base.type === 'shape') this.placeShapeAtView(base);
         (g.fx ??= []).push({ ...base, blend: 'multiply', opacity: 1 });
         live(); this.buildProperties();
       });

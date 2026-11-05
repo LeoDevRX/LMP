@@ -633,3 +633,35 @@ body.picking-id #viewport canvas, body.picking-id #uv-overlay { cursor: crosshai
 
 .warn-dot { position: relative; }
 .warn-dot::after { content: ''; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: #ffb020; box-shadow: 0 0 0 1.5px var(--bg-dock); }
+
+body.moving-shape #viewport > canvas { cursor: move; }
+
+/* v1.02: update button + updating dialog */
+.update-top { display: flex; align-items: center; gap: 6px; height: 24px; margin-left: 8px; padding: 0 12px 0 5px; border-radius: 12px; cursor: pointer;
+  border: 1px solid #ffd27a; color: #2a1600; font-weight: 700; font-size: 12.5px; background: linear-gradient(180deg, #ffd88a, #ffb23f);
+  animation: updpulse 1.6s ease-in-out infinite; }
+.update-top .arrow { width: 17px; height: 17px; border-radius: 50%; background: #2a1600; color: #ffd27a; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+.update-top:hover { filter: brightness(1.08); }
+@keyframes updpulse { 0%, 100% { box-shadow: 0 0 0 0 #ffb23f00; } 50% { box-shadow: 0 0 0 5px #ffb23f40, 0 0 16px #ffb23f80; } }
+@media (prefers-reduced-motion: reduce) { .update-top { animation: none; } }
+.update-notes { max-height: 30vh; overflow-y: auto; padding: 8px 12px; border-radius: 8px; background: #15131c; border: 1px solid #2f2943; font-size: 12.5px; }
+.update-notes p { margin: 3px 0; color: #cfc8e2; }
+.spin.big { flex: none; width: 30px; height: 30px; border: 3px solid #b98cff44; border-top-color: #b98cff; border-radius: 50%; animation: lmpspin .8s linear infinite; }
+
+/* v1.02: cards and rows that are buttons grow with their text (the global button style is one line high) */
+.guide-row, .guide-card, .start-card, .hist-row, .guide-best .guide-row { height: auto; white-space: normal; line-height: 1.35; }
+.guide-row b, .guide-row span, .guide-card b, .guide-card span { display: block; min-width: 0; overflow-wrap: anywhere; }
+.guide-row { padding: 8px 10px; }
+.guide-card { padding: 12px; min-width: 0; }
+.guide-body { overflow-x: hidden; }
+.guide-body > * { max-width: 100%; }
+.guide-table { table-layout: fixed; }
+.guide-table td:first-child { width: 42%; padding-right: 10px; }
+.guide-table td:last-child { white-space: normal; }
+.guide-acts .lmp-btn { height: auto; min-height: 26px; padding: 4px 10px; white-space: normal; text-align: left; }
+.guide-back { height: auto; padding: 2px 0; border: 0; background: none; }
+.guide-back:hover:not(:disabled) { background: none; }
+.guide-row:hover:not(:disabled) { background: #9b5cff1a; border-color: #9b5cff55; }
+.guide-card:hover:not(:disabled) { background: #1a1822; }
+.guide-card.main:hover:not(:disabled) { background: linear-gradient(135deg, #7d3ff0, #a36bff); }
+.guide-try .chip { height: auto; min-height: 24px; padding: 3px 10px; white-space: normal; }

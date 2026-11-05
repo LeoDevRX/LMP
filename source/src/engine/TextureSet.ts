@@ -5,7 +5,7 @@ import { bakeHighToLow, HighBakeSettings, DEFAULT_HIGH, readFrames, FRAME_VERT, 
 import { MeshParts, idColor } from './MeshParts';
 import { bakeThickness, downsample, ThicknessSettings, DEFAULT_THICK } from './Thickness';
 import { RayBaker, SAMPLE_FLOATS } from './RayBaker';
-import { FRAG_GEN, GenSettings, LayerMaskSpec, axisVec, genIndex, MaskFx, FX_BLENDS } from './Masks';
+import { FRAG_GEN, GenSettings, LayerMaskSpec, axisVec, genIndex, MaskFx, FX_BLENDS, SHAPE_KINDS } from './Masks';
 import { FRAG_PROC, ProcSource, patternIndex, procKey } from './Procedural';
 import type { GraphJSON } from '../designer/Graph';
 
@@ -634,6 +634,8 @@ export class TextureSet {
     idMap: { value: null }, idCols: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) }, idN: { value: 0 }, idTol: { value: 0.1 },
     ctr: { value: new THREE.Vector3() }, rad: { value: 1 }, patKind: { value: 0 }, patScale: { value: 3 },
     hasPrev: { value: false }, prevMap: { value: null }, fxBlend: { value: 0 }, fxOpacity: { value: 1 }, outInv: { value: false },
+    shpKind: { value: 0 }, shpC: { value: new THREE.Vector3() }, shpN: { value: new THREE.Vector3(0, 0, 1) }, shpU: { value: new THREE.Vector3(1, 0, 0) },
+    shpV: { value: new THREE.Vector3(0, 1, 0) }, shpHalf: { value: new THREE.Vector2(0.2, 0.2) }, shpSoft: { value: 0.02 },
   });
   /** Renders a Material Designer graph into fill images (set by the app; used when opening projects). */
   graphBaker: ((g: GraphJSON) => Promise<Partial<Record<Ch, FillImage>>>) | null = null;
@@ -1720,6 +1722,35 @@ void main() {
     u.idN.value = Math.min(8, cols.length);
     (u.idCols.value as THREE.Vector3[]).forEach((v, k) => v.fromArray(cols[k] ?? [0, 0, 0]));
     u.idTol.value = g.tolerance ?? 0.1;
+    if (g.type === 'shape') this.shapeUniforms(g);
+  }
+
+  /** Where a Shape generator sits: its centre, facing and size (defaults to the front of the model). */
+  shapeFrame(g: GenSettings) {
+    const c = this.bboxMin.clone().add(this.bboxMax).multiplyScalar(0.5);
+    const rad = Math.max(1e-4, this.bboxMin.distanceTo(this.bboxMax) * 0.5);
+    const at = g.shapeAt ? new THREE.Vector3().fromArray(g.shapeAt) : new THREE.Vector3(c.x, c.y, this.bboxMax.z);
+    const n = new THREE.Vector3().fromArray(g.shapeNormal ?? [0, 0, 1]).normalize();
+    const ref = Math.abs(n.y) < 0.95 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    const u0 = new THREE.Vector3().crossVectors(ref, n).normalize();
+    const v0 = new THREE.Vector3().crossVectors(n, u0);
+    const a = ((g.shapeRot ?? 0) * Math.PI) / 180, ca = Math.cos(a), sa = Math.sin(a);
+    const u = u0.clone().multiplyScalar(ca).addScaledVector(v0, sa);
+    const v = v0.clone().multiplyScalar(ca).addScaledVector(u0, -sa);
+    const half = Math.max(1e-4, (g.shapeSize ?? 0.2) * rad);
+    return { at, n, u, v, hx: half * (g.shapeAspect ?? 1), hy: half, rad };
+  }
+
+  private shapeUniforms(g: GenSettings) {
+    const u = this.matGen.uniforms;
+    const f = this.shapeFrame(g);
+    u.shpKind.value = Math.max(0, SHAPE_KINDS.indexOf(g.shape ?? 'circle'));
+    (u.shpC.value as THREE.Vector3).copy(f.at);
+    (u.shpN.value as THREE.Vector3).copy(f.n);
+    (u.shpU.value as THREE.Vector3).copy(f.u);
+    (u.shpV.value as THREE.Vector3).copy(f.v);
+    (u.shpHalf.value as THREE.Vector2).set(f.hx, f.hy);
+    u.shpSoft.value = THREE.MathUtils.lerp(0.35, 0.004, THREE.MathUtils.clamp(g.contrast, 0, 1));
   }
 
   // ------------------------------------------------------------ compositing
