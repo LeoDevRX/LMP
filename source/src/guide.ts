@@ -64,6 +64,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LMP can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.01', steps: ['Bug fixes.'] },
       { h: 'In v1.00', steps: [
         'Paint colour, roughness, metal, height and glow in one stroke, with brushes, layers, folders and masks.',
         'Smart materials and smart masks (edge wear, dirt, rust) that follow the shape of your model, with anchor points for micro details.',
