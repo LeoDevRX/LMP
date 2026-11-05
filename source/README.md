@@ -28,6 +28,10 @@ Performance:
 - Shelf thumbnails are made only when they scroll into view.
 - Smart masks keep their generator result cached, so painting on a mask doesn't recompute the noise stack every frame.
 
+## New in v1.04
+
+- **Walk me through it.** Guides like Shapes, Masks, Painting, Baking, Smart materials and Export can show you how: a purple pointer moves to each button with a short note under it, and the next step starts when you do it.
+
 ## New in v1.03
 
 - Updates download one small file (the update zip) and the GitHub release only lists the two downloads.

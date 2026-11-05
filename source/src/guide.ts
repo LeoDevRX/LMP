@@ -64,6 +64,9 @@ export const GUIDES: Guide[] = [
     sum: 'Updates, shapes, autosave, history, the Guide and more.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.04', steps: [
+        'Walk me through it: many guides can now show you how, step by step. A pointer moves to each button and a small note under it says what to do.',
+      ] },
       { h: 'New in v1.03', steps: [
         'Updates now download one small file and the GitHub download page is simpler: just download LMP-vX.XX.zip.',
       ] },
@@ -815,3 +818,104 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 export function fmt(s: string): string {
   return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 }
+
+// ====================================================================== walkthrough tours
+
+/**
+ * One step of a "Walk me through it" tour. The pointer goes to `at` (a CSS selector; `has` picks the
+ * match whose text contains it) and the bubble under it says `t`. `wait` says when the step is done:
+ * 'next' (the Next button), 'click' / 'rclick' on the target, 'key:Escape', or 'state:<name>' (the app checks).
+ * `act` runs first (same actions as the "Show me" buttons).
+ */
+export interface TourStep { t: string; at?: string; has?: string; wait?: string; act?: string; /** Skip the step when this state is already true. */ skip?: string }
+
+export const TOURS: Record<string, TourStep[]> = {
+  'getting-started': [
+    { at: '#shelf', t: 'This is the Assets shelf: models, smart materials, materials, brushes and more. Drag things from here onto the model.' },
+    { at: '#viewport > canvas', t: 'Your model. Right mouse drag to turn it, middle mouse to move, wheel to zoom. Paint with the left mouse button.' },
+    { at: '#toolstrip', t: 'Your tools: brush, eraser, polygon fill, path, picker, the mask button and History.' },
+    { at: '#toolbar', t: 'Settings for the tool you have, like brush size, flow and smoothing.' },
+    { at: '#right', t: 'Layers on top, and Properties below for whatever you selected.' },
+    { at: '#mode-tabs', t: 'Switch to Baking before using smart materials, and Material Designer to make your own materials.' },
+    { at: '#guide-btn', t: 'Stuck? Press F1 or click Guide and type your question.' },
+  ],
+  'paint-basics': [
+    { at: '#toolstrip button[title^="Paint"]', t: 'Click the brush (or press B).', wait: 'click' },
+    { at: '#right .layer', has: 'Layer', t: 'Make sure a paint layer is selected. Click it.', wait: 'click' },
+    { at: '#right .group', has: 'Material', t: 'Here you choose what the brush paints: colour, roughness, metal and more.' },
+    { at: '#viewport > canvas', t: 'Now paint on the model with the left mouse button.', wait: 'state:stroke' },
+    { at: '#toolbar .tb-scroll', t: 'Change size, flow and hardness here. [ and ] change the size too.' },
+  ],
+  'lazy-mouse': [
+    { act: 'tool:paint', at: '#toolbar .inline-slider', has: 'Smoothing', t: 'Turn up Smoothing. Around 30 is a good start.', wait: 'state:smoothing' },
+    { at: '#viewport > canvas', t: 'Paint a line. The dotted string pulls the brush along behind your mouse, so it comes out steady.', wait: 'state:stroke' },
+    { at: '#toolbar .inline-slider', has: 'Smoothing', t: 'Set it back to off when you want normal painting.' },
+  ],
+  'path-tool': [
+    { at: '#toolstrip button[title^="Path"]', t: 'Click the Path tool (or press L).', wait: 'click' },
+    { at: '#viewport > canvas', t: 'Click on the model to add points. Click and drag to bend the curve.', wait: 'state:path2' },
+    { at: '#viewport > canvas', t: 'The brush follows the curve while you edit. Drag points to change it.' },
+    { at: '#toolbar button.primary', has: 'Finish', t: 'Click Finish (or press Enter) to keep it.', wait: 'state:pathdone' },
+  ],
+  'symmetry': [
+    { act: 'tool:paint', at: '#toolbar .sym-wrap', t: 'Click X to mirror left and right.', wait: 'state:sym' },
+    { at: '#viewport > canvas', t: 'The red line is the mirror. Paint on one side and the other side gets it too.', wait: 'state:stroke' },
+  ],
+  'history': [
+    { at: '#toolstrip button[title^="History"]', t: 'Click History (or press H).', wait: 'state:history' },
+    { at: '#shelf .hist-row', t: 'Your recent changes, newest at the top. Click one to go back to it.' },
+    { at: '#shelf .hist-row.original', t: '"Original" is how the file was before all of these.' },
+    { at: '#shelf .hist-row', t: 'Went back too far? Click the top row to get your latest version back.' },
+  ],
+  'masks': [
+    { at: '#right .layer', t: 'Right click the layer you want to hide in places.', wait: 'rclick' },
+    { at: '#ctx-menu button', has: 'Add black mask', t: 'Choose Add black mask. The layer disappears for now.', wait: 'state:masktarget' },
+    { at: '#viewport > canvas', t: 'Paint white where you want the layer to show.', wait: 'state:stroke' },
+    { at: '#toolstrip', t: 'Press M (or the mask button) to switch between painting the mask and the layer.' },
+  ],
+  'shapes': [
+    { at: '#right .layer', t: 'Right click the layer you want to put a shape on.', wait: 'rclick' },
+    { at: '#ctx-menu button', has: 'Shape (circle', t: 'Under Add generator, choose Shape (circle, star…).', wait: 'state:shape' },
+    { at: '#viewport > canvas', t: 'Drag on the model to move the shape where you want it.', wait: 'state:shapemoved' },
+    { at: '#right .row', has: 'Shape', t: 'Pick a different shape here. Size, stretch and rotation are just below.' },
+    { at: '#toolbar button.primary', has: 'Done', t: 'Click Done (or press Esc) when it\'s in place.', wait: 'state:shapedone' },
+  ],
+  'smart-materials': [
+    { at: '#mode-tabs button', has: 'Baking', t: 'First bake the mesh maps, so the wear lands on the edges. Click Baking.', wait: 'state:bakemode', skip: 'baked' },
+    { at: 'button.primary.big', has: 'Bake selected', t: 'Click Bake selected textures and wait for it to finish.', wait: 'state:baked', skip: 'baked' },
+    { at: '#mode-tabs button', has: 'Painting', t: 'Go back to Painting.', wait: 'state:paintmode', skip: 'paintmode' },
+    { act: 'shelf:smart', at: '.shelf-sec', has: 'Smart materials', t: 'Here are the smart materials.' },
+    { at: '#shelf .tile', t: 'Drag one onto the model (or click it).', wait: 'state:morelayers' },
+    { at: '#right', t: 'It came in as a folder of layers. Open it to change the colours or the masks.' },
+  ],
+  'baking': [
+    { at: '#mode-tabs button', has: 'Baking', t: 'Click Baking.', wait: 'state:bakemode' },
+    { at: '#shelf', t: 'Tick the maps you want. Leaving them all on is fine.' },
+    { at: 'button.primary.big', has: 'Bake selected', t: 'Click Bake selected textures.', wait: 'state:baking' },
+    { at: '#status-bake', t: 'Progress shows here at the bottom. Wait for the tick marks.', wait: 'state:baked' },
+    { at: '#mode-tabs button', has: 'Painting', t: 'Done. Go back to Painting.', wait: 'state:paintmode' },
+  ],
+  'export': [
+    { at: '#sidestrip button[title^="Export"]', t: 'Click Export (or press Ctrl+Shift+E).', wait: 'state:export' },
+    { at: '#export-dialog select', t: 'Pick where the textures are going: Roblox, Blender/Unity or Unreal.' },
+    { at: '#export-dialog footer button.primary', t: 'Click Export to folder and choose a folder.', wait: 'click' },
+  ],
+  'roblox': [
+    { at: '#sidestrip button[title^="Export"]', t: 'Click Export (or press Ctrl+Shift+E).', wait: 'state:export' },
+    { at: '#export-dialog select', t: 'Choose Roblox SurfaceAppearance. LMP keeps the size at 1024 for Roblox.' },
+    { at: '#export-dialog footer button.primary', t: 'Click Export to folder. In Roblox Studio, put a SurfaceAppearance in your MeshPart and set its maps to these files.', wait: 'click' },
+  ],
+  'import-images': [
+    { at: '#viewport', t: 'Drag your PNG or JPG files onto LMP now, or press Ctrl+I.', wait: 'state:import' },
+    { at: '.imp-list', t: 'For each picture choose what it is: Color, Normal, Height and so on.' },
+    { at: '.lmp-modal-foot button.primary', t: 'Choose where it goes, then click to add it.', wait: 'click' },
+  ],
+  'uv-overlap': [
+    { at: '#toolbar button[title^="UV overlaps"]', t: 'Click this button (or press O).', wait: 'state:overlap' },
+    { at: '#viewport > canvas', t: 'Dark spots are faces whose UVs overlap. Fix those in Blender, then reopen the model.' },
+  ],
+  'updates': [
+    { at: '.menu-btn', has: 'File', t: 'Open the File menu.', wait: 'state:menu' },
+    { at: '.menu.open button', has: 'Check for updates', t: 'Click Check for updates.', wait: 'click' },
+  ],
+};

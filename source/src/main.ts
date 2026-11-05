@@ -25,7 +25,7 @@ import { STARTER } from './starter';
 import { libraryMaterials } from './materialLib';
 import { VERSION } from './version';
 import { Settings, loadSettings, saveSettings, weakComputer } from './settings';
-import { GUIDES, CATS, Guide, GuideShow, searchGuides, guideById, fmt as guideFmt } from './guide';
+import { GUIDES, CATS, Guide, GuideShow, searchGuides, guideById, fmt as guideFmt, TOURS, TourStep } from './guide';
 import { loadThumbs, saveThumb, flush as flushThumbs } from './thumbCache';
 import iconSmall from './assets/lmp-32.png?inline';
 import iconBig from './assets/lmp-256.png?inline';
@@ -599,6 +599,8 @@ class App {
       start.append(el('button', { class: 'guide-card' + (id === 'getting-started' ? ' main' : ''), onclick: () => this.guideGo(id) }, el('b', {}, g.title), el('span', {}, g.sum)));
     }
     body.append(start);
+    body.append(el('button', { class: 'tour-start', onclick: () => this.startTour('getting-started') },
+      el('span', { class: 'play' }, '▶'), el('span', {}, el('b', {}, 'Show me around LMP'), el('small', {}, 'A quick tour of the screen'))));
     body.append(el('div', { class: 'guide-try' }, 'Try: ',
       ...['make my brush smooth', 'go back after Ctrl+Z', 'rusty metal', 'export for Roblox', 'it’s laggy'].map((t) =>
         el('button', { class: 'chip', onclick: () => { this.guideQuery = t; this.renderGuide(); } }, t))));
@@ -627,12 +629,17 @@ class App {
         body.append(el('div', { class: 'guide-best' }, r, acts.length ? el('div', { class: 'guide-acts' }, ...acts) : null));
       } else body.append(r);
     });
+    const tourHit = hits.find((h) => TOURS[h.g.id]);
+    if (tourHit) body.append(el('button', { class: 'tour-start under', onclick: () => this.startTour(tourHit.g.id) },
+      el('span', { class: 'play' }, '▶'), el('span', {}, el('b', {}, `Walk me through: ${tourHit.g.title}`), el('small', {}, 'Need help doing it? LMP points at each step and tells you what to click.'))));
   }
 
   private renderGuidePage(body: HTMLElement, g: Guide) {
     const back = el('button', { class: 'guide-back', onclick: () => this.guideBack() }, this.guideStack.length > 1 ? '← Back' : this.guideQuery.trim() ? '← Results' : '← All guides');
     body.append(back, el('div', { class: 'guide-cat' }, g.cat), el('h2', {}, g.title), el('p', { class: 'guide-sum' }, g.sum));
-    if (g.show?.length) body.append(el('div', { class: 'guide-acts' }, ...g.show.map((s) => el('button', { class: 'lmp-btn primary small', onclick: () => this.guideShow(s) }, 'Show me: ' + s.label))));
+    if (TOURS[g.id]) body.append(el('button', { class: 'tour-start', onclick: () => this.startTour(g.id) },
+      el('span', { class: 'play' }, '▶'), el('span', {}, el('b', {}, 'Walk me through it'), el('small', {}, `LMP points at each step (${TOURS[g.id].length} steps)`))));
+    if (g.show?.length) body.append(el('div', { class: 'guide-acts' }, ...g.show.map((s) => el('button', { class: 'lmp-btn small', onclick: () => this.guideShow(s) }, 'Show me: ' + s.label))));
     for (const b of g.body) {
       if (b.h) body.append(el('h4', {}, b.h));
       if (b.p) { const e = el('p', {}); e.innerHTML = guideFmt(b.p); body.append(e); }
@@ -656,7 +663,7 @@ class App {
     if (a.startsWith('tool:')) { paint(); this.setTool(a.slice(5) as Tool); }
     else if (a.startsWith('mode:')) this.setMode(a.slice(5) as Mode);
     else if (a.startsWith('layout:')) this.setLayout(a.slice(7) as any);
-    else if (a.startsWith('shelf:')) { paint(); this.historyOpen = false; this.shelfOpen.add(a.slice(6)); this.shelfFilter = 'all'; this.buildShelf(); this.buildToolstrip(); }
+    else if (a.startsWith('shelf:')) { paint(); this.historyOpen = false; this.shelfOpen.add('sec:' + a.slice(6)); this.shelfFilter = 'all'; this.buildShelf(); this.buildToolstrip(); }
     else if (a === 'history') { paint(); this.toggleHistory(true); }
     else if (a === 'props') { paint(); if (this.tool !== 'paint' && this.tool !== 'erase') this.setTool('paint'); this.buildProperties(); }
     else if (a === 'settings') this.openSettings();
@@ -678,6 +685,178 @@ class App {
     target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
     target.classList.add('guide-hl');
     setTimeout(() => target.classList.remove('guide-hl'), 3200);
+  }
+
+
+  // ================================================================ walkthrough tours
+
+  strokeCount = 0;
+  shapeMovedCount = 0;
+  pathFinishCount = 0;
+  private tour: { g: Guide; steps: TourStep[]; i: number; start: Record<string, number>; timer: number; off: (() => void) | null } | null = null;
+  private tourEl: HTMLElement | null = null;
+
+  /** Things a tour step can wait for. */
+  private tourState(name: string): boolean {
+    const t = this.tour!, ts = this.ts, sym = this.brush.symmetry;
+    switch (name) {
+      case 'stroke': return this.strokeCount > t.start.strokes;
+      case 'smoothing': return (this.brush.smoothing ?? 0) > 0.05;
+      case 'path2': return this.path.p3.length + this.path.p2.length >= 2;
+      case 'pathdone': return this.pathFinishCount > t.start.paths;
+      case 'sym': return !!sym && (sym.x || sym.y || sym.z);
+      case 'history': return this.historyOpen;
+      case 'masktarget': return this.paintTarget === 'mask' && !!ts.activeLayer?.mask;
+      case 'shape': return ts.allLayers.some((l) => l.mask?.gen && [l.mask.gen, ...(l.mask.gen.fx ?? [])].some((g) => g.type === 'shape'));
+      case 'shapemoved': return this.shapeMovedCount > t.start.shapes;
+      case 'shapedone': return !this.shapeMove;
+      case 'bakemode': return this.mode === 'bake';
+      case 'baking': return ts.baking;
+      case 'baked': return ts.bakedOnce && !ts.baking;
+      case 'paintmode': return this.mode === 'paint';
+      case 'morelayers': return ts.allLayers.length > t.start.layers;
+      case 'export': return !!(document.getElementById('export-dialog') as HTMLDialogElement | null)?.open;
+      case 'import': return !!document.querySelector('.imp-list');
+      case 'overlap': return this.showOverlap;
+      case 'menu': return !!document.querySelector('.menu.open');
+    }
+    return false;
+  }
+
+  /** Find a step's target: the first visible match (whose text contains `has`, if given). */
+  private tourTarget(st: TourStep): HTMLElement | null {
+    if (!st.at) return null;
+    const list = [...document.querySelectorAll<HTMLElement>(st.at)].filter((e) => {
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden';
+    });
+    return (st.has ? list.find((e) => e.textContent?.includes(st.has!)) : list[0]) ?? null;
+  }
+
+  startTour(id: string) {
+    const steps = TOURS[id], g = guideById(id);
+    if (!steps || !g) return;
+    this.stopTour(false);
+    this.closeGuide();
+    if (this.mode === 'design') this.setMode('paint');
+    const el2 = el('div', { id: 'tour' },
+      el('div', { class: 'tour-ring' }),
+      el('div', { class: 'tour-ptr' }),
+      el('div', { class: 'tour-bubble' }));
+    (el2.querySelector('.tour-ptr') as HTMLElement).innerHTML =
+      '<svg viewBox="0 0 32 32" width="34" height="34"><path d="M6 3 L6 25 L12 19.5 L16.5 29 L20.5 27.2 L16 18 L24 18 Z" fill="#9b5cff" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>';
+    document.body.append(el2);
+    this.tourEl = el2;
+    this.tour = { g, steps, i: -1, start: {}, timer: window.setInterval(() => this.tourTick(), 120), off: null };
+    this.tourGo(0);
+  }
+
+  stopTour(reopen = true) {
+    const t = this.tour;
+    if (!t) return;
+    clearInterval(t.timer);
+    t.off?.();
+    this.tour = null;
+    this.tourEl?.remove();
+    this.tourEl = null;
+    if (reopen) this.openGuide(t.g.id);
+  }
+
+  private tourGo(i: number) {
+    const t = this.tour;
+    if (!t) return;
+    t.off?.(); t.off = null;
+    if (i >= t.steps.length) { this.tourFinish(); return; }
+    i = Math.max(0, i);
+    t.i = i;
+    const st = t.steps[i];
+    t.start = { strokes: this.strokeCount, paths: this.pathFinishCount, shapes: this.shapeMovedCount, layers: this.ts.allLayers.length };
+    if (st.skip && this.tourState(st.skip)) { this.tourGo(i + 1); return; }
+    if (st.act) this.guideShow({ label: '', act: st.act });
+    // Clicks / right clicks / keys on the target finish the step.
+    const w = st.wait ?? 'next';
+    const later = () => setTimeout(() => { if (this.tour === t && t.i === i) this.tourGo(i + 1); }, 180);
+    if (w === 'click' || w === 'rclick') {
+      const type = w === 'click' ? 'click' : 'contextmenu';
+      const h = (e: Event) => { const tg = this.tourTarget(st); if (tg && tg.contains(e.target as Node)) later(); };
+      document.addEventListener(type, h, true);
+      t.off = () => document.removeEventListener(type, h, true);
+    } else if (w.startsWith('key:')) {
+      const key = w.slice(4);
+      const h = (e: KeyboardEvent) => { if (e.key === key) later(); };
+      window.addEventListener('keydown', h, true);
+      t.off = () => window.removeEventListener('keydown', h, true);
+    }
+    this.renderTourBubble();
+    this.tourTick();
+  }
+
+  private renderTourBubble() {
+    const t = this.tour, b = this.tourEl?.querySelector('.tour-bubble') as HTMLElement | null;
+    if (!t || !b) return;
+    const st = t.steps[t.i];
+    const manual = (st.wait ?? 'next') === 'next';
+    b.innerHTML = '';
+    const txt = el('div', { class: 'tour-text' }); txt.innerHTML = guideFmt(st.t);
+    b.append(
+      el('div', { class: 'tour-step' }, `${t.g.title} · step ${t.i + 1} of ${t.steps.length}`),
+      txt,
+      el('div', { class: 'tour-wait', hidden: true }, 'Waiting for this to show up on screen…'),
+      el('div', { class: 'tour-btns' },
+        el('button', { class: 'tour-stop', onclick: () => this.stopTour() }, 'Stop'),
+        el('span', { class: 'grow' }),
+        t.i > 0 ? el('button', { onclick: () => this.tourGo(t.i - 1) }, 'Back') : null,
+        el('button', { class: manual ? 'primary' : '', onclick: () => this.tourGo(t.i + 1) }, manual ? (t.i === t.steps.length - 1 ? 'Finish' : 'Next') : 'Skip step')));
+  }
+
+  private tourTick() {
+    const t = this.tour, root = this.tourEl;
+    if (!t || !root) return;
+    const st = t.steps[t.i];
+    const w = st.wait ?? 'next';
+    if (w.startsWith('state:') && this.tourState(w.slice(6))) { this.tourGo(t.i + 1); return; }
+    // Above an open dialog (dialogs sit on top of everything else), the tour lives inside it.
+    const dlg = document.querySelector('dialog[open]');
+    const host = dlg ?? document.body;
+    if (root.parentElement !== host) host.append(root);
+    const ring = root.querySelector('.tour-ring') as HTMLElement, ptr = root.querySelector('.tour-ptr') as HTMLElement, bub = root.querySelector('.tour-bubble') as HTMLElement;
+    const target = this.tourTarget(st);
+    (bub.querySelector('.tour-wait') as HTMLElement).hidden = !!target || !st.at;
+    const vw = window.innerWidth, vh = window.innerHeight, bw = Math.min(330, vw - 24);
+    bub.style.width = bw + 'px';
+    if (!target) {
+      ring.style.display = 'none'; ptr.style.display = 'none';
+      Object.assign(bub.style, { left: `${(vw - bw) / 2}px`, top: `${vh - bub.offsetHeight - 60}px` });
+      return;
+    }
+    const r = target.getBoundingClientRect();
+    const pad = 6;
+    ring.style.display = 'block'; ptr.style.display = 'block';
+    Object.assign(ring.style, { left: `${r.left - pad}px`, top: `${r.top - pad}px`, width: `${r.width + pad * 2}px`, height: `${r.height + pad * 2}px` });
+    // The pointer's tip sits on the target: the middle of small things, a bit inside big areas.
+    const big = r.width > 260 || r.height > 160;
+    const px = big ? r.left + r.width / 2 : r.left + r.width * 0.6;
+    const py = big ? r.top + r.height / 2 : r.top + r.height * 0.7;
+    Object.assign(ptr.style, { left: `${px - 6}px`, top: `${py - 3}px` });
+    // The bubble goes just under the pointer (or above it when there's no room).
+    const bh = bub.offsetHeight || 120;
+    let bx = Math.min(Math.max(12, px - 30), vw - bw - 12);
+    let by = py + 38;
+    if (by + bh > vh - 12) by = Math.max(12, py - bh - 18);
+    Object.assign(bub.style, { left: `${bx}px`, top: `${by}px` });
+  }
+
+  private tourFinish() {
+    const t = this.tour, b = this.tourEl?.querySelector('.tour-bubble') as HTMLElement | null;
+    if (!t || !b) return;
+    clearInterval(t.timer);
+    (this.tourEl!.querySelector('.tour-ring') as HTMLElement).style.display = 'none';
+    (this.tourEl!.querySelector('.tour-ptr') as HTMLElement).style.display = 'none';
+    b.innerHTML = '';
+    b.append(el('div', { class: 'tour-step' }, t.g.title), el('div', { class: 'tour-text' }, 'Done! That\'s all there is to it.'),
+      el('div', { class: 'tour-btns' }, el('span', { class: 'grow' }), el('button', { class: 'primary', onclick: () => this.stopTour() }, 'Close')));
+    Object.assign(b.style, { left: `${(window.innerWidth - b.offsetWidth) / 2}px`, top: `${window.innerHeight - b.offsetHeight - 60}px` });
+    setTimeout(() => { if (this.tour === t) this.stopTour(); }, 2600);
   }
 
   // ================================================================ start / open window
@@ -1277,7 +1456,7 @@ class App {
       if (this.adjust) { this.endAdjust(); return; }
       this.uvPan = null;
       if (this.box?.pane === '2d') this.endBox(e.ctrlKey || e.metaKey);
-      if (this.uvStroke) { this.lastEnd2 = this.uvStroke.uv.clone(); this.uvStroke = null; this.ts.endStroke(); this.queueLayerThumbs(); }
+      if (this.uvStroke) { this.lastEnd2 = this.uvStroke.uv.clone(); this.uvStroke = null; this.ts.endStroke(); this.queueLayerThumbs(); this.strokeCount++; }
       this.lazyEnd();
     };
     ov.addEventListener('dblclick', () => { if (this.tool === 'path') this.finishPath(); });
@@ -1485,10 +1664,10 @@ class App {
     });
     const end = (e: PointerEvent) => {
       if (this.adjust) { this.endAdjust(); controls.enabled = true; return; }
-      if (this.shapeDragging) { this.shapeDragging = false; controls.enabled = true; this.queueLayerThumbs(); return; }
+      if (this.shapeDragging) { this.shapeDragging = false; controls.enabled = true; this.queueLayerThumbs(); this.shapeMovedCount++; return; }
       if (this.box?.pane === '3d') this.endBox(e.ctrlKey || e.metaKey);
       if (this.pathDrag) this.pathUp();
-      if (this.stroke) { this.lastEnd3 = this.stroke.hit.point.clone(); this.stroke = null; this.ts.endStroke(); this.queueLayerThumbs(); }
+      if (this.stroke) { this.lastEnd3 = this.stroke.hit.point.clone(); this.stroke = null; this.ts.endStroke(); this.queueLayerThumbs(); this.strokeCount++; }
       this.lazyEnd();
       controls.enabled = true;
     };
@@ -2062,6 +2241,7 @@ class App {
 
   /** Finish the path: the painted stroke becomes one undo step (Enter / double-click). */
   finishPath() {
+    this.pathFinishCount++;
     const n = this.path.pane === '3d' ? this.path.p3.length : this.path.p2.length;
     if (n >= 2) {
       if (!this.pathLiveOn) {
