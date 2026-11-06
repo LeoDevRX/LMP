@@ -69,15 +69,25 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "noise",
-          "amount": 0.5,
-          "contrast": 0.55,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
           "noise": 0,
-          "noiseScale": 4.5,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 88
+          "seed": 17,
+          "sp": {
+            "kind": "grunge",
+            "p": {
+              "grunge": "grunge:soft/SurfaceImperfections015",
+              "scale": 1.2,
+              "balance": 0.5,
+              "contrast": 0.33,
+              "triplanar": true
+            }
+          }
         }
       }
     },
@@ -115,15 +125,23 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "dirt",
-          "amount": 0.5,
-          "contrast": 0.45,
-          "noise": 0.4,
-          "noiseScale": 7,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 12
+          "seed": 27,
+          "sp": {
+            "kind": "dirt",
+            "p": {
+              "dirt_level": 0.7,
+              "dirt_contrast": 0.315,
+              "grunge_amount": 0.32000000000000006
+            }
+          }
         }
       }
     },
@@ -161,17 +179,26 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "edge",
-          "amount": 0.35,
-          "contrast": 0.8,
-          "noise": 0.35,
-          "noiseScale": 7,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 3
+          "seed": 37,
+          "sp": {
+            "kind": "wear",
+            "p": {
+              "Wear_Level": 0.57,
+              "Wear_Contrast": 0.5599999999999999,
+              "Grunge_Amount": 0.27999999999999997
+            }
+          }
         }
       }
     }
-  ]
+  ],
+  "rev": 2
 }

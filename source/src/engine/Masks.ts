@@ -1,6 +1,6 @@
 /** Mask generators: procedural masks driven by the baked mesh maps. */
 import { GLSL_NOISE, PatternType } from './Procedural';
-import { SpSettings, SpInput, spDefaults, spFromPainter } from './PainterGen';
+import { SpSettings, SpInput, SpKind, SpValue, spDefaults, spFromPainter } from './PainterGen';
 import { PAINTER_RECIPES } from './painterRecipes';
 
 export type GenType = 'edge' | 'dirt' | 'ao' | 'gradient' | 'dust' | 'noise' | 'curvature' | 'thick' | 'id' | 'pattern' | 'shape' | 'painter';
@@ -72,6 +72,8 @@ export interface GenSettings {
   outInvert?: boolean;
   /** type 'painter': a Substance Painter-style generator (Dirt, Metal Edge Wear, Mask Editor…) with Painter's parameters. */
   sp?: SpSettings;
+  /** Painter-style presets: the `amount` they were tuned at. Moving `amount` away from it grows / shrinks the whole mask. */
+  spBase?: number;
 }
 
 export const GEN_LABEL: Record<GenType, string> = {
@@ -344,36 +346,71 @@ const GROUND = (l: number, s: number, n: number) => tg('gradient', l * 0.7, s * 
 
 export interface SmartMaskPreset { id: string; label: string; build: () => GenSettings; painter?: boolean }
 const stack = (base: GenSettings, ...rest: MaskFx[]): GenSettings => ({ ...base, fx: rest.length ? rest : undefined });
+// Painter-style generator helpers for the presets below.
+export const spGen = (kind: SpKind, p: Record<string, SpValue> = {}, seed = 7): GenSettings => ({ ...defaultGen('painter'), seed, sp: { kind, p: { ...spDefaults(kind).p, ...p } } });
+/** A CC0 grunge (see PainterGen's grunge references), tri-planar by default. */
+export const spGrungeGen = (ref: string, scale: number, balance = 0.5, contrast = 0, seed = 7, triplanar = true): GenSettings =>
+  spGen('grunge', { grunge: ref, scale, balance, contrast, triplanar }, seed);
+const P = spGen, GR = spGrungeGen;
+const PRE = (g: GenSettings, base = 0.5): GenSettings => ({ ...g, amount: base, spBase: base });
+const G = {
+  spots: 'grunge:spots/SurfaceImperfections001', spots2: 'grunge:spots/SurfaceImperfections008', specks: 'grunge:spots/SurfaceImperfections012',
+  soft: 'grunge:soft/SurfaceImperfections015', soft2: 'grunge:soft/SurfaceImperfections016', soft3: 'grunge:soft/SurfaceImperfections014',
+  dust: 'grunge:dust/SurfaceImperfections007', leaks: 'grunge:leaks/SurfaceImperfections002', leaks2: 'grunge:leaks/SurfaceImperfections011',
+  rings: 'grunge:stains/SurfaceImperfections010', stains: 'grunge:stains/Smear005', smear: 'grunge:smear/Smear008',
+  scratches: 'grunge:scratches/Scratches002', scratchesFine: 'grunge:scratches/Scratches001', prints: 'grunge:fingerprints/Fingerprints002',
+  concrete: 'grunge:concrete/Concrete049', rust: 'grunge:rust', chips: 'grunge:chips',
+};
+/** Up-facing surfaces (world space normal, top to bottom). */
+const UP = (balance: number, contrast: number) => P('editor', { curvature_opacity: 0, ws_opacity: 1, ws_balance: balance, ws_contrast: contrast });
+/** Down-facing / sheltered surfaces. */
+const DOWN = (balance: number, contrast: number) => P('editor', { curvature_opacity: 0, ws_opacity: 1, ws_invert: true, ws_balance: balance, ws_contrast: contrast });
+
+// LocalPaint's smart masks, built on the Painter-style generators (same ids as before, so smart materials keep working).
 export const SMART_MASKS: SmartMaskPreset[] = [
-  { id: 'edge_wear', label: 'Edges Worn', build: () => EDGE(0.55, 0.12, 0.5) },
-  { id: 'edge_chipped', label: 'Edges Chipped', build: () => stack(EDGE(0.8, 0.2, 0.3), fx(tp('chips', 3, 5, 1), 'multiply'), fx(EDGE(0.45, 0.06, 0.6), 'lighten')) },
-  { id: 'dirt_cavities', label: 'Dirt in Cavities', build: () => DIRT(0.55, 0.25, 0.4) },
-  { id: 'dust_top', label: 'Dust from Top', build: () => stack(UPF(0.3, 0.15, 0.3), fx(tp('clouds', 3, 9, 1.4), 'multiply')) },
-  { id: 'ground_dirt', label: 'Ground Dirt', build: () => stack(GROUND(0.35, 0.25, 0.5), fx(tp('grunge', 2, 12, 0.8), 'multiply')) },
-  { id: 'rust_leaks', label: 'Rust Leaks', build: () => stack(tp('streaks', 3, 4, 1.2), fx(UPF(0.2, 0.1, 0, true), 'multiply'), fx(DIRT(0.45, 0.2, 0.5), 'lighten')) },
-  { id: 'scratches', label: 'Scratches', build: () => tp('scratches', 3, 6, 1) },
-  { id: 'grunge', label: 'Grunge Blotches', build: () => tp('grunge', 2, 8, 1) },
-  { id: 'paint_chips', label: 'Paint Chips', build: () => stack(tp('chips', 5, 2, 1), fx(EDGE(0.6, 0.12, 0.5), 'lighten')) },
-  { id: 'fingerprints', label: 'Fingerprints', build: () => tp('smudges', 4, 3, 1) },
-  { id: 'edges_soft', label: 'Edges Soft', build: () => EDGE(0.35, 0.35, 0.15) },
-  { id: 'edges_sharp', label: 'Edges Sharp', build: () => EDGE(0.65, 0.05, 0) },
-  { id: 'exposed', label: 'Exposed Areas', build: () => tg('ao', 0.5, 0.3, 0, { invert: true }) },
-  { id: 'thin_areas', label: 'Thin Areas', build: () => tg('thick', 0.7, 0.2, 0.2, { invert: true }) },
-  { id: 'dust_cavities', label: 'Dust in Cavities', build: () => stack(DIRT(0.5, 0.3, 0.2), fx(tp('clouds', 4, 21, 1.2), 'multiply')) },
-  { id: 'moss_top', label: 'Moss from Top', build: () => stack(UPF(0.45, 0.2, 0.6), fx(tp('cells', 6, 17, 1.4), 'multiply')) },
-  { id: 'water_stains', label: 'Water Stains', build: () => stack(tp('streaks', 2, 13, 0.9), fx(UPF(0.15, 0.2, 0, true), 'multiply'), fx(tp('clouds', 2.5, 14, 1), 'multiply')) },
-  { id: 'sun_faded', label: 'Sun Faded', build: () => UPF(0.5, 0.45, 0.1) },
-  { id: 'snow_top', label: 'Snow from Top', build: () => UPF(0.6, 0.08, 0.6) },
-  { id: 'moss_ground', label: 'Moss from Ground', build: () => stack(GROUND(0.4, 0.3, 0.5), fx(tp('cells', 6, 25, 1.4), 'multiply')) },
-  { id: 'rust_cavities', label: 'Rust in Cavities', build: () => stack(DIRT(0.6, 0.25, 0.5), fx(tp('grunge', 3, 27, 1.3), 'multiply')) },
-  { id: 'edge_scratches', label: 'Edge Scratches', build: () => stack(EDGE(0.75, 0.3, 0.2), fx(tp('scratches', 4, 29, 1.2), 'multiply')) },
-  { id: 'dirt_streaks', label: 'Dirt Streaks', build: () => stack(tp('streaks', 2.5, 31, 1.1), fx(DIRT(0.5, 0.25, 0.4), 'multiply')) },
-  { id: 'occluded', label: 'Occluded Areas', build: () => tg('ao', 0.5, 0.3, 0) },
-  // Extra presets in the spirit of Material Painter's generators (TexPaint's own recipes).
-  { id: 'rain_streaks', label: 'Rain Streaks', build: () => stack(tp('streaks', 4, 41, 1.4), fx(UPF(0.3, 0.15, 0, true), 'multiply'), fx(tp('clouds', 3, 42, 1.2), 'multiply', 0.7)) },
-  { id: 'drips', label: 'Drips under Edges', build: () => stack(tp('streaks', 6, 43, 1.8), fx(EDGE(0.7, 0.25, 0.3), 'lighten', 0.6), fx(UPF(0.1, 0.1, 0, true), 'multiply')) },
-  { id: 'cavity_grime', label: 'Cavity Grime', build: () => stack(tg('dirt', 0.55, 0.15, 0.6), fx(tp('grunge', 4, 44, 1.2), 'multiply', 0.8)) },
-  { id: 'worn_paint_blotches', label: 'Worn Paint Blotches', build: () => stack(tp('grunge', 2.5, 45, 1.3), fx(EDGE(0.55, 0.15, 0.5), 'lighten')) },
+  { id: 'edge_wear', label: 'Edges Worn', build: () => PRE(P('wear', { Wear_Level: 0.6, Wear_Contrast: 0.5, Grunge_Amount: 0.35 })) },
+  { id: 'edge_chipped', label: 'Edges Chipped', build: () => PRE(P('wear', { Wear_Level: 0.68, Wear_Contrast: 0.75, Grunge_Amount: 0.6, Use_Custom_Grunge: true, grunge: G.spots2, grunge_scale: 6 })) },
+  { id: 'dirt_cavities', label: 'Dirt in Cavities', build: () => PRE(P('dirt', { dirt_level: 0.6, dirt_contrast: 0.45, grunge_amount: 0.35 })) },
+  { id: 'dust_top', label: 'Dust from Top', build: () => PRE(stack(P('dust', { level: 0.55, contrast: 0.4, occlusion_amount: 0.4 }), fx(GR(G.soft, 1.5, 0.6, 0.2, 9), 'multiply', 0.7))) },
+  { id: 'ground_dirt', label: 'Ground Dirt', build: () => PRE(stack(P('grounddirt', { level: 0.5, Contrast: 0.3, dirt_height: 0.35 }), fx(GR(G.stains, 1.5, 0.55, 0.3, 12), 'multiply', 0.8))) },
+  { id: 'rust_leaks', label: 'Rust Leaks', build: () => PRE(stack(GR(G.leaks, 1.5, 0.55, 0.3, 4, false), fx(DOWN(0.35, 0.3), 'multiply', 0.6), fx(P('dirt', { dirt_level: 0.5 }), 'lighten', 0.6))) },
+  { id: 'scratches', label: 'Scratches', build: () => PRE(GR(G.scratches, 1.5, 0.5, 0.3, 6)) },
+  { id: 'grunge', label: 'Grunge Blotches', build: () => PRE(GR(G.soft, 1, 0.5, 0.4, 8)) },
+  { id: 'paint_chips', label: 'Paint Chips', build: () => PRE(stack(GR(G.spots2, 2, 0.4, 0.6, 2), fx(P('wear', { Wear_Level: 0.55 }), 'lighten'))) },
+  { id: 'fingerprints', label: 'Fingerprints', build: () => PRE(GR(G.prints, 1.5, 0.5, 0.3, 3)) },
+  { id: 'edges_soft', label: 'Edges Soft', build: () => PRE(P('wear', { Wear_Level: 0.5, Wear_Contrast: 0.2, Grunge_Amount: 0.1, Edges_Smoothness: 2.5 })) },
+  { id: 'edges_sharp', label: 'Edges Sharp', build: () => PRE(P('curvature', { curvature_fine: 0.5, curvature_soft: 0, curvature_medium: 0, curvature_large: 0, curvature_big: 0, curvature_huge: 0, global_balance: 0.6, global_contrast: 0.4 })) },
+  { id: 'exposed', label: 'Exposed Areas', build: () => PRE(P('ao', { ao_balance: 0.5, ao_contrast: 0.3 })) },
+  { id: 'thin_areas', label: 'Thin Areas', build: () => PRE(P('editor', { curvature_opacity: 0, thickness_opacity: 1, thickness_invert: true, global_balance: 0.55, global_contrast: 0.3 })) },
+  { id: 'dust_cavities', label: 'Dust in Cavities', build: () => PRE(stack(P('dirt', { dirt_level: 0.55, dirt_contrast: 0.35, grunge_amount: 0.5, edges_masking: 0.8 }), fx(GR(G.dust, 1.5, 0.6, 0.2, 21), 'multiply', 0.6))) },
+  { id: 'moss_top', label: 'Moss from Top', build: () => PRE(stack(P('dust', { level: 0.6, contrast: 0.5, occlusion_amount: 0.6 }), fx(GR(G.spots2, 1.5, 0.55, 0.4, 17), 'multiply'))) },
+  { id: 'water_stains', label: 'Water Stains', build: () => PRE(stack(GR(G.rings, 1.2, 0.5, 0.3, 13), fx(GR(G.leaks2, 1.5, 0.5, 0.2, 14), 'lighten', 0.6))) },
+  { id: 'sun_faded', label: 'Sun Faded', build: () => PRE(UP(0.6, 0.3)) },
+  { id: 'snow_top', label: 'Snow from Top', build: () => PRE(stack(UP(0.75, 0.7), fx(P('dust', { level: 0.6, contrast: 0.6, occlusion_amount: 0.3 }), 'lighten', 0.5))) },
+  { id: 'moss_ground', label: 'Moss from Ground', build: () => PRE(stack(P('grounddirt', { level: 0.55, Contrast: 0.4, dirt_height: 0.4 }), fx(GR(G.spots2, 1.5, 0.55, 0.4, 25), 'multiply'))) },
+  { id: 'rust_cavities', label: 'Rust in Cavities', build: () => PRE(P('dirt', { dirt_level: 0.62, dirt_contrast: 0.5, grunge_amount: 0.6, Use_Custom_Grunge: true, grunge: G.rust, Grunge_Scale: 3 })) },
+  { id: 'edge_scratches', label: 'Edge Scratches', build: () => PRE(stack(P('wear', { Wear_Level: 0.72, Wear_Contrast: 0.4 }), fx(GR(G.scratches, 2, 0.6, 0.3, 29), 'multiply'))) },
+  { id: 'dirt_streaks', label: 'Dirt Streaks', build: () => PRE(stack(GR(G.leaks2, 1.5, 0.55, 0.3, 31, false), fx(P('dirt', { dirt_level: 0.65 }), 'multiply'))) },
+  { id: 'occluded', label: 'Occluded Areas', build: () => PRE(P('ao', { ao_invert: true, ao_balance: 0.5, ao_contrast: 0.3 })) },
+  { id: 'rain_streaks', label: 'Rain Streaks', build: () => PRE(stack(GR(G.leaks, 1.2, 0.55, 0.4, 41, false), fx(DOWN(0.4, 0.2), 'multiply', 0.5), fx(GR(G.soft3, 1.5, 0.5, 0.2, 42), 'multiply', 0.6))) },
+  { id: 'drips', label: 'Drips under Edges', build: () => PRE(stack(GR(G.leaks, 2, 0.6, 0.5, 43, false), fx(P('wear', { Wear_Level: 0.6 }), 'lighten', 0.5), fx(DOWN(0.3, 0.2), 'multiply'))) },
+  { id: 'cavity_grime', label: 'Cavity Grime', build: () => PRE(stack(P('dirt', { dirt_level: 0.55, dirt_contrast: 0.6, grunge_amount: 0.5 }), fx(GR(G.stains, 2, 0.55, 0.3, 44), 'multiply', 0.8))) },
+  { id: 'worn_paint_blotches', label: 'Worn Paint Blotches', build: () => PRE(stack(GR(G.soft2, 1.2, 0.45, 0.6, 45), fx(P('wear', { Wear_Level: 0.55 }), 'lighten'))) },
+  { id: 'edges_fine', label: 'Edges Fine', build: () => PRE(P('wear', { Wear_Level: 0.45, Wear_Contrast: 0.8, Grunge_Amount: 0.2, Edges_Smoothness: 0.2 })) },
+  { id: 'edges_heavy', label: 'Edges Heavy Wear', build: () => PRE(P('wear', { Wear_Level: 0.85, Wear_Contrast: 0.45, Grunge_Amount: 0.5, Edges_Smoothness: 2, Ambient_Occlusion_Masking: 0.3 })) },
+  { id: 'dirt_soft', label: 'Dirt Soft', build: () => PRE(P('dirt', { dirt_level: 0.55, dirt_contrast: 0.15, grunge_amount: 0.25, Use_Triplanar: true })) },
+  { id: 'dirt_heavy', label: 'Dirt Heavy', build: () => PRE(stack(P('dirt', { dirt_level: 0.85, dirt_contrast: 0.55, grunge_amount: 0.5 }), fx(GR(G.stains, 1.5, 0.6, 0.3, 51), 'multiply', 0.6))) },
+  { id: 'dust_light', label: 'Dust Light', build: () => PRE(stack(P('dust', { level: 0.4, contrast: 0.3, occlusion_amount: 0.5, noise_opacity: 0.3 }), fx(GR(G.dust, 1.5, 0.55, 0.2, 52), 'multiply', 0.5))) },
+  { id: 'dust_heavy', label: 'Dust Heavy', build: () => PRE(stack(P('dust', { level: 0.75, contrast: 0.45, occlusion_amount: 0.7 }), fx(GR(G.soft3, 1.2, 0.65, 0.2, 53), 'multiply', 0.5))) },
+  { id: 'scratches_fine', label: 'Scratches Fine', build: () => PRE(GR(G.scratchesFine, 2, 0.45, 0.4, 54)) },
+  { id: 'scratches_edges', label: 'Scratches near Edges', build: () => PRE(stack(GR(G.scratches, 1.5, 0.55, 0.3, 55), fx(P('wear', { Wear_Level: 0.8, Wear_Contrast: 0.2, Edges_Smoothness: 3 }), 'multiply'))) },
+  { id: 'water_rings', label: 'Water Rings', build: () => PRE(GR('grunge:stains/SurfaceImperfections006', 1.2, 0.5, 0.4, 56)) },
+  { id: 'smudges', label: 'Smudges', build: () => PRE(GR(G.smear, 1.2, 0.5, 0.3, 57)) },
+  { id: 'rust_spots', label: 'Rust Spots', build: () => PRE(stack(GR(G.spots, 1.5, 0.4, 0.6, 58), fx(P('dirt', { dirt_level: 0.7, dirt_contrast: 0.3 }), 'lighten', 0.5))) },
+  { id: 'paint_peeling', label: 'Paint Peeling', build: () => PRE(stack(GR(G.soft2, 1.5, 0.4, 0.8, 59), fx(P('wear', { Wear_Level: 0.7, Wear_Contrast: 0.7, Grunge_Amount: 0.6 }), 'lighten'), fx(P('dirt', { dirt_level: 0.5, dirt_contrast: 0.6 }), 'lighten', 0.6))) },
+  { id: 'leaks_top', label: 'Leaks from Top', build: () => PRE(stack(GR(G.leaks2, 1.2, 0.55, 0.4, 60, false), fx(UP(0.35, 0.2), 'lighten', 0.4))) },
+  { id: 'snow_light', label: 'Snow Light', build: () => PRE(stack(UP(0.6, 0.6), fx(GR(G.specks, 1.5, 0.6, 0.4, 61), 'multiply', 0.6))) },
+  { id: 'cavities_sharp', label: 'Cavities Sharp', build: () => PRE(P('curvature', { curvature_mode: 2, curvature_fine: 0.5, curvature_soft: 0.2, curvature_medium: 0, curvature_large: 0, curvature_big: 0, curvature_huge: 0, global_balance: 0.6, global_contrast: 0.4 })) },
 ];
 /** Painter's mask-stack blending codes → LocalPaint's mask effect blends. */
 export const PAINTER_FX_BLEND: Record<number, FxBlend> = { 2: 'normal', 4: 'multiply', 7: 'darken', 8: 'lighten', 9: 'add', 10: 'add', 5: 'subtract', 12: 'difference', 14: 'overlay', 15: 'screen', 16: 'overlay' };

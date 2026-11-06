@@ -69,15 +69,24 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "ao",
-          "amount": 0.35,
-          "contrast": 0.4,
-          "noise": 0.3,
-          "noiseScale": 7,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 2
+          "seed": 17,
+          "sp": {
+            "kind": "dirt",
+            "p": {
+              "dirt_level": 0.55,
+              "dirt_contrast": 0.27999999999999997,
+              "grunge_amount": 0.24,
+              "edges_masking": 0.2
+            }
+          }
         }
       }
     },
@@ -115,17 +124,51 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "dust",
-          "amount": 0.42,
-          "contrast": 0.55,
-          "noise": 0.6,
-          "noiseScale": 7,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 77
+          "seed": 27,
+          "sp": {
+            "kind": "dust",
+            "p": {
+              "level": 0.57,
+              "contrast": 0.385,
+              "occlusion_amount": 0.45
+            }
+          },
+          "fx": [
+            {
+              "type": "painter",
+              "amount": 1,
+              "contrast": 1,
+              "noise": 0,
+              "noiseScale": 8,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 28,
+              "sp": {
+                "kind": "grunge",
+                "p": {
+                  "grunge": "grunge:spots/SurfaceImperfections008",
+                  "scale": 1.5,
+                  "balance": 0.55,
+                  "contrast": 0.4,
+                  "triplanar": true
+                }
+              },
+              "blend": "multiply",
+              "opacity": 0.8
+            }
+          ]
         }
       }
     }
-  ]
+  ],
+  "rev": 2
 }

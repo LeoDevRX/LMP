@@ -301,6 +301,8 @@ uniform sampler2D uPrev;
 uniform int uFxBlend;
 uniform float uFxOp;
 uniform bool uOutInv;
+uniform bool uSelfInv;
+uniform float uShift;
 varying vec2 vUv;
 ${GLSL_NOISE}
 vec3 gPos, gN, gPn, gP01;
@@ -662,8 +664,11 @@ void main() {
   if (uStage == 1) v = texture2D(uSrc, vUv).r; else v = spRaw();
   if (uStage == 0) { gl_FragColor = vec4(v, v, v, 1.0); return; }
   v = clamp(spPost(v), 0.0, 1.0);
+  if (uSelfInv) v = 1.0 - v;
   if (uHasPrev) { float a = texture2D(uPrev, vUv).r; v = clamp(a + (fxMix(uFxBlend, a, v) - a) * uFxOp, 0.0, 1.0); }
   else v *= uFxOp;
+  // A preset's Amount moved from where it was tuned: grow or shrink the whole mask.
+  if (abs(uShift) > 1e-4) v = hscan(v, 0.5 + uShift, 0.0, false);
   if (uOutInv) v = 1.0 - v;
   gl_FragColor = vec4(v, v, v, 1.0);
 }`;

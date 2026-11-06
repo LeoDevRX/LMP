@@ -1707,7 +1707,8 @@ void main() {
       const target = last ? out : this.maskTmp[k % 2];
       if (e.type === 'painter' && e.sp) {
         const fe = e as MaskFx;
-        this.runPainterGen(e.sp, prev, target, Math.max(0, FX_BLENDS.indexOf(fe.blend ?? 'normal')), Math.max(0, Math.min(1, fe.opacity ?? 1)), last && !!g.outInvert, e.seed);
+        const shift = last && g.spBase !== undefined ? Math.max(-0.49, Math.min(0.49, (g.amount ?? g.spBase) - g.spBase)) : 0;
+        this.runPainterGen(e.sp, prev, target, Math.max(0, FX_BLENDS.indexOf(fe.blend ?? 'normal')), Math.max(0, Math.min(1, fe.opacity ?? 1)), last && !!g.outInvert, e.seed, !!e.invert, shift);
         prev = target;
         return;
       }
@@ -1773,7 +1774,7 @@ void main() {
         uG0: { value: null }, uG1: { value: null }, uGOk0: { value: false }, uGOk1: { value: false }, uGPat0: { value: 0 }, uGPat1: { value: 0 },
         uBmin: { value: new THREE.Vector3() }, uBmax: { value: new THREE.Vector3() }, uSize: { value: 1024 }, uSeed: { value: 0 },
         P: { value: this.spParams }, uStage: { value: 2 }, uSrc: { value: null }, uHasPrev: { value: false }, uPrev: { value: null },
-        uFxBlend: { value: 0 }, uFxOp: { value: 1 }, uOutInv: { value: false },
+        uFxBlend: { value: 0 }, uFxOp: { value: 1 }, uOutInv: { value: false }, uSelfInv: { value: false }, uShift: { value: 0 },
       });
       this.spMats.set(kind, m);
     }
@@ -1844,7 +1845,7 @@ void main() {
   }
 
   /** Run one Painter-style generator into `target`, blended over `prev`. */
-  private runPainterGen(sp: SpSettings, prev: RT | null, target: RT, blend: number, opacity: number, outInv: boolean, seed: number) {
+  private runPainterGen(sp: SpSettings, prev: RT | null, target: RT, blend: number, opacity: number, outInv: boolean, seed: number, selfInv = false, shift = 0) {
     const m = this.spMat(sp.kind);
     const u = m.uniforms;
     const pyr = this.spPyramid();
@@ -1866,7 +1867,7 @@ void main() {
     u.uBmin.value.copy(this.bboxMin); u.uBmax.value.copy(this.bboxMax);
     u.uSize.value = this.size; u.uSeed.value = Math.max(0, Math.round(seed ?? 0));
     u.uHasPrev.value = !!prev; u.uPrev.value = prev ? prev.texture : null;
-    u.uFxBlend.value = blend; u.uFxOp.value = opacity; u.uOutInv.value = outInv;
+    u.uFxBlend.value = blend; u.uFxOp.value = opacity; u.uOutInv.value = outInv; u.uSelfInv.value = selfInv; u.uShift.value = shift;
     const gb = spGlobalBlur(sp);
     if (gb > 0) {
       if (this.spTmp.length !== 2 || this.spTmp[0].width !== this.size) { this.spTmp.forEach((t) => t.dispose()); this.spTmp = [makeRT(this.size, { type: THREE.HalfFloatType }), makeRT(this.size, { type: THREE.HalfFloatType })]; }

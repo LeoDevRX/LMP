@@ -10,7 +10,7 @@
 import type { Ch, ChannelValues } from './engine/TextureSet';
 import type { LayerJSON, SmartMaterial } from './engine/Project';
 import { lin2srgb, PatternType, ProcSource } from './engine/Procedural';
-import { smartMask, GenSettings, MaskFx, FxBlend, defaultGen } from './engine/Masks';
+import { smartMask, GenSettings, MaskFx, FxBlend, spGen, spGrungeGen } from './engine/Masks';
 
 type V3 = [number, number, number];
 interface Pat { pat: PatternType; scale: number; seed: number; contrast: number; lo: V3; hi: V3 }
@@ -57,12 +57,21 @@ function fillLayer(name: string, s: Sources, mask?: GenSettings): LayerJSON {
   };
 }
 
-// Mask stacks for `masked` layers (same helpers as Masks.ts' presets).
-const soft2c = (s: number) => Math.max(0, Math.min(1, (0.5 - s) / 0.496));
-const G = (type: 'edge' | 'ao' | 'dust', level: number, softness: number, noise: number, inv = false): GenSettings =>
-  ({ ...defaultGen(type), amount: level, contrast: soft2c(softness), noise, noiseScale: 8, seed: 7, axis: 'y', flip: false, invert: inv });
+// Mask stacks for `masked` layers, on the Painter-style generators (old TextureCraft-style levels mapped across).
+const G = (type: 'edge' | 'ao' | 'dust', level: number, softness: number, noise: number, inv = false): GenSettings => {
+  const con = Math.max(0, Math.min(1, 0.9 - softness * 1.6));
+  const g = type === 'edge' ? spGen('wear', { Wear_Level: level, Wear_Contrast: con, Grunge_Amount: noise * 0.6 })
+    : type === 'ao' ? spGen('dirt', { dirt_level: level, dirt_contrast: con, grunge_amount: noise * 0.6 })
+      : spGen('dust', { level, contrast: con, occlusion_amount: 0.4 });
+  return { ...g, invert: inv };
+};
+/** Old pattern masks → a CC0 grunge of the same kind. */
+const PAT_GRUNGE: Partial<Record<PatternType, string>> = {
+  grunge: 'grunge:soft/SurfaceImperfections015', streaks: 'grunge:leaks/SurfaceImperfections002', clouds: 'grunge:soft/SurfaceImperfections014',
+  cells: 'grunge:spots/SurfaceImperfections008', scratches: 'grunge:scratches/Scratches002', smudges: 'grunge:fingerprints/Fingerprints002',
+};
 const P = (p: PatternType, scale: number, seed: number, contrast: number): GenSettings =>
-  ({ ...defaultGen('pattern'), pattern: p, scale, seed, contrast: contrast / 3, amount: 0.5, noise: 0 });
+  spGrungeGen(PAT_GRUNGE[p] ?? 'grunge:soft/SurfaceImperfections016', Math.max(0.5, scale * 0.6), 0.5, Math.min(0.8, contrast * 0.3), seed);
 const fxOf = (g: GenSettings, blend: FxBlend): MaskFx => ({ ...g, blend, opacity: 1 });
 const stackOf = (first: GenSettings, ...rest: [GenSettings, FxBlend][]): GenSettings => ({ ...first, fx: rest.map(([g, b]) => fxOf(g, b)) });
 

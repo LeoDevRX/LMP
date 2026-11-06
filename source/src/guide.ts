@@ -64,6 +64,13 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.06', steps: [
+        'Every smart material uses the Painter-style generators now, so edges, dirt, dust and rust look like Painter\'s.',
+        '52 new scanned smart materials: painted metal, rusty sheet metal, clean metals, worn woods, weathered stone, brick, fabric and plastic.',
+        '117 Painter-style smart materials (Steel Painted, Copper Worn, Leather Sofa, Plastic Glossy Scuffed, Wood Walnut…) rebuilt from the layers and mask settings of Painter\'s own, using free scans and grunges.',
+        'About 300 free scanned materials (was 114), with new Asphalt, Roofing, Terrazzo and Ice & glass groups.',
+        '15 more smart masks (55 in all), and every smart mask runs on the Painter generators, with an Amount slider that grows or shrinks the whole mask.',
+      ] },
       { h: 'New in v1.05', steps: [
         'Masks work like Substance Painter\'s now: Dirt, Metal Edge Wear, Dust, Mask Editor, Mask Builder, Light, Position, AO and Curvature generators with Painter\'s settings and maths.',
         'Smart masks rebuilt from Painter\'s recipes (Dirt Cavities, Dust Occlusion, Edges Uber, Rust and more), using free CC0 grunge scans.',

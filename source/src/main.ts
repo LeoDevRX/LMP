@@ -31,7 +31,8 @@ import {
 } from './engine/Project';
 import { checkProjectFileName } from './engine/ProjectFormat';
 import { STARTER } from './starter';
-import { SCAN_SMART } from './smartScans';
+import { SCAN_SMART, SCAN_SMART_MORE } from './smartScans';
+import { PAINTER_SMART } from './painterSmart';
 import SCAN_PREVIEWS from './assets/scanPreviews.json';
 import { libraryMaterials } from './materialLib';
 import { VERSION } from './version';
@@ -1294,6 +1295,9 @@ class App {
     this.shelf.builtins = [
       ...BUILTINS.map((b): ShelfItem => ({ kind: 'model', name: b.label, file: 'model:' + b.id, model: b.id })),
       ...SCAN_SMART.map((sm): ShelfItem => ({ kind: 'smart', name: sm.name, file: 'lib:scan-' + sm.name.toLowerCase().replace(/\W+/g, '-'), smart: sm, category: 'Realistic (scanned)' })),
+      ...SCAN_SMART_MORE.map(([cat, sm]): ShelfItem => ({ kind: 'smart', name: sm.name, file: 'lib:scan-' + sm.name.toLowerCase().replace(/\W+/g, '-'), smart: sm, category: `Realistic: ${cat}` })),
+      // Painter's starter smart materials, rebuilt (names that clash with library materials get “layered”).
+      ...PAINTER_SMART.map(({ cat, smart }): ShelfItem => ({ kind: 'smart', name: libraryMaterials().some((m) => m.def.label.toLowerCase() === smart.name.toLowerCase()) ? `${smart.name} (layered)` : smart.name, file: 'lib:painter-' + smart.name.toLowerCase().replace(/\W+/g, '-'), smart, category: `Painter-style: ${cat}` })),
       ...libraryMaterials().map((m): ShelfItem => ({ kind: 'smart', name: m.def.label, file: 'lib:' + m.def.id, smart: m.smart, category: m.def.category, swatch: m.swatch })),
       ...SMART_MASKS.map((m): ShelfItem => ({ kind: 'mask', name: m.label, file: 'mask:' + m.id, preset: m.id })),
       ...presetGraphs().map((g): ShelfItem => ({ kind: 'graph', name: g.name, file: 'graph:' + g.name, graph: g })),
@@ -3310,7 +3314,7 @@ class App {
   private thumbJob(it: ShelfItem): (() => Promise<string>) | null {
     if (it.kind === 'material') return () => this.thumbs.material('m:' + it.file, it.preset.values, it.preset.enabled);
     // Realistic smart materials: previews rendered ahead of time, so the shelf needs no downloads.
-    if (it.kind === 'smart' && it.file.startsWith('lib:scan-') && (SCAN_PREVIEWS as Record<string, string>)[it.name]) {
+    if (it.kind === 'smart' && /^lib:(scan|painter)-/.test(it.file) && (SCAN_PREVIEWS as Record<string, string>)[it.name]) {
       const u = (SCAN_PREVIEWS as Record<string, string>)[it.name];
       return () => Promise.resolve(u);
     }
@@ -3318,14 +3322,29 @@ class App {
       const fills = it.smart.layers.filter((l) => l.kind === 'fill') as any[];
       const main = fills[Math.min(1, fills.length - 1)];
       const base = it.smart.layers[0] as any;
-      if (it.category && base?.kind === 'fill' && base.procs && it.smart.layers.length === 1) return () => this.thumbs.procMaterial('s:' + it.file, base.values, base.procs, base.enabled);
+      if (it.category && base?.kind === 'fill' && base.procs && !base.mask && it.smart.layers.length === 1) return () => this.thumbs.procMaterial('s:' + it.file, base.values, base.procs, base.enabled);
       if (main || it.smart.layers.length) return () => this.smartThumb('s:' + it.file, it.smart);
       return null;
     }
     if (it.kind === 'model') return () => this.thumbs.model('model:' + it.model, builtinModel(it.model as BuiltinId).geometries);
     if (it.kind === 'env') return () => this.hdrThumb(it);
     if (it.kind === 'graph') return () => this.graphThumb(it.graph);
-    if (it.kind === 'mask') return () => this.thumbs.smartMask(it.preset);
+    if (it.kind === 'mask' && (SCAN_PREVIEWS as Record<string, string>)['mask:' + it.preset]) {
+      const u = (SCAN_PREVIEWS as Record<string, string>)['mask:' + it.preset];
+      return () => Promise.resolve(u);
+    }
+    if (it.kind === 'mask') {
+      // Smart masks on the Painter-style generators: shown for real (white where the mask is) on the preview shape.
+      const sm = (() => { try { return smartMask(it.preset); } catch { return null; } })();
+      if (sm && [sm, ...(sm.fx ?? [])].some((e) => e.type === 'painter')) {
+        const smart: import('./engine/Project').SmartMaterial = { format: 'texpaint-smart', version: 1, name: it.name, layers: [
+          { kind: 'fill', name: 'Off', visible: true, opacity: 1, blend: 'normal', values: { color: [0.06, 0.05, 0.08], rough: 0.7, metal: 0, height: 0.5, emit: [0, 0, 0] }, enabled: { color: true, rough: true, metal: true, height: false, emit: false, normal: false }, tiling: 1 },
+          { kind: 'fill', name: 'On', visible: true, opacity: 1, blend: 'normal', values: { color: [0.92, 0.88, 1], rough: 0.5, metal: 0, height: 0.5, emit: [0, 0, 0] }, enabled: { color: true, rough: true, metal: true, height: false, emit: false, normal: false }, tiling: 1, mask: { base: 'black', gen: sm } },
+        ] as any };
+        return () => this.smartThumb('k:' + it.preset, smart);
+      }
+      return () => this.thumbs.smartMask(it.preset);
+    }
     if (it.kind === 'textures') return () => this.thumbs.textures('t:' + it.name, it.files as any);
     if (it.kind === 'brush') return () => this.brushTipCanvas(it).then((cv) => cv.toDataURL());
     if (it.kind === 'cloud') return () => Promise.resolve(it.thumb);
@@ -5702,6 +5721,8 @@ class App {
       pre(kp + 'spkind'); g.sp = spDefaults(v as SpKind); live(); this.buildProperties();
     });
     const out: HTMLElement[] = [el('div', { class: 'row' }, el('label', {}, 'Generator'), kindSel), el('p', { class: 'note' }, def.desc)];
+    // Smart mask presets: one Amount slider that grows / shrinks the whole mask.
+    if (g.spBase !== undefined) out.push(slider('Amount', { min: 0, max: 1, step: 0.01, value: g.amount ?? g.spBase, onInput: (v) => { pre(kp + 'amount'); g.amount = v; live(); } }).el);
     const groups = new Map<string, HTMLElement[]>();
     const refresh = () => this.buildProperties();
     const ctl = (d: SpParam): HTMLElement => {

@@ -69,15 +69,23 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "dirt",
-          "amount": 0.45,
-          "contrast": 0.45,
-          "noise": 0.4,
-          "noiseScale": 7,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 9
+          "seed": 17,
+          "sp": {
+            "kind": "dirt",
+            "p": {
+              "dirt_level": 0.65,
+              "dirt_contrast": 0.315,
+              "grunge_amount": 0.32000000000000006
+            }
+          }
         }
       }
     },
@@ -115,17 +123,26 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "edge",
-          "amount": 0.35,
-          "contrast": 0.8,
-          "noise": 0.3,
-          "noiseScale": 7,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 21
+          "seed": 27,
+          "sp": {
+            "kind": "wear",
+            "p": {
+              "Wear_Level": 0.57,
+              "Wear_Contrast": 0.5599999999999999,
+              "Grunge_Amount": 0.24
+            }
+          }
         }
       }
     }
-  ]
+  ],
+  "rev": 2
 }

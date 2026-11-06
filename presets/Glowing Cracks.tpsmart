@@ -69,17 +69,26 @@
       "mask": {
         "base": "black",
         "gen": {
-          "type": "dirt",
-          "amount": 0.32,
-          "contrast": 0.85,
-          "noise": 0.4,
-          "noiseScale": 7,
+          "type": "painter",
+          "amount": 1,
+          "contrast": 1,
+          "noise": 0,
+          "noiseScale": 8,
           "axis": "y",
           "flip": false,
           "invert": false,
-          "seed": 61
+          "seed": 17,
+          "sp": {
+            "kind": "dirt",
+            "p": {
+              "dirt_level": 0.52,
+              "dirt_contrast": 0.595,
+              "grunge_amount": 0.32000000000000006
+            }
+          }
         }
       }
     }
-  ]
+  ],
+  "rev": 2
 }
