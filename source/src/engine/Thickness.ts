@@ -9,6 +9,12 @@ export interface ThicknessSettings {
   rays: number;
   /** Max distance as a fraction of the bounding box diagonal (Substance's default is 0.1–0.3). */
   maxDist: number;
+  /** Min occluder distance (fraction of the bounding box). */
+  minDist?: number;
+  spread?: number;
+  dist?: 'cosine' | 'uniform';
+  /** Self occlusion: every mesh, or only meshes with the same name. */
+  self?: 'always' | 'name';
 }
 export const DEFAULT_THICK: ThicknessSettings = { rays: 64, maxDist: 0.1 };
 

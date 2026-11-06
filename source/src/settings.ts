@@ -40,13 +40,17 @@ export const DEFAULT_SETTINGS: Settings = {
   autosave: true, autosaveMinutes: 3, autosaveKeep: 5, defaultSize: 1024, pixelRatio: 0, historyLimit: 25,
   lowPerf: false, perfAsked: false, welcomed: false, startScreen: true, checkUpdates: true, envName: 'studio_small_09_1k',
   sbsAdobe: true, sbsPath: '', confirmDelete: false,
-  newProj: { template: 'pbr', normal: 'gl', autoBake: true },
+  newProj: { template: 'pbr', normal: 'gl', autoBake: false },
   meshExport: { format: 'glb', size: 0, original: true },
 };
 
 const KEY = 'lmp-settings';
 export function loadSettings(): Settings {
-  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }; } catch { return { ...DEFAULT_SETTINGS }; }
+  let s: Settings;
+  try { s = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }; } catch { s = { ...DEFAULT_SETTINGS }; }
+  // v1.16: "Bake mesh maps after importing" starts off (once); after that it keeps whatever you last chose.
+  if (!(s as any).autoBakeOffV116) { s.newProj = { ...s.newProj, autoBake: false }; (s as any).autoBakeOffV116 = true; saveSettings(s); }
+  return s;
 }
 export function saveSettings(s: Settings) {
   try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* private mode */ }

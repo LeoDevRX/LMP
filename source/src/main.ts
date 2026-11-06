@@ -9,6 +9,9 @@ import {
 } from './engine/TextureSet';
 import { BrushPreset, BrushSettings, BUILTIN_TIPS, STARTER_BRUSHES, builtinTip, builtinTipThumb, imageTip, tipTexture, tipPreview } from './brushes';
 import { ALPHA_LIBRARY } from './alphas';
+import { installColorPopover } from './colorPopover';
+import { meshKey } from './engine/meshNames';
+import { DEFAULT_THICK } from './engine/Thickness';
 import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings, SHAPE_KINDS, SHAPE_LABEL, ShapeKind, MICRO_TYPES } from './engine/Masks';
 import { PATTERNS, PATTERN_LABEL, PatternType } from './engine/Procedural';
 import { GrungeLib } from './engine/GrungeLib';
@@ -273,6 +276,7 @@ class App {
     this.buildAll();
     this.layout();
     this.loop();
+    installColorPopover();
     this.loadStarter();
     (window as any).texpaintNative?.onOpenPath?.(async (p: string) => { if (await this.confirmUnsaved('Open this project anyway?')) this.openProjectFromPath(p); });
     (window as any).texpaintNative?.onCloseRequest?.(() => { (window as any).texpaintNative.ackClose(); this.onCloseRequest(); });
@@ -2077,6 +2081,21 @@ class App {
   }
 
   /** Little label + tip preview next to the cursor while adjusting. */
+  /** Which low poly meshes find a high poly mesh with the same name (shown under "Matching by mesh name"). */
+  private nameMatchInfo(): HTMLElement | null {
+    const bs = this.ts.bakeSettings;
+    const low = this.model.geometries.map((g) => g.name);
+    if (low.length < 2 && !this.high) return el('p', { class: 'note' }, 'This model is a single mesh, so matching by name changes nothing.');
+    const rules = { low: bs.lowSuffix ?? '_low', high: bs.highSuffix ?? '_high', ignoreBf: bs.bfSuffix ?? '_ignorebf' };
+    const show = (n: string) => n || '(no name)';
+    if (!this.high || !this.useHigh) return el('p', { class: 'note' }, `${low.length} low poly meshes: ${low.slice(0, 6).map(show).join(', ')}${low.length > 6 ? '…' : ''}.`);
+    const hk = new Set(this.high.geometries.map((g) => meshKey(g.name, rules)));
+    const miss = low.filter((n) => !hk.has(meshKey(n, rules)));
+    const ok = low.length - miss.length;
+    return el('p', { class: 'note' + (miss.length && (bs.matchBy ?? 'always') === 'name' ? ' warn' : '') },
+      `${ok} of ${low.length} low poly meshes have a high poly mesh with the same name.` + (miss.length ? ` No match: ${miss.slice(0, 5).map(show).join(', ')}${miss.length > 5 ? '…' : ''}.` : ''));
+  }
+
   /** Remember the ticked bake maps for the next project and the next time LocalPaint opens. */
   private saveBakeMaps() { this.settings.bakeMaps = { ...this.ts.bakeMaps }; saveSettings(this.settings); }
 
@@ -4425,6 +4444,19 @@ class App {
     const hs = ts.highSettings;
     const bs = ts.bakeSettings;
     const cage = () => this.updateCage();
+    const pick = <T extends string>(label: string, opts: [T, string][], value: T, set: (v: T) => void, title = '') =>
+      el('div', { class: 'row', title }, el('label', {}, label), select<T>(opts.map(([v, l]) => ({ value: v, label: l })), value, (v) => { set(v); this.buildBakeDock(); }));
+    const text = (label: string, value: string, set: (v: string) => void, title = '') => {
+      const i = el('input', { type: 'text', value, spellcheck: false, class: 'grow' }) as HTMLInputElement;
+      i.addEventListener('change', () => { set(i.value.trim()); this.buildBakeDock(); });
+      return el('div', { class: 'row', title }, el('label', {}, label), i);
+    };
+    const selfOpts: ['always' | 'name', string][] = [['always', 'Always'], ['name', 'Only same mesh name']];
+    const restore = (keys: string[], th = false) => el('div', { class: 'row' }, el('button', { class: 'grow', onclick: () => {
+      for (const k of keys) delete (bs as any)[k];
+      if (th) { const d = { ...DEFAULT_THICK }; for (const k of Object.keys(ts.thickSettings)) delete (ts.thickSettings as any)[k]; Object.assign(ts.thickSettings, d); }
+      this.buildBakeDock(); toast('Restored the defaults');
+    } }, 'Restore defaults'));
     if (it === 'common') {
       const high = this.high;
       const demo = demoHighPoly(this.model);
@@ -4458,6 +4490,15 @@ class App {
           el('label', { class: 'check-row' }, showHigh, ' Show high poly in the 3D view'),
           el('p', { class: 'note' }, 'Export high and low from the same scene so they line up. The high poly doesn\'t need UVs.'),
         ),
+        group('Matching by mesh name',
+          pick<'always' | 'name'>('Match', [['always', 'Always'], ['name', 'By mesh name']], bs.matchBy ?? 'always', (v) => (bs.matchBy = v),
+            'Always: every high poly mesh can project onto every low poly mesh. By mesh name: Helmet_low only takes detail from Helmet_high'),
+          text('Low poly suffix', bs.lowSuffix ?? '_low', (v) => (bs.lowSuffix = v || '_low')),
+          text('High poly suffix', bs.highSuffix ?? '_high', (v) => (bs.highSuffix = v || '_high')),
+          text('Ignore backface suffix', bs.bfSuffix ?? '_ignorebf', (v) => (bs.bfSuffix = v || '_ignorebf'), 'Meshes with this in their name ignore back faces when AO\'s Ignore backface is set to By mesh name'),
+          this.nameMatchInfo(),
+          el('p', { class: 'note' }, 'Name the meshes in your 3D app like Body_low / Body_high, Helmet_low / Helmet_high. Stops parts that sit close together from baking onto each other. AO, curvature and thickness have their own "Only same mesh name" option.'),
+        ),
         el('div', { class: 'group' + (cageOn ? '' : ' dim') },
           el('h4', {}, 'Ray distance (cage)'),
           slider('Max frontal', { min: 0.001, max: 0.25, step: 0.001, value: hs.front, fmt: (v) => v.toFixed(3), onInput: (v) => { hs.front = v; cage(); } }).el,
@@ -4467,6 +4508,8 @@ class App {
             el('span', {}, el('i', { class: 'swatch-dot', style: { background: '#ef4444' } }), 'Red = rear')),
           el('label', { class: 'check-row' }, showCage, ' Show cage'),
           el('label', { class: 'check-row', title: 'Rays follow normals averaged across hard edges, so the cage doesn\'t split open' }, avg, ' Average normals'),
+          (() => { const c = el('input', { type: 'checkbox', checked: !!hs.ignoreBack }) as HTMLInputElement; c.addEventListener('change', () => (hs.ignoreBack = c.checked));
+            return el('label', { class: 'check-row', title: 'Rays skip high poly faces they hit from behind (needs normals pointing outwards)' }, c, ' Ignore backface'); })(),
           el('p', { class: 'note' }, 'All the high poly detail should sit between the blue and red shells. The 2D view shows the Ray check: red where rays missed — raise the distances there.'),
         ),
       ];
@@ -4482,9 +4525,16 @@ class App {
     if (it === 'wsn') return [group('World space normal',
       el('p', { class: 'note' }, `Surface direction in model space (RGB = XYZ), ${fromHigh}. Used for direction-based effects like dust and snow.`),
     )];
-    if (it === 'pos') return [group('Position',
-      el('p', { class: 'note' }, `Position on the model, normalised to its bounding box (RGB = XYZ), ${fromHigh}. Used for gradients.`),
-    )];
+    if (it === 'pos') {
+      const pm = bs.posMode ?? 'all', pn = bs.posNorm ?? 'bbox';
+      return [group('Position',
+        pick<'all' | 'x' | 'y' | 'z'>('Mode', [['all', 'All axes (RGB = XYZ)'], ['x', 'Single axis: X'], ['y', 'Single axis: Y'], ['z', 'Single axis: Z']], pm, (v) => (bs.posMode = v)),
+        pick<'bbox' | 'bsphere' | 'none'>('Normalization', [['bbox', 'Bounding box'], ['bsphere', 'Bounding sphere'], ['none', 'None']], pn, (v) => (bs.posNorm = v),
+          'Bounding box stretches each axis to fill 0–1. Bounding sphere keeps the same scale on every axis. None keeps the raw position'),
+        el('p', { class: 'note' }, `Position on the model, ${fromHigh}. Used for gradients and the Position generator. Bounding box (the default) makes each axis go from black to white across the model.`),
+        restore(['posMode', 'posNorm']),
+      )];
+    }
     if (it === 'id') {
       const srcs = (Object.keys(ID_SOURCE_LABEL) as IdSource[]).filter((k) =>
         k !== 'vertex' || (this.high && this.useHigh ? this.high.geometries : this.model.geometries).some((g) => g.attributes.color));
@@ -4498,8 +4548,13 @@ class App {
       const th = ts.thickSettings;
       return [group('Thickness',
         slider('Rays', { min: 8, max: 96, step: 4, value: th.rays, fmt: (v) => v.toFixed(0), onInput: (v) => (th.rays = v) }).el,
+        slider('Min occluder distance', { min: 0.00001, max: 0.01, step: 0.00001, value: th.minDist ?? 0.00001, fmt: (v) => v.toFixed(5), onInput: (v) => (th.minDist = v) }).el,
         slider('Max distance', { min: 0.02, max: 1, step: 0.01, value: th.maxDist, fmt: (v) => v.toFixed(2), onInput: (v) => (th.maxDist = v) }).el,
-        el('p', { class: 'note' }, 'White = thick, black = thin (like Substance). Max distance is a fraction of the bounding box. Used by the Thickness smart mask (e.g. light through thin parts).'),
+        slider('Spread angle', { min: 10, max: 180, step: 1, value: th.spread ?? 180, fmt: (v) => `${v.toFixed(0)}°`, onInput: (v) => (th.spread = v) }).el,
+        pick<'cosine' | 'uniform'>('Distribution', [['cosine', 'Cosine'], ['uniform', 'Uniform']], th.dist ?? 'cosine', (v) => (th.dist = v)),
+        pick<'always' | 'name'>('Self occlusion', selfOpts, th.self ?? 'always', (v) => (th.self = v), 'Only same mesh name: a part is only thick or thin by its own geometry, not the meshes next to it'),
+        el('p', { class: 'note' }, 'White = thick, black = thin (like Substance). Distances are fractions of the bounding box. Normalised relative to the thinnest and thickest point. Used by the Thickness smart mask (e.g. light through thin parts).'),
+        restore([], true),
       )];
     }
     const method = () => el('div', { class: 'row' }, el('label', {}, 'Method'),
@@ -4515,8 +4570,14 @@ class App {
           select<string>([{ value: 'cosine', label: 'Cosine' }, { value: 'uniform', label: 'Uniform' }], bs.aoDist ?? 'cosine', (v) => (bs.aoDist = v as any))),
         el('div', { class: 'row' }, el('label', {}, 'Attenuation'),
           select<string>([{ value: 'none', label: 'None' }, { value: 'linear', label: 'Linear' }, { value: 'smooth', label: 'Smooth' }], bs.aoAtten ?? 'linear', (v) => (bs.aoAtten = v as any))),
-        (() => { const c = el('input', { type: 'checkbox', checked: !!bs.aoGround }) as HTMLInputElement; c.addEventListener('change', () => (bs.aoGround = c.checked)); return el('label', { class: 'check-row' }, c, ' Ground plane'); })(),
+        pick<'never' | 'always' | 'name'>('Ignore backface', [['never', 'Never'], ['always', 'Always'], ['name', 'By mesh name']], bs.aoBack ?? 'never', (v) => (bs.aoBack = v),
+          'Rays pass through faces they hit from behind. By mesh name: only on meshes whose name has the ignore backface suffix (_ignorebf)'),
+        pick<'always' | 'name'>('Self occlusion', selfOpts, bs.aoSelf ?? 'always', (v) => (bs.aoSelf = v),
+          'Only same mesh name: a part is only darkened by itself (and its matching high poly), not by the parts next to it'),
+        (() => { const c = el('input', { type: 'checkbox', checked: !!bs.aoGround }) as HTMLInputElement; c.addEventListener('change', () => { bs.aoGround = c.checked; this.buildBakeDock(); }); return el('label', { class: 'check-row' }, c, ' Ground plane'); })(),
+        el('div', { class: bs.aoGround ? '' : 'dim' }, slider('Ground plane offset', { min: -0.5, max: 0.5, step: 0.005, value: bs.aoGroundOffset ?? 0, fmt: (v) => v.toFixed(3), onInput: (v) => (bs.aoGroundOffset = v) }).el),
         el('p', { class: 'note' }, 'Same parameters and defaults as Substance Painter\'s Ambient Occlusion baker: 64 rays, max occluder distance 0.1 of the bounding box, 180° spread, cosine distribution, linear attenuation.'),
+        restore(['aoRays', 'aoMax', 'aoMin', 'aoSpread', 'aoDist', 'aoAtten', 'aoGround', 'aoGroundOffset', 'aoSelf', 'aoBack']),
       ] : [
         el('div', { class: 'row' }, el('label', {}, 'Quality'),
           select<number>(BAKE_QUALITY, BAKE_QUALITY.some((q) => q.value === bs.samples) ? bs.samples : 96, (v) => (bs.samples = v))),
@@ -4530,7 +4591,10 @@ class App {
         slider('Secondary rays', { min: 8, max: 128, step: 4, value: bs.curvRays ?? 32, fmt: (v) => v.toFixed(0), onInput: (v) => (bs.curvRays = v) }).el,
         slider('Sampling radius', { min: 0.001, max: 0.05, step: 0.0005, value: bs.curvRadius ?? 0.005, fmt: (v) => v.toFixed(4), onInput: (v) => (bs.curvRadius = v) }).el,
         slider('Contrast', { min: 0.25, max: 4, step: 0.05, value: bs.curvStrength, fmt: (v) => v.toFixed(2), onInput: (v) => (bs.curvStrength = v) }).el,
+        pick<'always' | 'name'>('Self intersection', selfOpts, bs.curvSelf ?? 'always', (v) => (bs.curvSelf = v),
+          'Only same mesh name: edges only come from the part itself, not from where it touches other parts'),
         el('p', { class: 'note' }, 'Like Substance\'s Curvature baker: rays sample the geometry within the sampling radius (relative to the bounding box), then the result is tonemapped automatically. Convex edges white, cavities black, flat 50% gray. Bigger radius = wider edges.'),
+        restore(['curvRays', 'curvRadius', 'curvSelf']),
       ] : [
         slider('Edge width', { min: 0.004, max: 0.06, step: 0.001, value: bs.edgeWidth, fmt: (v) => v.toFixed(3), onInput: (v) => (bs.edgeWidth = v) }).el,
         slider('Strength', { min: 0.5, max: 4, step: 0.05, value: bs.curvStrength, fmt: (v) => v.toFixed(2), onInput: (v) => (bs.curvStrength = v) }).el,
@@ -5677,8 +5741,9 @@ class App {
   private materialProps(fill: FillLayer | null) {
     const values: ChannelValues = fill ? fill.values : this.brush.values;
     const enabled: Record<Ch, boolean> = fill ? fill.enabled : this.brush.channels;
-    const changed = () => {
-      if (fill) { this.ts.markDirty(); this.modified = true; this.updateLayerRow(fill); }
+    // Only the edited channel is recomposited, so colour and slider edits show on the next frame.
+    const changed = (ch?: Ch) => {
+      if (fill) { this.ts.markDirty(ch ? [ch] : undefined); this.modified = true; this.updateLayerRow(fill); }
       else this.updateMatPreview();
     };
     /** Record an undo step before a fill-layer edit (slider drags merge into one). */
@@ -5687,7 +5752,7 @@ class App {
       const box = el('input', { type: 'checkbox', checked: enabled[ch] }) as HTMLInputElement;
       const row = el('div', { class: 'slider check' }, box, el('label', {}, label), control, el('span', { class: 'val' }, ''));
       const sync = () => { (control as HTMLInputElement).disabled = !box.checked; row.classList.toggle('dim', !box.checked); };
-      box.addEventListener('change', () => { pre('on:' + ch); enabled[ch] = box.checked; sync(); changed(); });
+      box.addEventListener('change', () => { pre('on:' + ch); enabled[ch] = box.checked; sync(); changed(ch); });
       sync();
       return row;
     };
@@ -5717,15 +5782,15 @@ class App {
       const img = fill?.images?.[ch];
       if (img) return imageRow(ch, label, img);
       const input = el('input', { type: 'color', value: rgbToHex(values[ch]) }) as HTMLInputElement;
-      input.addEventListener('input', () => { pre(ch); values[ch] = hexToRgb(input.value); changed(); });
+      input.addEventListener('input', () => { pre(ch); values[ch] = hexToRgb(input.value); changed(ch); });
       return withImage(ch, checkRow(ch, label, input));
     };
     const scalar = (ch: 'rough' | 'metal' | 'height', label: string) => {
       const img = fill?.images?.[ch];
       if (img) return imageRow(ch, label, img);
       return withImage(ch, slider(label, {
-        min: 0, max: 1, step: 0.01, value: values[ch], onInput: (v) => { pre(ch); values[ch] = v; changed(); },
-        check: { value: enabled[ch], onChange: (v) => { pre('on:' + ch); enabled[ch] = v; changed(); } },
+        min: 0, max: 1, step: 0.01, value: values[ch], onInput: (v) => { pre(ch); values[ch] = v; changed(ch); },
+        check: { value: enabled[ch], onChange: (v) => { pre('on:' + ch); enabled[ch] = v; changed(ch); } },
       }).el);
     };
     const hasImages = !!fill && Object.keys(fill.images ?? {}).length > 0;

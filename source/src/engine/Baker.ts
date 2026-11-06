@@ -23,6 +23,23 @@ export interface BakeSettings {
   curvRays?: number;
   /** Sampling radius, relative to the bounding box (its largest side). */
   curvRadius?: number;
+  // Like Substance Painter's bakers: matching by mesh name ("Helmet_low" ↔ "Helmet_high").
+  /** High poly → low poly: every mesh ('always'), or only meshes with the same name ('name'). */
+  matchBy?: 'always' | 'name';
+  lowSuffix?: string;
+  highSuffix?: string;
+  /** Meshes whose name contains this ignore their back faces when "Ignore backface: By mesh name". */
+  bfSuffix?: string;
+  /** AO: self occlusion from every mesh, or only from meshes with the same name. */
+  aoSelf?: 'always' | 'name';
+  aoBack?: 'never' | 'always' | 'name';
+  /** Ground plane height offset, relative to the bounding box. */
+  aoGroundOffset?: number;
+  /** Curvature: self intersection with every mesh, or only the same mesh name. */
+  curvSelf?: 'always' | 'name';
+  /** Position map: all axes (RGB) or one axis (gray); normalised to the box, the sphere, or not at all. */
+  posMode?: 'all' | 'x' | 'y' | 'z';
+  posNorm?: 'bbox' | 'bsphere' | 'none';
 }
 export const DEFAULT_BAKE: BakeSettings = {
   samples: 96, edgeWidth: 0.016, curvStrength: 1.0,

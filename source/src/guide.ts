@@ -66,6 +66,12 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.16', steps: [
+        'Bake by mesh name like Substance Painter: Match: By mesh name with _low / _high suffixes, plus "Only same mesh name" for AO, curvature and thickness, so parts next to each other stop baking onto each other.',
+        'More baking settings: AO ignore backface (never / always / by mesh name) and ground plane offset; Position mode (all axes or one axis) and normalization; thickness min distance, spread, distribution and self occlusion; ignore backface for high poly; Restore defaults buttons.',
+        'Colours update live while you pick them, with LocalPaint\'s own colour picker (the Windows colour dialog only updated after OK). Editing a value only redraws the channel that changed.',
+        '"Bake mesh maps after importing" now starts off and remembers what you choose.',
+      ] },
       { h: 'New in v1.15', steps: ['The baker remembers which maps you ticked, for new projects and the next time you open LocalPaint.'] },
       { h: 'New in v1.14', steps: ['Layers stack properly over glowing materials: a smart material or brush stroke on top now covers the glow (emission) of the layers below, like Substance Painter. To make a brush glow, pick an Emission color in Properties.'] },
       { h: 'New in v1.13', steps: ['Reset lighting button in Display settings: puts the light rotation, height and exposure back to the start.'] },
@@ -628,7 +634,42 @@ export const GUIDES: Guide[] = [
       { tips: ['Smart materials and smart masks use these maps.'] },
     ],
     show: [{ label: 'Baking', act: 'mode:bake' }],
-    related: ['smart-materials', 'smart-masks'],
+    related: ['bake-settings', 'smart-materials', 'smart-masks'],
+  },
+  {
+    id: 'bake-settings', title: 'Baking settings (bake by mesh name and more)', cat: 'Baking',
+    sum: 'Match high and low poly by mesh name, keep parts from shadowing each other, and fine-tune every map.',
+    tags: ['bake'], words: 'bake baking settings mesh name by mesh name match matching suffix _low _high low poly high poly ignorebf ignore backface back face self occlusion only same mesh name self intersection ground plane offset position axis normalization bounding box sphere thickness spread distribution restore defaults overlap parts touching bleeding exploded explode',
+    body: [
+      { p: 'Click Baking at the top right, then click Common parameters or a map in the list on the left to see its settings.' },
+      { h: 'Bake by mesh name', steps: [
+        'In your 3D program, name each part with a suffix: Body_low and Body_high, Helmet_low and Helmet_high, and so on.',
+        'In Common parameters > Matching by mesh name, set Match to By mesh name.',
+        'Each low poly part now only takes detail from the high poly part with the same name. Parts that sit close together stop baking onto each other, so you don\'t need to explode the model.',
+        'The note under the settings says how many low poly parts found a high poly partner, and lists the ones that didn\'t.',
+        'Your names use other suffixes? Change Low poly suffix and High poly suffix to match (for example _lp and _hp).',
+      ] },
+      { h: 'Only same mesh name (AO, curvature, thickness)', steps: [
+        'Ambient occlusion > Self occlusion: Only same mesh name means a part is only darkened by itself, not by the parts next to it.',
+        'Curvature > Self intersection: Only same mesh name stops edges showing where two parts just touch.',
+        'Thickness > Self occlusion does the same for thickness.',
+        'This works with or without a high poly, as long as the parts are separate, named meshes.',
+      ] },
+      { h: 'Ignore backface', steps: [
+        'Ambient occlusion > Ignore backface: Never (the default), Always, or By mesh name.',
+        'By mesh name only applies to meshes whose name contains the Ignore backface suffix (_ignorebf), handy for single-sided planes like leaves or cloth.',
+        'For high poly baking, tick Ignore backface under Ray distance (cage) so rays skip high poly faces seen from behind.',
+      ] },
+      { h: 'Other settings', steps: [
+        'Ambient occlusion: Ground plane adds a floor under the model; Ground plane offset moves it up or down.',
+        'Position: Mode picks all axes (color) or one axis (gray). Normalization: Bounding box stretches each axis to fill the map, Bounding sphere keeps the same scale on every axis, None keeps the raw position.',
+        'Thickness: min and max distance, spread angle and distribution, like ambient occlusion.',
+        'Restore defaults at the bottom of a map\'s settings puts it back to Substance Painter\'s defaults.',
+      ] },
+      { tips: ['The maps you tick are remembered for your next project.', 'Smart masks and generators read these maps, so re-bake after changing a setting.'] },
+    ],
+    show: [{ label: 'Baking', act: 'mode:bake' }],
+    related: ['baking', 'smart-masks'],
   },
 
   // ------------------------------------------------------------------ designer

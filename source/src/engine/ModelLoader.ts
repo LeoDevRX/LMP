@@ -117,6 +117,8 @@ function fromObject(root: THREE.Object3D, name: string, flipV: boolean, source: 
     if (Array.isArray(m.material) && g.groups.length > 1) for (const gr of g.groups) ng.addGroup(gr.start, gr.count, gr.materialIndex);
     ng.applyMatrix4(m.matrixWorld);
     if (!ng.attributes.normal) ng.computeVertexNormals();
+    // The mesh name drives "bake by mesh name" (Helmet_low ↔ Helmet_high).
+    ng.name = m.name || m.parent?.name || '';
     geos.push(ng);
   });
   if (noUv) warnings.push(`${noUv} mesh${noUv > 1 ? 'es have' : ' has'} no UVs and ${noUv > 1 ? 'were' : 'was'} skipped.`);

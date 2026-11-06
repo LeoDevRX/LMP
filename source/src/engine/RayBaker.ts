@@ -11,12 +11,13 @@ export class RayBaker {
   private nextId = 1;
   cancelled = false;
 
-  constructor(targets: THREE.BufferGeometry[]) {
+  /** `groups`: name group of each target mesh (bake by mesh name); `cull`: its name has the ignore-backface suffix. */
+  constructor(targets: THREE.BufferGeometry[], opts: { groups?: number[]; cull?: boolean[] } = {}) {
     // Every worker holds its own copy of the meshes, so very heavy ones get fewer workers.
     const tris = targets.reduce((t, g) => t + (g.index ? g.index.count : g.attributes.position.count) / 3, 0);
     const cap = tris > 4e6 ? 4 : tris > 1.5e6 ? 8 : 16;
     const n = Math.max(1, Math.min(cap, (navigator.hardwareConcurrency || 4) - 1));
-    const geos = targets.map((g) => {
+    const geos = targets.map((g, gi) => {
       const pos = g.attributes.position;
       const p = new Float32Array(pos.count * 3);
       for (let i = 0; i < pos.count; i++) { p[i * 3] = pos.getX(i); p[i * 3 + 1] = pos.getY(i); p[i * 3 + 2] = pos.getZ(i); }
@@ -24,7 +25,7 @@ export class RayBaker {
       const na = g.attributes.normal;
       let nrm: Float32Array | null = null;
       if (na) { nrm = new Float32Array(na.count * 3); for (let i = 0; i < na.count; i++) { nrm[i * 3] = na.getX(i); nrm[i * 3 + 1] = na.getY(i); nrm[i * 3 + 2] = na.getZ(i); } }
-      return { pos: p, index: idx, nrm };
+      return { pos: p, index: idx, nrm, grp: opts.groups?.[gi] ?? 0, cull: !!opts.cull?.[gi] };
     });
     const ready: Promise<void>[] = [];
     for (let i = 0; i < n; i++) {
@@ -44,7 +45,7 @@ export class RayBaker {
    * Trace every texel in `pts` (SAMPLE_FLOATS per texel: position, normal, geometric normal, texel size). Work is split in
    * chunks shared between the workers; returns one value per texel.
    */
-  async run(pts: Float32Array, params: RayParams, onProgress?: (f: number) => void): Promise<Float32Array | null> {
+  async run(pts: Float32Array, params: RayParams, onProgress?: (f: number) => void, grp?: Int32Array | null): Promise<Float32Array | null> {
     await this.ready;
     const n = pts.length / SAMPLE_FLOATS;
     const out = new Float32Array(n);
@@ -65,7 +66,7 @@ export class RayBaker {
           take();
         };
         w.addEventListener('message', on);
-        w.postMessage({ type: 'job', id, first, params, pts: pts.slice(first * SAMPLE_FLOATS, (first + count) * SAMPLE_FLOATS) });
+        w.postMessage({ type: 'job', id, first, params, pts: pts.slice(first * SAMPLE_FLOATS, (first + count) * SAMPLE_FLOATS), grp: grp ? grp.slice(first, first + count) : undefined });
       };
       take();
     })));

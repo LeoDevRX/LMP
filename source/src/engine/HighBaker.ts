@@ -13,6 +13,8 @@ export interface HighBakeSettings {
   rear: number;
   /** Cast rays along normals averaged across hard edges, so the cage doesn't split open. */
   average: boolean;
+  /** Ignore high poly faces seen from behind. */
+  ignoreBack?: boolean;
 }
 export const DEFAULT_HIGH: HighBakeSettings = { front: 0.03, rear: 0.03, average: true };
 
@@ -176,6 +178,8 @@ export async function bakeHighToLow(
   gpu: GPU, low: THREE.BufferGeometry[], high: THREE.BufferGeometry[], size: number,
   s: HighBakeSettings, onProgress?: (f: number) => void, isCancelled?: () => boolean,
   ids?: { tri: (Int32Array | null)[]; vertexColor: boolean; color: (id: number) => [number, number, number] },
+  /** Match by mesh name: low mesh (index + 1) per texel, and the name group of every low / high mesh. */
+  match?: { lowIdx: Float32Array; lowKey: number[]; highKey: number[] },
 ): Promise<HighBakeResult | null> {
   const fr = readFrames(gpu, low, size, s.average);
   const N = size * size;
@@ -226,9 +230,12 @@ export async function bakeHighToLow(
     ray.origin.copy(P).addScaledVector(D, s.front);
     ray.direction.copy(D).negate();
     let best: any = null, bestG: THREE.BufferGeometry | null = null;
-    for (const g of high) {
+    const want = match ? match.lowKey[Math.round(match.lowIdx[i]) - 1] ?? -1 : -1;
+    for (let hi = 0; hi < high.length; hi++) {
+      const g = high[hi];
+      if (match && match.highKey[hi] !== want) continue;
       const bvh = (g as any).boundsTree;
-      const hit = bvh ? bvh.raycastFirst(ray, THREE.DoubleSide, 0, far) : null;
+      const hit = bvh ? bvh.raycastFirst(ray, s.ignoreBack ? THREE.FrontSide : THREE.DoubleSide, 0, far) : null;
       if (hit && hit.distance <= far && (!best || hit.distance < best.distance)) { best = hit; bestG = g; }
     }
     let ok = false;

@@ -31,16 +31,26 @@ export interface RayParams {
   radius: number;
   /** Samples lie on a high poly (TextureCraft uses a separate tuning for it). */
   high?: boolean;
+  /** Self occlusion "Only same mesh name": rays only hit meshes in the texel's own name group. */
+  sameName?: boolean;
+  /** Ignore backface: never, always, or on meshes whose name has the ignore-backface suffix. */
+  back?: 'never' | 'always' | 'name';
 }
 export const SAMPLE_FLOATS = 10;
 
-interface Target { bvh: MeshBVH; pos: Float32Array; nrm: Float32Array | null; idx: Uint32Array | null; views: { f32: Float32Array; u16: Uint16Array; u32: Uint32Array }[] }
+interface Target { bvh: MeshBVH; pos: Float32Array; nrm: Float32Array | null; idx: Uint32Array | null; views: { f32: Float32Array; u16: Uint16Array; u32: Uint32Array }[]; grp: number; cull: boolean; bfName: boolean }
 let targets: Target[] = [];
+/** Target indices per name group, all targets, and the ones the current texel's rays may hit. */
+let byGroup = new Map<number, number[]>();
+let ALL: number[] = [];
+let ALLOW: number[] = [];
+/** Ignore backface for the current job: 0 never, 1 by mesh name, 2 always. */
+let BACK = 0;
 
 self.onmessage = (e: MessageEvent) => {
   const m = e.data;
   if (m.type === 'init') {
-    targets = m.geos.map((g: { pos: Float32Array; index: Uint32Array | null; nrm: Float32Array | null }) => {
+    targets = m.geos.map((g: { pos: Float32Array; index: Uint32Array | null; nrm: Float32Array | null; grp?: number; cull?: boolean }) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(g.pos, 3));
       if (g.index) geo.setIndex(new THREE.BufferAttribute(g.index.slice(), 1));
@@ -48,11 +58,14 @@ self.onmessage = (e: MessageEvent) => {
       const bvh = new MeshBVH(geo, { strategy: SAH });
       // MeshBVH may reorder the index; read triangles back from the geometry it holds.
       const idx = geo.index ? (geo.index.array as Uint32Array) : null;
-      return { bvh, pos: g.pos, nrm: g.nrm, idx, views: ((bvh as any)._roots as ArrayBuffer[]).map((r) => ({ f32: new Float32Array(r), u16: new Uint16Array(r), u32: new Uint32Array(r) })) };
+      return { bvh, pos: g.pos, nrm: g.nrm, idx, views: ((bvh as any)._roots as ArrayBuffer[]).map((r) => ({ f32: new Float32Array(r), u16: new Uint16Array(r), u32: new Uint32Array(r) })), grp: g.grp ?? 0, cull: !!g.cull, bfName: !!g.cull };
     });
+    byGroup = new Map();
+    targets.forEach((t, i) => { const l = byGroup.get(t.grp) ?? []; l.push(i); byGroup.set(t.grp, l); });
+    ALL = targets.map((_, i) => i);
     (self as any).postMessage({ type: 'ready' });
   } else if (m.type === 'job') {
-    const out = run(m.pts as Float32Array, m.params as RayParams, m.first as number);
+    const out = run(m.pts as Float32Array, m.params as RayParams, m.first as number, (m.grp as Int32Array | undefined) ?? null);
     (self as any).postMessage({ type: 'done', id: m.id, out }, [out.buffer]);
   }
 };
@@ -112,7 +125,7 @@ function boxT(F32: Float32Array, n: number, near: number, far: number): number {
 /** Closest hit on target T within far: distance (hit point in hx/hy/hz, triangle in htri) or -1. */
 function castTarget(T: Target, far: number): number {
   if (rdz0 === 0) return -1;
-  const POS = T.pos, IDX = T.idx;
+  const POS = T.pos, IDX = T.idx, cull = BACK === 2 || (BACK === 1 && T.bfName);
   const ox = RO[0], oy = RO[1], oz = RO[2], dx = RD[0], dy = RD[1], dz = RD[2];
   let best = -1;
   for (const v of T.views) {
@@ -144,6 +157,12 @@ function castTarget(T: Target, far: number): number {
           if ((u < 0 || vv < 0 || w < 0) && (u > 0 || vv > 0 || w > 0)) continue;
           const det = u + vv + w;
           if (det === 0) continue;
+          if (cull) {
+            // Ignore backface: skip triangles facing away from the ray (geometric normal · ray direction > 0).
+            const e1x = POS[b3] - POS[a3], e1y = POS[b3 + 1] - POS[a3 + 1], e1z = POS[b3 + 2] - POS[a3 + 2];
+            const e2x = POS[c3] - POS[a3], e2y = POS[c3 + 1] - POS[a3 + 1], e2z = POS[c3 + 2] - POS[a3 + 2];
+            if ((e1y * e2z - e1z * e2y) * dx + (e1z * e2x - e1x * e2z) * dy + (e1x * e2y - e1y * e2x) * dz > 0) continue;
+          }
           const tS = sz * (u * akz + vv * bkz + w * ckz);
           if (det > 0 ? tS < 0 : tS > 0) continue;
           const t = tS / det;
@@ -174,7 +193,7 @@ function closest(ox: number, oy: number, oz: number, dx: number, dy: number, dz:
   if (!(far > 0)) return null;
   setRay(ox, oy, oz, dx, dy, dz);
   let best: Hit | null = null;
-  for (let g = 0; g < targets.length; g++) {
+  for (const g of ALLOW) {
     // Later meshes only need to beat the closest hit so far.
     const lim = best ? best.t : far;
     const d = castTarget(targets[g], lim);
@@ -187,7 +206,7 @@ function closestT(ox: number, oy: number, oz: number, dx: number, dy: number, dz
   if (!(far > 0)) return -1;
   setRay(ox, oy, oz, dx, dy, dz);
   let best = -1;
-  for (let g = 0; g < targets.length; g++) {
+  for (const g of ALLOW) {
     const lim = best >= 0 ? best : far;
     const d = castTarget(targets[g], lim);
     if (d >= 0 && d <= lim && (best < 0 || d < best)) best = d;
@@ -367,11 +386,14 @@ function curvature(pts: Float32Array, o: number, p: RayParams): number {
   return Math.min(1, Math.max(-1, value * 2));
 }
 
-function run(pts: Float32Array, p: RayParams, first: number): Float32Array {
+function run(pts: Float32Array, p: RayParams, first: number, grp: Int32Array | null): Float32Array {
   const n = pts.length / SAMPLE_FLOATS;
   const out = new Float32Array(n);
+  ALLOW = ALL;
+  BACK = p.back === 'always' ? 2 : p.back === 'name' ? 1 : 0;
   for (let i = 0; i < n; i++) {
     const o = i * SAMPLE_FLOATS;
+    if (p.sameName && grp) ALLOW = byGroup.get(grp[i]) ?? [];
     out[i] = p.kind === 'curv' ? curvature(pts, o, p) : hemisphere(pts, o, p, first + i);
   }
   return out;

@@ -5,6 +5,7 @@ import { bakeHighToLow, HighBakeSettings, DEFAULT_HIGH, readFrames, FRAME_VERT, 
 import { MeshParts, idColor } from './MeshParts';
 import { bakeThickness, downsample, ThicknessSettings, DEFAULT_THICK } from './Thickness';
 import { RayBaker, SAMPLE_FLOATS } from './RayBaker';
+import { DEFAULT_NAME_RULES, keyIds, wantsIgnoreBf, type NameRules } from './meshNames';
 import { FRAG_GEN, FRAG_MICRO, GenSettings, LayerMaskSpec, axisVec, genIndex, MaskFx, FX_BLENDS, SHAPE_KINDS, usesMicro } from './Masks';
 import { FRAG_PROC, ProcSource, patternIndex, procKey, PatternType } from './Procedural';
 import { SpKind, SpSettings, spShader, spPack, spGlobalBlur, spGrungeParams, parseGrungeRef, GRUNGE_FALLBACK, FRAG_SP_PACK, FRAG_SP_PACK2, FRAG_SP_BLUR, SP_MAXP } from './PainterGen';
@@ -467,12 +468,16 @@ uniform sampler2D cov;
 uniform int mode;
 uniform vec3 bmin;
 uniform vec3 bsize;
+uniform int axis;
 varying vec2 vUv;
 void main() {
   vec4 s = texture2D(src, vUv);
   float a = texture2D(cov, vUv).a;
   if (mode == 0) gl_FragColor = vec4(normalize(s.xyz + vec3(1e-6)) * 0.5 + 0.5, a);
-  else if (mode == 1) gl_FragColor = vec4(clamp((s.xyz - bmin) / bsize, 0.0, 1.0), a);
+  else if (mode == 1) {
+    vec3 p = clamp((s.xyz - bmin) / bsize, 0.0, 1.0);
+    gl_FragColor = vec4(axis == 0 ? vec3(p.x) : axis == 1 ? vec3(p.y) : axis == 2 ? vec3(p.z) : p, a);
+  }
   else gl_FragColor = vec4(s.rgb, a);
 }`;
 const ID_VERT = /* glsl */ `
@@ -608,7 +613,7 @@ export class TextureSet {
     adjMode: { value: 0 }, adjA: { value: new THREE.Vector4() }, adjTint: { value: new THREE.Vector3(1, 1, 1) },
   });
   private matEnc = quadShader(FRAG_ENC, {
-    src: { value: null }, cov: { value: null }, mode: { value: 0 }, bmin: { value: new THREE.Vector3() }, bsize: { value: new THREE.Vector3(1, 1, 1) },
+    src: { value: null }, cov: { value: null }, mode: { value: 0 }, bmin: { value: new THREE.Vector3() }, bsize: { value: new THREE.Vector3(1, 1, 1) }, axis: { value: -1 },
   });
   private matDilate = quadShader(FRAG_DILATE, {
     src: { value: null }, texel: { value: new THREE.Vector2() }, off: { value: 1 },
@@ -853,11 +858,16 @@ void main() { float v = texture2D(genTex, vUv).r; if (hasPaint) { vec4 pm = text
     let done = 0;
     const prog = (k: keyof typeof W, f: number) => onProgress?.((done + W[k] * f) / total);
     let hiPos: Float32Array | null = null, hiNrm: Float32Array | null = null;
+    // Bake by mesh name: low and high meshes share a name group when their names match without the suffixes.
+    const rules: NameRules = { low: bs.lowSuffix ?? DEFAULT_NAME_RULES.low, high: bs.highSuffix ?? DEFAULT_NAME_RULES.high, ignoreBf: bs.bfSuffix ?? DEFAULT_NAME_RULES.ignoreBf };
+    const rayTargets = high ?? this.geometries;
+    const [lowKey, tgtKey] = keyIds([this.geometries.map((g) => g.name), rayTargets.map((g) => g.name)], rules);
     try {
       if (doRays) {
         for (const k of ['normal', 'height', 'id', 'wsn', 'pos'] as BakeKey[]) stage(k, 'working');
         const res = await bakeHighToLow(this.gpu, this.geometries, high!, this.size, this.highSettings,
-          (f) => prog('rays', f), stale, maps.id ? this.highIdOptions(high!) : undefined);
+          (f) => prog('rays', f), stale, maps.id ? this.highIdOptions(high!) : undefined,
+          bs.matchBy === 'name' ? { lowIdx: this.meshIndexMap(this.size), lowKey, highKey: tgtKey } : undefined);
         if (!res || stale()) return false;
         if (maps.normal) {
           this.writeRT(this.compA, res.normal, this.size);
@@ -899,10 +909,21 @@ void main() { float v = texture2D(genTex, vUv).r; if (hasPaint) { vec4 pm = text
       const enc = (src: THREE.Texture, mode: number, out: RT) => {
         const u = this.matEnc.uniforms;
         u.src.value = src; u.cov.value = this.posRT.texture; u.mode.value = mode;
-        u.bmin.value.copy(this.bboxMin);
-        u.bsize.value.subVectors(this.bboxMax, this.bboxMin).max(new THREE.Vector3(1e-4, 1e-4, 1e-4));
+        const norm = mode === 1 ? bs.posNorm ?? 'bbox' : 'bbox';
+        if (norm === 'bsphere') {
+          // Normalised to the bounding sphere: the same scale on every axis.
+          const c = new THREE.Vector3().addVectors(this.bboxMin, this.bboxMax).multiplyScalar(0.5);
+          const r = Math.max(1e-4, this.bboxMax.distanceTo(this.bboxMin) / 2);
+          u.bmin.value.set(c.x - r, c.y - r, c.z - r); u.bsize.value.set(2 * r, 2 * r, 2 * r);
+        } else if (norm === 'none') { u.bmin.value.set(0, 0, 0); u.bsize.value.set(1, 1, 1); }
+        else {
+          u.bmin.value.copy(this.bboxMin);
+          u.bsize.value.subVectors(this.bboxMax, this.bboxMin).max(new THREE.Vector3(1e-4, 1e-4, 1e-4));
+        }
+        const pm = bs.posMode ?? 'all';
+        u.axis.value = mode === 1 && pm !== 'all' ? 'xyz'.indexOf(pm) : -1;
         this.gpu.run(this.matEnc, this.compA);
-        u.src.value = null;
+        u.src.value = null; u.axis.value = -1;
         this.dilate(this.compA, out);
       };
       if (maps.wsn) { enc(nrmTex, 0, this.wsnRT); this.baked.add('wsn'); stage('wsn', 'done'); }
@@ -912,22 +933,24 @@ void main() { float v = texture2D(genTex, vUv).r; if (hasPaint) { vec4 pm = text
       // "Relative to bounding box" distances use the largest side of the box (like TextureCraft).
       const ext = new THREE.Vector3().subVectors(this.bboxMax, this.bboxMin);
       const scaleU = Math.max(1e-6, ext.x, ext.y, ext.z);
-      const tracer = () => (rb ??= new RayBaker(high ?? this.geometries));
+      const tracer = () => (rb ??= new RayBaker(rayTargets, { groups: tgtKey, cull: rayTargets.map((g) => wantsIgnoreBf(g.name, rules)) }));
       const stopTracer = setInterval(() => { if (stale() && rb) rb.cancelled = true; }, 200);
       try {
       if (doAO && traced) {
         // Ray traced like Substance: per texel position + normal (on the high poly when baking from one).
         const N = this.size * this.size;
         const { idx, pts } = this.samples(this.size, hiPos, hiNrm);
+        const grp = this.sampleGroups(this.size, idx, lowKey);
         const base = {
           minD: (bs.aoMin ?? 1e-5) * scaleU, spread: bs.aoSpread ?? 180, dist: bs.aoDist ?? 'cosine', atten: bs.aoAtten ?? 'linear',
-          ground: !!bs.aoGround, groundY: this.bboxMin.y, eps: 1e-6 * diag, meshScale: scaleU,
+          ground: !!bs.aoGround, groundY: this.bboxMin.y + (bs.aoGroundOffset ?? 0) * scaleU, eps: 1e-6 * diag, meshScale: scaleU,
         } as const;
         const parts = (maps.ao ? 1 : 0) + (maps.curv ? 1 : 0);
         let ph = 0;
         const sub = (f: number) => prog('ao', (ph + f) / parts);
         stage('ao', 'working');
-        const ao = maps.ao ? await tracer().run(pts, { ...base, kind: 'ao', rays: bs.aoRays ?? 64, maxD: (bs.aoMax ?? 1) * scaleU, radius: 0 }, sub) : null;
+        const ao = maps.ao ? await tracer().run(pts, { ...base, kind: 'ao', rays: bs.aoRays ?? 64, maxD: (bs.aoMax ?? 1) * scaleU, radius: 0,
+          sameName: bs.aoSelf === 'name', back: bs.aoBack ?? 'never' }, sub, grp) : null;
         if (maps.ao) { if (!ao || stale()) return false; ph++; }
         if (maps.ao) {
           // Show AO right away (on the model too) while curvature is still tracing.
@@ -940,7 +963,8 @@ void main() { float v = texture2D(genTex, vUv).r; if (hasPaint) { vec4 pm = text
           stage('ao', 'done');
         }
         stage('curv', 'working');
-        const cv = maps.curv ? await tracer().run(pts, { ...base, kind: 'curv', rays: bs.curvRays ?? 32, maxD: 0, radius: (bs.curvRadius ?? 0.001) * scaleU, high: !!hiNrm }, sub) : null;
+        const cv = maps.curv ? await tracer().run(pts, { ...base, kind: 'curv', rays: bs.curvRays ?? 32, maxD: 0, radius: (bs.curvRadius ?? 0.001) * scaleU, high: !!hiNrm,
+          sameName: bs.curvSelf === 'name' }, sub, grp) : null;
         if (maps.curv && (!cv || stale())) return false;
         // Curvature: automatic tonemapping (symmetric around 0.5 = flat), as in Substance / TextureCraft.
         let scale = 1;
@@ -987,8 +1011,10 @@ void main() { float v = texture2D(genTex, vUv).r; if (hasPaint) { vec4 pm = text
         if (traced) {
           const M = ts * ts;
           const { idx: ids, pts } = this.samples(ts, hiPos ? P : null, hiNrm ? Nn : null);
-          const th = await tracer().run(pts, { kind: 'thick', rays: this.thickSettings.rays, minD: 1e-5 * scaleU, maxD: this.thickSettings.maxDist * scaleU,
-            spread: 180, dist: 'cosine', atten: 'none', ground: false, groundY: 0, eps: 1e-6 * diag, meshScale: scaleU, radius: 0 }, (f) => prog('thick', f));
+          const tk = this.thickSettings;
+          const th = await tracer().run(pts, { kind: 'thick', rays: tk.rays, minD: (tk.minDist ?? 1e-5) * scaleU, maxD: tk.maxDist * scaleU,
+            spread: tk.spread ?? 180, dist: tk.dist ?? 'cosine', atten: 'none', ground: false, groundY: 0, eps: 1e-6 * diag, meshScale: scaleU, radius: 0,
+            sameName: tk.self === 'name' }, (f) => prog('thick', f), this.sampleGroups(ts, ids, lowKey));
           if (!th || stale()) return false;
           // Normalised relative to min / max, like TextureCraft's default.
           let lo = Infinity, hi = -Infinity;
@@ -1058,6 +1084,43 @@ void main() { float v = texture2D(genTex, vUv).r; if (hasPaint) { vec4 pm = text
       pts[o + 9] = geo[t * 4 + 3];
     });
     return { idx, pts };
+  }
+
+  /** Low poly mesh per texel (its index + 1; 0 where no mesh covers the texel), by rasterising in UV space. */
+  meshIndexMap(size: number): Float32Array {
+    const mats: THREE.ShaderMaterial[] = [];
+    const scene = new THREE.Scene();
+    this.geometries.forEach((g, i) => {
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: `void main() { gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0); }`,
+        fragmentShader: `uniform float id; void main() { gl_FragColor = vec4(id, 0.0, 0.0, 1.0); }`,
+        uniforms: { id: { value: i + 1 } },
+        side: THREE.DoubleSide, depthTest: false, depthWrite: false, blending: THREE.NoBlending,
+      });
+      mats.push(mat);
+      const m = new THREE.Mesh(g, mat); m.frustumCulled = false; scene.add(m);
+    });
+    const rt = new THREE.WebGLRenderTarget(size, size, { type: THREE.FloatType, magFilter: THREE.NearestFilter, minFilter: THREE.NearestFilter, depthBuffer: false });
+    const r = this.gpu.renderer;
+    const saved = new THREE.Color(); const sa = r.getClearAlpha(); r.getClearColor(saved);
+    r.setRenderTarget(rt); r.setClearColor(0x000000, 0); r.clear(true, false, false);
+    r.render(scene, this.gpu.camera);
+    const buf = new Float32Array(size * size * 4);
+    r.readRenderTargetPixels(rt, 0, 0, size, size, buf);
+    r.setClearColor(saved, sa); r.setRenderTarget(null);
+    rt.dispose(); mats.forEach((m) => m.dispose());
+    const out = new Float32Array(size * size);
+    for (let i = 0; i < out.length; i++) out[i] = buf[i * 4];
+    return out;
+  }
+
+  /** Name group of the low poly mesh under each traced texel (for "Only same mesh name"). */
+  private sampleGroups(size: number, idx: number[], lowKey: number[]): Int32Array | null {
+    if (this.geometries.length < 2 && !this.highGeometries) return null;
+    const m = this.meshIndexMap(size);
+    const g = new Int32Array(idx.length);
+    idx.forEach((t, k) => { g[k] = lowKey[Math.round(m[t]) - 1] ?? -1; });
+    return g;
   }
 
   /** Per texel: geometric (face) normal + world size of one texel, by rasterising in UV space. */
