@@ -66,6 +66,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.13', steps: ['Reset lighting button in Display settings: puts the light rotation, height and exposure back to the start.'] },
       { h: 'New in v1.12', steps: ['Opal smart material in Basic: a milky body with flecks of green, orange, purple and red fire.', 'Move the light: hold Shift and right-drag in the 3D view, or use Rotation and Light height in Display settings.', 'Assets > Alphas: 150+ stamps, including bolts, nuts, screws, rivets, panels, seams, vents, grilles, gears, hinges, tread plate, arrows, signs, shapes and lines.', 'Baking AO, curvature and thickness is faster (about a quarter on its own, more on PCs with many cores) and gives exactly the same result.', 'Smart materials with parts LocalPaint can\'t read import the rest instead of failing. New guide page: Help: errors.'] },
       { h: 'New in v1.11', steps: ['The Basic smart materials (Dusty Plastic, Rusty Iron, Worn Gold and the rest) now show their previews straight away, along with the newer Painter-style smart materials and smart masks.'] },
       { h: 'New in v1.10', steps: ['New brush controls: hold Ctrl and scroll to change brush size, Ctrl + Shift + scroll for stroke opacity, Ctrl + right-drag for hardness. Ctrl + left-drag still sets flow and rotation.'] },
@@ -689,7 +690,7 @@ export const GUIDES: Guide[] = [
     tags: ['display'], words: 'light lighting environment hdr hdri background dark bright exposure tone mapping view look shadows sun rotate turn move light direction highlight shift right drag',
     body: [
       { steps: ['Click Display settings on the right edge (or Viewport > Display settings).', 'Pick an environment, or drop in your own .hdr file.', 'Change the exposure, rotation and tone mapping.'] },
-      { h: 'Move the light', p: 'Hold Shift and right-drag in the 3D view. Left and right swings the light around the model, up and down raises or lowers it. The Rotation and Light height sliders in Display settings do the same, and LocalPaint remembers where you left it.' },
+      { h: 'Move the light', p: 'Hold Shift and right-drag in the 3D view. Left and right swings the light around the model, up and down raises or lowers it. The Rotation and Light height sliders in Display settings do the same, and LocalPaint remembers where you left it. Reset lighting puts it back to the start.' },
     ],
     show: [{ label: 'Display settings', act: 'display' }],
   },

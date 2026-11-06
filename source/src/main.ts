@@ -3269,6 +3269,12 @@ class App {
           slider('Rotation', { min: 0, max: 360, step: 1, value: Math.round(vp.envYaw), fmt: (v) => `${v}°`, onInput: (v) => { vp.envRotation = v; this.settings.envYaw = v; saveSettings(this.settings); } }).el,
           slider('Light height', { min: -60, max: 60, step: 1, value: Math.round(vp.envTilt), fmt: (v) => `${v}°`, onInput: (v) => { vp.envTiltDeg = v; this.settings.envTilt = v; saveSettings(this.settings); } }).el,
           el('p', { class: 'note' }, 'Tip: hold Shift and right-drag in the 3D view to move the light.'),
+          el('div', { class: 'row' }, el('label', {}, ''),
+            el('button', { class: 'grow', title: 'Put the light back where it starts (rotation 0°, height 0°, exposure 1)', onclick: () => {
+              vp.envRotation = 0; vp.envTiltDeg = 0; vp.exposure = 1;
+              this.settings.envYaw = 0; this.settings.envTilt = 0; saveSettings(this.settings);
+              this.poke(); this.buildFlyout(); toast('Lighting reset');
+            } }, 'Reset lighting')),
           el('div', { class: 'row' }, el('label', {}, 'Background'),
             select([{ value: 'env', label: 'Blurred environment' }, { value: 'solid', label: 'Solid dark gray' }], vp.bgMode, (v) => { vp.bgMode = v as any; vp.applyBackground(); })),
         ),
