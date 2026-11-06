@@ -3375,6 +3375,11 @@ class App {
       const u = (SCAN_PREVIEWS as Record<string, string>)[it.name];
       return () => Promise.resolve(u);
     }
+    // Built-in Basic smart materials (unchanged from how they ship): previews rendered ahead of time too.
+    if (it.kind === 'smart' && !/^lib:/.test(it.file ?? '')) {
+      const u = (SCAN_PREVIEWS as Record<string, string>)['starter:' + this.hashOf(it.smart)];
+      if (u) return () => Promise.resolve(u);
+    }
     if (it.kind === 'smart') {
       const fills = it.smart.layers.filter((l) => l.kind === 'fill') as any[];
       const main = fills[Math.min(1, fills.length - 1)];
@@ -3480,7 +3485,8 @@ class App {
     // Smart material / smart mask previews that aren't shipped ready-made are slow to make (they run the whole layer
     // stack), so they're made in the background after loading, when the shelf shows them.
     const slow = (it: ShelfItem) => (it.kind === 'smart' || it.kind === 'mask')
-      && !(SCAN_PREVIEWS as Record<string, string>)[it.kind === 'mask' ? 'mask:' + it.preset : it.name];
+      && !(SCAN_PREVIEWS as Record<string, string>)[it.kind === 'mask' ? 'mask:' + it.preset : it.name]
+      && !(it.kind === 'smart' && (SCAN_PREVIEWS as Record<string, string>)['starter:' + this.hashOf(it.smart)]);
     const items = this.shelf.items.filter((it) => this.thumbJob(it) && !this.thumbCache.has(this.thumbKey(it)) && !needsDownload(it) && !slow(it));
     let n = 0, last = performance.now();
     const pctOf = (k: number) => 20 + Math.round((k / Math.max(1, items.length)) * 80);

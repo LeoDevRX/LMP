@@ -66,6 +66,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.11', steps: ['The Basic smart materials (Dusty Plastic, Rusty Iron, Worn Gold and the rest) now show their previews straight away, along with the newer Painter-style smart materials and smart masks.'] },
       { h: 'New in v1.10', steps: ['New brush controls: hold Ctrl and scroll to change brush size, Ctrl + Shift + scroll for stroke opacity, Ctrl + right-drag for hardness. Ctrl + left-drag still sets flow and rotation.'] },
       { h: 'New in v1.09', steps: ['Fixed freezes when dropping smart materials and smart material previews that never showed up: the new mask generators compiled very slowly on Windows. They now compile in under a second, on the loading screen.'] },
       { h: 'New in v1.08', steps: ['Less lag after dropping a smart material, and shelf previews are made only while you pause.'] },
