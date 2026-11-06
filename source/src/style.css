@@ -841,3 +841,7 @@ details.sbs-grp[open] { padding-bottom: 6px; }
 .cpop-swatch { width: 26px; height: 22px; border-radius: 5px; border: 1px solid rgba(255,255,255,.18); flex: none; }
 .cpop-swatch:first-child { cursor: pointer; }
 .cpop-hex { flex: 1; min-width: 0; font: 12px ui-monospace, monospace; padding: 4px 6px; background: var(--input, #15151a); color: inherit; border: 1px solid var(--border, #3a3a44); border-radius: 5px; }
+
+/* Drag-to-change number fields (layer opacity) */
+input.scrub:not(:focus) { cursor: ew-resize; }
+body.scrubbing, body.scrubbing * { cursor: ew-resize !important; user-select: none !important; }

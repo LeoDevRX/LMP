@@ -66,6 +66,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.17', steps: ['Layer opacity works like Substance: hold the mouse on the number and drag left or right to change it (Shift for fine steps). Click it to type a value instead. The mouse wheel no longer changes it by accident.'] },
       { h: 'New in v1.16', steps: [
         'Bake by mesh name like Substance Painter: Match: By mesh name with _low / _high suffixes, plus "Only same mesh name" for AO, curvature and thickness, so parts next to each other stop baking onto each other.',
         'More baking settings: AO ignore backface (never / always / by mesh name) and ground plane offset; Position mode (all axes or one axis) and normalization; thickness min distance, spread, distribution and self occlusion; ignore backface for high poly; Restore defaults buttons.',

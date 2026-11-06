@@ -52,6 +52,43 @@ import { SBS_FILES, SBS_LOADED, SbsGraph, SbsParam, SbsState, SbsFeed, FEED_LABE
 import { SbsNativeRunner, nativeFor } from './engine/SbsNative';
 import { el, slider, select, hexToRgb, rgbToHex, toast, pickFile, pickFiles, ICON2 as I } from './ui';
 
+/**
+ * Like Substance's number fields: hold the mouse on the number and drag left / right to lower / raise it (live).
+ * A plain click (no drag) still lets you type. Shift = fine steps, Ctrl = big steps.
+ */
+function scrubNumber(input: HTMLInputElement, min: number, max: number, apply: () => void) {
+  input.classList.add('scrub');
+  input.draggable = false;
+  input.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || document.activeElement === input) return;
+    e.preventDefault(); e.stopPropagation();
+    const row = input.closest('[draggable]') as HTMLElement | null;
+    const wasDraggable = row?.draggable;
+    if (row) row.draggable = false;
+    const x0 = e.clientX, v0 = +input.value || 0;
+    let moved = false;
+    try { input.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - x0;
+      if (!moved && Math.abs(dx) < 3) return;
+      moved = true;
+      document.body.classList.add('scrubbing');
+      const k = ev.shiftKey ? 0.1 : ev.ctrlKey ? 2 : 0.5;
+      const v = Math.round(Math.min(max, Math.max(min, v0 + dx * k)));
+      if (String(v) !== input.value) { input.value = String(v); apply(); }
+    };
+    const up = () => {
+      input.removeEventListener('pointermove', move); input.removeEventListener('pointerup', up); input.removeEventListener('pointercancel', up);
+      document.body.classList.remove('scrubbing');
+      if (row && wasDraggable !== undefined) row.draggable = wasDraggable;
+      if (!moved) { input.focus(); input.select(); }
+    };
+    input.addEventListener('pointermove', move); input.addEventListener('pointerup', up); input.addEventListener('pointercancel', up);
+  });
+  // The wheel only changes the number while you're typing in it (no accidental changes while scrolling the panel).
+  input.addEventListener('wheel', (e) => { if (document.activeElement !== input) input.blur(); }, { passive: true });
+}
+
 const RESOLUTIONS = [512, 1024, 2048, 4096];
 const RES_LABEL = (r: number) => (r >= 1024 ? `${r / 1024}K` : `${r}`) + ` (${r} × ${r})`;
 const VIEWS: { v: ViewMode; label: string }[] = [
@@ -5575,14 +5612,16 @@ class App {
     blend.addEventListener('click', (e) => e.stopPropagation());
     const op = el('input', { type: 'number', min: 0, max: 100, step: 1, value: Math.round(l.opacity * 100), class: 'mini-num', title: 'Opacity %' }) as HTMLInputElement;
     op.addEventListener('click', (e) => e.stopPropagation());
-    op.addEventListener('input', () => {
+    const applyOp = () => {
       const targets = this.targetsFor(l);
       ts.checkpoint('Opacity', 'opacity:' + targets.map((t) => t.id).join(','));
       const v = Math.min(1, Math.max(0, (+op.value || 0) / 100));
       for (const t of targets) { t.opacity = v; const r = this.layerRowEls.get(t.id); if (r && r !== this.layerRowEls.get(l.id)) r.op.value = String(Math.round(v * 100)); }
       l.opacity = v;
-      ts.markDirty(); this.modified = true;
-    });
+      ts.markDirty(); this.modified = true; this.poke();
+    };
+    op.addEventListener('input', applyOp);
+    scrubNumber(op, 0, 100, applyOp);
     const row = el('div', {
       class: 'layer' + (isActive ? ' active' : '') + (!isActive && this.sel.has(l.id) ? ' selected' : '') + (l.kind === 'group' ? ' group' : ''),
       title: 'Ctrl+click / Shift+click to select several · double-click to rename · right-click for masks and folders · drag to reorder',
