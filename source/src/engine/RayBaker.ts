@@ -12,7 +12,10 @@ export class RayBaker {
   cancelled = false;
 
   constructor(targets: THREE.BufferGeometry[]) {
-    const n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
+    // Every worker holds its own copy of the meshes, so very heavy ones get fewer workers.
+    const tris = targets.reduce((t, g) => t + (g.index ? g.index.count : g.attributes.position.count) / 3, 0);
+    const cap = tris > 4e6 ? 4 : tris > 1.5e6 ? 8 : 16;
+    const n = Math.max(1, Math.min(cap, (navigator.hardwareConcurrency || 4) - 1));
     const geos = targets.map((g) => {
       const pos = g.attributes.position;
       const p = new Float32Array(pos.count * 3);

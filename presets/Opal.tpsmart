@@ -1,0 +1,502 @@
+{
+  "format": "texpaint-smart",
+  "version": 1,
+  "name": "Opal",
+  "layers": [
+    {
+      "kind": "fill",
+      "name": "Milky body",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.84,
+          0.85,
+          0.87
+        ],
+        "rough": 0.05,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {}
+    },
+    {
+      "kind": "fill",
+      "name": "Cloudy depth",
+      "visible": true,
+      "opacity": 0.35,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.72,
+          0.75,
+          0.8
+        ],
+        "rough": 0.05,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "noise",
+          "amount": 0.5,
+          "contrast": 0.3,
+          "noise": 0,
+          "noiseScale": 2.5,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 5
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Purple flecks",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.338,
+          0.09,
+          0.75
+        ],
+        "rough": 0.05,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0.644,
+          0.172,
+          1.43
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": true,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "noise",
+          "amount": 0.30600000000000005,
+          "contrast": 0.62,
+          "noise": 0,
+          "noiseScale": 3.0,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 23,
+          "fx": [
+            {
+              "type": "noise",
+              "amount": 0.52,
+              "contrast": 0.82,
+              "noise": 0,
+              "noiseScale": 60,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 124,
+              "blend": "multiply",
+              "opacity": 1
+            },
+            {
+              "type": "noise",
+              "amount": 0.55,
+              "contrast": 0.75,
+              "noise": 0,
+              "noiseScale": 27.0,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 225,
+              "blend": "multiply",
+              "opacity": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Blue flecks",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.112,
+          0.413,
+          0.75
+        ],
+        "rough": 0.05,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0.234,
+          0.858,
+          1.56
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": true,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "noise",
+          "amount": 0.28800000000000003,
+          "contrast": 0.62,
+          "noise": 0,
+          "noiseScale": 3.6,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 61,
+          "fx": [
+            {
+              "type": "noise",
+              "amount": 0.52,
+              "contrast": 0.82,
+              "noise": 0,
+              "noiseScale": 55,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 162,
+              "blend": "multiply",
+              "opacity": 1
+            },
+            {
+              "type": "noise",
+              "amount": 0.55,
+              "contrast": 0.75,
+              "noise": 0,
+              "noiseScale": 24.75,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 263,
+              "blend": "multiply",
+              "opacity": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Green flecks",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.038,
+          0.75,
+          0.262
+        ],
+        "rough": 0.05,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0.104,
+          2.08,
+          0.728
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": true,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "noise",
+          "amount": 0.45,
+          "contrast": 0.62,
+          "noise": 0,
+          "noiseScale": 2.2,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 11,
+          "fx": [
+            {
+              "type": "noise",
+              "amount": 0.52,
+              "contrast": 0.82,
+              "noise": 0,
+              "noiseScale": 42,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 112,
+              "blend": "multiply",
+              "opacity": 1
+            },
+            {
+              "type": "noise",
+              "amount": 0.55,
+              "contrast": 0.75,
+              "noise": 0,
+              "noiseScale": 18.900000000000002,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 213,
+              "blend": "multiply",
+              "opacity": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Orange flecks",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.75,
+          0.413,
+          0.038
+        ],
+        "rough": 0.05,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          2.08,
+          1.144,
+          0.104
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": true,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "noise",
+          "amount": 0.432,
+          "contrast": 0.62,
+          "noise": 0,
+          "noiseScale": 1.8,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 37,
+          "fx": [
+            {
+              "type": "noise",
+              "amount": 0.52,
+              "contrast": 0.82,
+              "noise": 0,
+              "noiseScale": 36,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 138,
+              "blend": "multiply",
+              "opacity": 1
+            },
+            {
+              "type": "noise",
+              "amount": 0.55,
+              "contrast": 0.75,
+              "noise": 0,
+              "noiseScale": 16.2,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 239,
+              "blend": "multiply",
+              "opacity": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Red flecks",
+      "visible": true,
+      "opacity": 1.0,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.75,
+          0.165,
+          0.06
+        ],
+        "rough": 0.05,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          1.56,
+          0.343,
+          0.125
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": true,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "noise",
+          "amount": 0.30600000000000005,
+          "contrast": 0.62,
+          "noise": 0,
+          "noiseScale": 2.6,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 49,
+          "fx": [
+            {
+              "type": "noise",
+              "amount": 0.52,
+              "contrast": 0.82,
+              "noise": 0,
+              "noiseScale": 50,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 150,
+              "blend": "multiply",
+              "opacity": 1
+            },
+            {
+              "type": "noise",
+              "amount": 0.55,
+              "contrast": 0.75,
+              "noise": 0,
+              "noiseScale": 22.5,
+              "axis": "y",
+              "flip": false,
+              "invert": false,
+              "seed": 251,
+              "blend": "multiply",
+              "opacity": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "name": "Milky veil",
+      "visible": true,
+      "opacity": 0.2,
+      "blend": "normal",
+      "values": {
+        "color": [
+          0.9,
+          0.91,
+          0.93
+        ],
+        "rough": 0.04,
+        "metal": 0,
+        "height": 0.5,
+        "emit": [
+          0,
+          0,
+          0
+        ]
+      },
+      "enabled": {
+        "color": true,
+        "rough": true,
+        "metal": true,
+        "height": false,
+        "emit": false,
+        "normal": false
+      },
+      "tiling": 1,
+      "images": {},
+      "mask": {
+        "base": "black",
+        "gen": {
+          "type": "noise",
+          "amount": 0.55,
+          "contrast": 0.25,
+          "noise": 0,
+          "noiseScale": 1.8,
+          "axis": "y",
+          "flip": false,
+          "invert": false,
+          "seed": 77
+        }
+      }
+    }
+  ],
+  "rev": 2
+}

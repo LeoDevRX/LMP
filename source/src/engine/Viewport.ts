@@ -299,10 +299,15 @@ export class Viewport {
     }
   }
 
-  set envRotation(deg: number) {
-    const rad = THREE.MathUtils.degToRad(deg);
-    this.scene.environmentRotation.set(0, rad, 0);
-    this.scene.backgroundRotation.set(0, rad, 0);
+  /** Light direction: turn around the model (degrees) and tilt up / down (degrees, ±60). */
+  envYaw = 0;
+  envTilt = 0;
+  set envRotation(deg: number) { this.envYaw = deg; this.applyEnvRotation(); }
+  set envTiltDeg(deg: number) { this.envTilt = Math.max(-60, Math.min(60, deg)); this.applyEnvRotation(); }
+  private applyEnvRotation() {
+    const y = THREE.MathUtils.degToRad(this.envYaw), x = THREE.MathUtils.degToRad(this.envTilt);
+    this.scene.environmentRotation.set(x, y, 0, 'YXZ');
+    this.scene.backgroundRotation.set(x, y, 0, 'YXZ');
   }
 
   set exposure(v: number) { this.renderer.toneMappingExposure = v; }

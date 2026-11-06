@@ -306,6 +306,14 @@ const OUT_SLOT: [RegExp, Ch | 'gloss'][] = [
   [/^height$|^displacement$/, 'height'], [/^normal$/, 'normal'], [/^emissive$|^emission$/, 'emit'],
 ];
 
+/** A friendly error for a file (or part of one) that can't be read. */
+function unreadable(file: string, e: unknown): Error {
+  const m = String((e as any)?.message ?? e);
+  if (e instanceof RangeError || /outside the bounds|out of range|offset/i.test(m))
+    return new Error(`LocalPaint couldn't read ${file}. Part of it is stored in a way LocalPaint doesn't understand yet (often a paid or newer Substance material packed inside), or the file is incomplete.`);
+  return e instanceof Error ? e : new Error(m);
+}
+
 /** Decode the tagged binary tree in preset.bin. */
 function parsePreset(d: Uint8Array): any {
   const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
@@ -420,7 +428,8 @@ export async function translateSpsm(bytes: Uint8Array, file: string): Promise<{ 
   };
   const pre = raw('preset.bin');
   if (!pre) throw new Error(`${file} has no layer stack inside.`);
-  const tree = parsePreset(pre);
+  let tree: any;
+  try { tree = parsePreset(pre); } catch (e) { throw unreadable(file, e); }
   const skipped: string[] = [];
   const sbsCache = new Map<string, Translation | null>();
   const material = async (url: string): Promise<Translation | null> => {
@@ -583,7 +592,15 @@ export async function translateSpsm(bytes: Uint8Array, file: string): Promise<{ 
     };
   };
 
+  // One layer LocalPaint can't read (a paid or newer Substance material packed in a way it doesn't know, a damaged
+  // part of the file…) is skipped and listed instead of stopping the whole import.
   const nodeOf = async (it: any): Promise<SpNode | null> => {
+    try { return await nodeOf1(it); } catch {
+      skipped.push(`layer “${it?.label ?? '?'}” (LocalPaint couldn't read it: it may use a paid or newer Substance material)`);
+      return null;
+    }
+  };
+  const nodeOf1 = async (it: any): Promise<SpNode | null> => {
     if (!it) return null;
     if (it._class === 'DataLayerGroup') {
       const children: SpNode[] = [];

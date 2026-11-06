@@ -66,6 +66,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.12', steps: ['Opal smart material in Basic: a milky body with flecks of green, orange, purple and red fire.', 'Move the light: hold Shift and right-drag in the 3D view, or use Rotation and Light height in Display settings.', 'Assets > Alphas: 150+ stamps, including bolts, nuts, screws, rivets, panels, seams, vents, grilles, gears, hinges, tread plate, arrows, signs, shapes and lines.', 'Baking AO, curvature and thickness is faster (about a quarter on its own, more on PCs with many cores) and gives exactly the same result.', 'Smart materials with parts LocalPaint can\'t read import the rest instead of failing. New guide page: Help: errors.'] },
       { h: 'New in v1.11', steps: ['The Basic smart materials (Dusty Plastic, Rusty Iron, Worn Gold and the rest) now show their previews straight away, along with the newer Painter-style smart materials and smart masks.'] },
       { h: 'New in v1.10', steps: ['New brush controls: hold Ctrl and scroll to change brush size, Ctrl + Shift + scroll for stroke opacity, Ctrl + right-drag for hardness. Ctrl + left-drag still sets flow and rotation.'] },
       { h: 'New in v1.09', steps: ['Fixed freezes when dropping smart materials and smart material previews that never showed up: the new mask generators compiled very slowly on Windows. They now compile in under a second, on the loading screen.'] },
@@ -330,7 +331,7 @@ export const GUIDES: Guide[] = [
   {
     id: 'brush-tips', title: 'Brush tips and alphas', cat: 'Painting',
     sum: 'Change the brush shape and add some randomness.',
-    tags: ['brush', 'alpha', 'tip'], words: 'shape stamp alpha texture grunge splatter scratch dots rotation rotate angle jitter random scatter follow stroke spacing custom image',
+    tags: ['brush', 'alpha', 'tip'], words: 'shape stamp alpha alphas texture grunge splatter scratch dots rotation rotate angle jitter random scatter follow stroke spacing custom image bolt bolts screw screws rivet rivets vent vents grille panel seam hard surface hardsurface detail details gear hinge arrow sign',
     body: [
       { steps: [
         'With the brush selected, go to Properties > Brush tip.',
@@ -338,6 +339,7 @@ export const GUIDES: Guide[] = [
         'Rotation, Follow stroke, angle jitter, size jitter and scatter make it look less repetitive.',
         'Spacing (in Properties > Brush) is the gap between each dab.',
       ] },
+      { h: 'Alphas on the shelf', p: 'Assets > Alphas has 150+ stamps: bolts, nuts, screws, rivets, panels and seams, vents and grilles, gears, hinges, tread plate, arrows and signs, shapes, lines and stencil letters. Click one to use it as the brush tip; your size and other settings stay the same. For hard-surface detail, paint with only Height turned on and click once per stamp (or raise Spacing).' },
     ],
     show: [{ label: 'Brush tips', act: 'props', hl: '#right' }],
     related: ['brushes'],
@@ -684,9 +686,10 @@ export const GUIDES: Guide[] = [
   {
     id: 'display', title: 'Lighting and display', cat: 'Help & settings',
     sum: 'Environment light, background and tone mapping.',
-    tags: ['display'], words: 'light lighting environment hdr hdri background dark bright exposure tone mapping view look shadows',
+    tags: ['display'], words: 'light lighting environment hdr hdri background dark bright exposure tone mapping view look shadows sun rotate turn move light direction highlight shift right drag',
     body: [
       { steps: ['Click Display settings on the right edge (or Viewport > Display settings).', 'Pick an environment, or drop in your own .hdr file.', 'Change the exposure, rotation and tone mapping.'] },
+      { h: 'Move the light', p: 'Hold Shift and right-drag in the 3D view. Left and right swings the light around the model, up and down raises or lowers it. The Rotation and Light height sliders in Display settings do the same, and LocalPaint remembers where you left it.' },
     ],
     show: [{ label: 'Display settings', act: 'display' }],
   },
@@ -740,6 +743,23 @@ export const GUIDES: Guide[] = [
       'Move the mouse toward the one you want and let go of ~. The camera swings there and zooms to fit the model.',
     ] }, { tips: ['Just tap ~ and the ring stays open, so you can click a view instead.', 'Esc closes it.'] }],
     related: ['shortcuts'],
+  },
+  {
+    id: 'errors', title: 'Help: errors', cat: 'Help & settings',
+    sum: 'What the error messages mean and what to do about them.',
+    tags: ['import', 'open', 'crash'], words: 'error errors message problem broken failed fail failing couldn\'t cant won\'t translate read offset outside bounds dataview spsm sbsar spp corrupt damaged incomplete unsupported paid help warning red',
+    body: [
+      { h: 'Couldn\'t translate … / LocalPaint couldn\'t read …', p: 'LocalPaint opened a Substance file (.spsm, .spmsk) but part of it is stored in a way it doesn\'t understand yet. Often it\'s a paid or newer Substance material packed inside the smart material; it can also mean the file was cut short while copying. LocalPaint brings in every layer it can read and lists the ones it skipped. Try exporting the smart material again, or rebuild the skipped layer with a LocalPaint material.' },
+      { h: 'Offset is outside the bounds of the DataView', p: 'The same thing in technical words: the file ended, or a part of it pointed past its end, while LocalPaint was reading it. Not something you did wrong.' },
+      { h: 'Substance Painter projects are not supported', p: 'LocalPaint can\'t open .spp project files (Adobe\'s format is closed). Export the textures from Painter (File > Export Textures), open the same model in LocalPaint and drop the textures in. To keep the layers, group them in Painter, right-click the folder > Create smart material, and drop that .spsm into LocalPaint.' },
+      { h: '… isn\'t a smart material file Substance Painter 2018 or newer wrote', p: 'The .spsm is from a very old Painter, or isn\'t really a smart material. Open it in a newer Painter and save it again.' },
+      { h: '… has no layer stack inside / no layers LocalPaint can use', p: 'The smart material is empty, or only holds things LocalPaint can\'t show yet (hand painting, filters, anchors). Nothing is added.' },
+      { h: 'Could not read that image / HDR file', p: 'The file is damaged or in a format LocalPaint can\'t open. Save it again as PNG, JPG, EXR or HDR and try once more.' },
+      { h: 'Could not load that brush tip', p: 'The brush\'s picture is missing or damaged. Pick another tip in Properties > Brush tip, or re-import the picture.' },
+      { h: 'A scan or grunge won\'t download', p: 'Scanned materials and grunges download the first time you use them. Check your internet connection; until it\'s back, LocalPaint uses a stand-in so you can keep working.' },
+      { tips: ['Something else? Note down the exact message and what you were doing when it showed up.'] },
+    ],
+    related: ['substance-files', 'shortcuts'],
   },
   {
     id: 'shortcuts', title: 'Keyboard shortcuts', cat: 'Help & settings',

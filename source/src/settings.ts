@@ -20,6 +20,9 @@ export interface Settings {
   checkUpdates: boolean;
   /** Lighting environment shown in the 3D view (an HDR on the shelf; '' = built-in studio). */
   envName: string;
+  /** Light direction (Shift + right-drag in the 3D view). */
+  envYaw?: number;
+  envTilt?: number;
   /** Render Substance materials with Adobe's engine (sbsrender) when it's installed. */
   sbsAdobe: boolean;
   /** Where sbsrender.exe is, if the user pointed LocalPaint at it ('' = look in the usual places). */

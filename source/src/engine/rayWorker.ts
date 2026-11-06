@@ -11,7 +11,7 @@
  * normal (3), world size of one texel (1).
  */
 import * as THREE from 'three';
-import { MeshBVH } from 'three-mesh-bvh';
+import { MeshBVH, SAH } from 'three-mesh-bvh';
 
 export interface RayParams {
   kind: 'ao' | 'curv' | 'thick';
@@ -34,7 +34,7 @@ export interface RayParams {
 }
 export const SAMPLE_FLOATS = 10;
 
-interface Target { bvh: MeshBVH; pos: Float32Array; nrm: Float32Array | null; idx: Uint32Array | null }
+interface Target { bvh: MeshBVH; pos: Float32Array; nrm: Float32Array | null; idx: Uint32Array | null; views: { f32: Float32Array; u16: Uint16Array; u32: Uint32Array }[] }
 let targets: Target[] = [];
 
 self.onmessage = (e: MessageEvent) => {
@@ -44,10 +44,11 @@ self.onmessage = (e: MessageEvent) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(g.pos, 3));
       if (g.index) geo.setIndex(new THREE.BufferAttribute(g.index.slice(), 1));
-      const bvh = new MeshBVH(geo);
+      // SAH builds a little slower but rays walk the tree much faster (same hits).
+      const bvh = new MeshBVH(geo, { strategy: SAH });
       // MeshBVH may reorder the index; read triangles back from the geometry it holds.
       const idx = geo.index ? (geo.index.array as Uint32Array) : null;
-      return { bvh, pos: g.pos, nrm: g.nrm, idx };
+      return { bvh, pos: g.pos, nrm: g.nrm, idx, views: ((bvh as any)._roots as ArrayBuffer[]).map((r) => ({ f32: new Float32Array(r), u16: new Uint16Array(r), u32: new Uint32Array(r) })) };
     });
     (self as any).postMessage({ type: 'ready' });
   } else if (m.type === 'job') {
@@ -60,14 +61,136 @@ self.onmessage = (e: MessageEvent) => {
 
 interface Hit { t: number; g: number; tri: number; px: number; py: number; pz: number }
 const ray = new THREE.Ray();
-function closest(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, far: number): Hit | null {
-  if (!(far > 0)) return null;
+
+/*
+ * Closest-hit traversal of three-mesh-bvh's packed tree (0.9.x layout: 8 uint32 per node; float bounds min xyz,
+ * max xyz; leaf = uint16[15] 0xFFFF, offset uint32[6], count uint16[14]; inner = right child offset uint32[6]).
+ * Same box test and the same watertight triangle test as three.js (Ray.intersectTriangle, both sides), so every
+ * hit distance is bit-identical to MeshBVH.raycastFirst(ray, DoubleSide). It's faster because it visits the nearer
+ * child first, skips boxes farther than the best hit so far, does the per-ray shear set-up once per ray and
+ * allocates nothing.
+ */
+let rox = 0, roy = 0, roz = 0, ivx = 0, ivy = 0, ivz = 0;
+// Ray shear (three.js Ray.intersectTriangle): permuted axes and constants.
+let kx = 0, ky = 0, kz = 0, sx = 0, sy = 0, sz = 0, rdz0 = 0;
+const RO = new Float64Array(3), RD = new Float64Array(3);
+let hx = 0, hy = 0, hz = 0, htri = -1;
+const STACK = new Int32Array(512), STACKT = new Float64Array(512);
+
+function setRay(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) {
   ray.origin.set(ox, oy, oz);
   ray.direction.set(dx, dy, dz);
+  rox = ox; roy = oy; roz = oz;
+  RO[0] = ox; RO[1] = oy; RO[2] = oz; RD[0] = dx; RD[1] = dy; RD[2] = dz;
+  ivx = 1 / dx; ivy = 1 / dy; ivz = 1 / dz;
+  const adx = Math.abs(dx), ady = Math.abs(dy), adz = Math.abs(dz);
+  if (adx >= ady && adx >= adz) { kz = 0; if (dx >= 0) { kx = 1; ky = 2; } else { kx = 2; ky = 1; } }
+  else if (ady >= adz) { kz = 1; if (dy >= 0) { kx = 2; ky = 0; } else { kx = 0; ky = 2; } }
+  else { kz = 2; if (dz >= 0) { kx = 0; ky = 1; } else { kx = 1; ky = 0; } }
+  rdz0 = RD[kz];
+  sx = RD[kx] / rdz0; sy = RD[ky] / rdz0; sz = 1 / rdz0;
+}
+
+/** Entry distance into node n's box, or Infinity when the ray misses it within [near, far]. */
+function boxT(F32: Float32Array, n: number, near: number, far: number): number {
+  let tmin: number, tmax: number, tymin: number, tymax: number, tzmin: number, tzmax: number;
+  if (ivx >= 0) { tmin = (F32[n] - rox) * ivx; tmax = (F32[n + 3] - rox) * ivx; }
+  else { tmin = (F32[n + 3] - rox) * ivx; tmax = (F32[n] - rox) * ivx; }
+  if (ivy >= 0) { tymin = (F32[n + 1] - roy) * ivy; tymax = (F32[n + 4] - roy) * ivy; }
+  else { tymin = (F32[n + 4] - roy) * ivy; tymax = (F32[n + 1] - roy) * ivy; }
+  if ((tmin > tymax) || (tymin > tmax)) return Infinity;
+  if (tymin > tmin || isNaN(tmin)) tmin = tymin;
+  if (tymax < tmax || isNaN(tmax)) tmax = tymax;
+  if (ivz >= 0) { tzmin = (F32[n + 2] - roz) * ivz; tzmax = (F32[n + 5] - roz) * ivz; }
+  else { tzmin = (F32[n + 5] - roz) * ivz; tzmax = (F32[n + 2] - roz) * ivz; }
+  if ((tmin > tzmax) || (tzmin > tmax)) return Infinity;
+  if (tzmin > tmin || tmin !== tmin) tmin = tzmin;
+  if (tzmax < tmax || tmax !== tmax) tmax = tzmax;
+  return tmin <= far && tmax >= near ? (tmin === tmin ? tmin : -Infinity) : Infinity;
+}
+
+/** Closest hit on target T within far: distance (hit point in hx/hy/hz, triangle in htri) or -1. */
+function castTarget(T: Target, far: number): number {
+  if (rdz0 === 0) return -1;
+  const POS = T.pos, IDX = T.idx;
+  const ox = RO[0], oy = RO[1], oz = RO[2], dx = RD[0], dy = RD[1], dz = RD[2];
+  let best = -1;
+  for (const v of T.views) {
+    const F32 = v.f32, U16 = v.u16, U32 = v.u32;
+    let lim = best >= 0 ? best : far;
+    const t0 = boxT(F32, 0, 0, lim);
+    if (t0 === Infinity) continue;
+    let sp = 0;
+    STACK[0] = 0; STACKT[0] = t0; sp = 1;
+    while (sp > 0) {
+      sp--;
+      const n = STACK[sp];
+      if (STACKT[sp] > lim) continue;
+      const n16 = n * 2;
+      if (U16[n16 + 15] === 0xffff) {
+        const off = U32[n + 6], end = off + U16[n16 + 14];
+        for (let i = off; i < end; i++) {
+          const a3 = (IDX ? IDX[i * 3] : i * 3) * 3, b3 = (IDX ? IDX[i * 3 + 1] : i * 3 + 1) * 3, c3 = (IDX ? IDX[i * 3 + 2] : i * 3 + 2) * 3;
+          // three.js Ray.intersectTriangle (watertight), unrolled with the ray's shear precomputed.
+          const akx = POS[a3 + kx] - RO[kx], aky = POS[a3 + ky] - RO[ky], akz = POS[a3 + kz] - RO[kz];
+          const bkx = POS[b3 + kx] - RO[kx], bky = POS[b3 + ky] - RO[ky], bkz = POS[b3 + kz] - RO[kz];
+          const ckx = POS[c3 + kx] - RO[kx], cky = POS[c3 + ky] - RO[ky], ckz = POS[c3 + kz] - RO[kz];
+          const ax = akx - sx * akz, ay = aky - sy * akz;
+          const bx = bkx - sx * bkz, by = bky - sy * bkz;
+          const cx = ckx - sx * ckz, cy = cky - sy * ckz;
+          const u = cx * by - cy * bx;
+          const vv = ax * cy - ay * cx;
+          const w = bx * ay - by * ax;
+          if ((u < 0 || vv < 0 || w < 0) && (u > 0 || vv > 0 || w > 0)) continue;
+          const det = u + vv + w;
+          if (det === 0) continue;
+          const tS = sz * (u * akz + vv * bkz + w * ckz);
+          if (det > 0 ? tS < 0 : tS > 0) continue;
+          const t = tS / det;
+          const px = ox + dx * t, py = oy + dy * t, pz = oz + dz * t;
+          const ex = ox - px, ey = oy - py, ez = oz - pz;
+          const d = Math.sqrt(ex * ex + ey * ey + ez * ez);
+          if (d < 0 || (best >= 0 ? !(d < best) : d > far)) continue;
+          best = d; lim = d; hx = px; hy = py; hz = pz; htri = i;
+        }
+        continue;
+      }
+      const left = n + 8, right = n + U32[n + 6] * 8;
+      const tl = boxT(F32, left, 0, lim), tr = boxT(F32, right, 0, lim);
+      // Push the farther child first so the nearer one is searched first.
+      if (tl <= tr) {
+        if (tr !== Infinity) { STACK[sp] = right; STACKT[sp] = tr; sp++; }
+        if (tl !== Infinity) { STACK[sp] = left; STACKT[sp] = tl; sp++; }
+      } else {
+        if (tl !== Infinity) { STACK[sp] = left; STACKT[sp] = tl; sp++; }
+        STACK[sp] = right; STACKT[sp] = tr; sp++;
+      }
+    }
+  }
+  return best;
+}
+
+function closest(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, far: number): Hit | null {
+  if (!(far > 0)) return null;
+  setRay(ox, oy, oz, dx, dy, dz);
   let best: Hit | null = null;
   for (let g = 0; g < targets.length; g++) {
-    const h = targets[g].bvh.raycastFirst(ray, THREE.DoubleSide, 0, far) as any;
-    if (h && h.distance <= far && (!best || h.distance < best.t)) best = { t: h.distance, g, tri: h.faceIndex, px: h.point.x, py: h.point.y, pz: h.point.z };
+    // Later meshes only need to beat the closest hit so far.
+    const lim = best ? best.t : far;
+    const d = castTarget(targets[g], lim);
+    if (d >= 0 && d <= lim && (!best || d < best.t)) best = { t: d, g, tri: htri, px: hx, py: hy, pz: hz };
+  }
+  return best;
+}
+/** Distance to the closest hit, or -1 (AO / thickness only need the distance). */
+function closestT(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, far: number): number {
+  if (!(far > 0)) return -1;
+  setRay(ox, oy, oz, dx, dy, dz);
+  let best = -1;
+  for (let g = 0; g < targets.length; g++) {
+    const lim = best >= 0 ? best : far;
+    const d = castTarget(targets[g], lim);
+    if (d >= 0 && d <= lim && (best < 0 || d < best)) best = d;
   }
   return best;
 }
@@ -157,8 +280,8 @@ function hemisphere(pts: Float32Array, o: number, p: RayParams, seed: number): n
     D.set(T.x * ca + B.x * sa + N.x * height, T.y * ca + B.y * sa + N.y * height, T.z * ca + B.z * sa + N.z * height);
     if (D.dot(G) <= 0) continue;
     const len = Math.max(0, p.maxD - p.minD);
-    const h = closest(ox + D.x * p.minD, oy + D.y * p.minD, oz + D.z * p.minD, D.x, D.y, D.z, len);
-    let dist = h ? h.t + p.minD : -1;
+    const ht = closestT(ox + D.x * p.minD, oy + D.y * p.minD, oz + D.z * p.minD, D.x, D.y, D.z, len);
+    let dist = ht >= 0 ? ht + p.minD : -1;
     if (!thick && p.ground && D.y < -1e-8) {
       const gd = (p.groundY - oy) / D.y;
       if (gd >= p.minD && gd <= p.maxD) dist = dist < 0 ? gd : Math.min(dist, gd);

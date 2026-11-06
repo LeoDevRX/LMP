@@ -8,6 +8,7 @@ import {
   PaintTarget, BlendMode, BLEND_LABEL, GroupLayer, BakeKey, IdSource, ID_SOURCE_LABEL, DEFAULT_XF, DEFAULT_ADJ, FillAdjust, ScanRef,
 } from './engine/TextureSet';
 import { BrushPreset, BrushSettings, BUILTIN_TIPS, STARTER_BRUSHES, builtinTip, builtinTipThumb, imageTip, tipTexture, tipPreview } from './brushes';
+import { ALPHA_LIBRARY } from './alphas';
 import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings, SHAPE_KINDS, SHAPE_LABEL, ShapeKind, MICRO_TYPES } from './engine/Masks';
 import { PATTERNS, PATTERN_LABEL, PatternType } from './engine/Procedural';
 import { GrungeLib } from './engine/GrungeLib';
@@ -85,7 +86,7 @@ const BAKE_ITEMS: [BakeKey, string][] = [
 const BAKE_VIEW: Record<BakeItem, ViewMode> = {
   common: 'rays', normal: 'bnormal', wsn: 'wsn', id: 'id', ao: 'ao', curv: 'curv', pos: 'pos', thick: 'thick', height: 'bheight',
 };
-type ShelfFilter = 'all' | 'model' | 'smart' | 'material' | 'textures' | 'brush' | 'unsupported' | 'mask' | 'env' | 'graph' | 'cloud';
+type ShelfFilter = 'all' | 'model' | 'smart' | 'material' | 'textures' | 'brush' | 'alpha' | 'unsupported' | 'mask' | 'env' | 'graph' | 'cloud';
 
 /** Dock: a titled panel like the ones in Substance (title bar + body). */
 function dock(title: string | HTMLElement, body: HTMLElement, cls = '') {
@@ -244,6 +245,8 @@ class App {
     this.container = container;
     this.vp = new Viewport(container);
     this.gpu = new GPU(this.vp.renderer);
+    if (this.settings.envYaw) this.vp.envRotation = this.settings.envYaw;
+    if (this.settings.envTilt) this.vp.envTiltDeg = this.settings.envTilt;
     container.append(this.uvOverlay, this.uvSplitter, this.sel3, this.sel2, this.flyout, this.boxEl, this.adjustEl, this.designEl, this.bakeLabel);
     this.graphRunner = new GraphRunner(this.vp.renderer);
     this.designer = new Designer(this.designEl, {
@@ -1315,6 +1318,7 @@ class App {
       ...libraryMaterials().map((m): ShelfItem => ({ kind: 'smart', name: m.def.label, file: 'lib:' + m.def.id, smart: m.smart, category: m.def.category, swatch: m.swatch })),
       ...SMART_MASKS.map((m): ShelfItem => ({ kind: 'mask', name: m.label, file: 'mask:' + m.id, preset: m.id })),
       ...presetGraphs().map((g): ShelfItem => ({ kind: 'graph', name: g.name, file: 'graph:' + g.name, graph: g })),
+      ...ALPHA_LIBRARY.map((a): ShelfItem => ({ kind: 'alpha', name: a.label, file: 'alpha:' + a.id, tip: 'builtin:' + a.id, category: a.category })),
     ];
     await this.shelf.addFiles(files);
     await this.shelf.restore();
@@ -1795,6 +1799,15 @@ class App {
     }, { capture: true, passive: false });
     container.addEventListener('pointerdown', (e) => {
       if (e.target !== canvas) return;
+      // Shift + right drag turns the light (sun / environment) around the model, like Substance.
+      if (e.shiftKey && e.button === 2 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault(); e.stopPropagation();
+        controls.enabled = false;
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* not an active pointer */ }
+        this.sunDrag = { x: e.clientX, y: e.clientY, yaw0: this.vp.envYaw, tilt0: this.vp.envTilt };
+        this.drawSun(e.clientX, e.clientY);
+        return;
+      }
       if (this.wantsAdjust(e)) {
         e.preventDefault(); e.stopPropagation();
         controls.enabled = false;
@@ -1826,6 +1839,14 @@ class App {
       }
     }, { capture: true });
     canvas.addEventListener('pointermove', (e) => {
+      if (this.sunDrag) {
+        const d = this.sunDrag;
+        this.vp.envRotation = ((((d.yaw0 + (e.clientX - d.x) * 0.5) % 360) + 360) % 360);
+        this.vp.envTiltDeg = d.tilt0 - (e.clientY - d.y) * 0.25;
+        this.drawSun(e.clientX, e.clientY);
+        this.poke();
+        return;
+      }
       if (this.adjust) { this.moveAdjust(e); return; }
       this.hover = { x: e.clientX, y: e.clientY };
       if (this.shapeDragging) { this.moveShapeTo(e.clientX, e.clientY); return; }
@@ -1842,6 +1863,12 @@ class App {
       }
     });
     const end = (e: PointerEvent) => {
+      if (this.sunDrag) {
+        this.sunDrag = null; controls.enabled = true; this.adjustEl.style.display = 'none';
+        this.settings.envYaw = Math.round(this.vp.envYaw); this.settings.envTilt = Math.round(this.vp.envTilt); saveSettings(this.settings);
+        if (this.flyout.classList.contains('open')) this.buildFlyout();
+        return;
+      }
       if (this.adjust) { this.endAdjust(); controls.enabled = true; return; }
       if (this.shapeDragging) { this.shapeDragging = false; controls.enabled = true; this.queueLayerThumbs(); this.shapeMovedCount++; return; }
       if (this.box?.pane === '3d') this.endBox(e.ctrlKey || e.metaKey);
@@ -2049,6 +2076,14 @@ class App {
   }
 
   /** Little label + tip preview next to the cursor while adjusting. */
+  private sunDrag: { x: number; y: number; yaw0: number; tilt0: number } | null = null;
+  private drawSun(x: number, y: number) {
+    const host = this.container.getBoundingClientRect();
+    this.adjustEl.innerHTML = '';
+    this.adjustEl.append(el('span', {}, `Light ${Math.round(this.vp.envYaw)}° · height ${Math.round(this.vp.envTilt)}°`), el('span', { class: 'muted' }, '←→ turn · ↑↓ height'));
+    Object.assign(this.adjustEl.style, { display: 'flex', left: `${x - host.left + 18}px`, top: `${y - host.top + 18}px` });
+  }
+
   private drawAdjust(a: { x: number; y: number; mode: 'hard' | 'angle' | 'size' | 'opacity' } | null = this.adjust) {
     if (!a) return;
     const b = this.brush;
@@ -2214,7 +2249,7 @@ class App {
   async dropAssets(items: ShelfItem[], x: number, y: number) {
     items = await this.resolveCloud(items);
     if (this.mode === 'bake') this.setMode('paint');
-    const usable = items.filter((it) => it.kind !== 'unsupported' && it.kind !== 'brush' && it.kind !== 'mask' && it.kind !== 'env' && it.kind !== 'model');
+    const usable = items.filter((it) => it.kind !== 'unsupported' && it.kind !== 'brush' && it.kind !== 'alpha' && it.kind !== 'mask' && it.kind !== 'env' && it.kind !== 'model');
     if (!usable.length) { if (items[0]) this.applyShelfItem(items[0]); return; }
     const hit = this.vp.pick(x, y);
     const part = this.dropMode === 'whole' ? null : this.partAt(hit, this.dropMode);
@@ -2253,8 +2288,8 @@ class App {
   async addAssets(items: ShelfItem[]) {
     items = await this.resolveCloud(items);
     if (this.mode === 'bake') this.setMode('paint');
-    const usable = items.filter((it) => it.kind !== 'unsupported' && it.kind !== 'brush' && it.kind !== 'mask' && it.kind !== 'env' && it.kind !== 'model');
-    if (!usable.length) { const b = items.find((it) => it.kind === 'brush' || it.kind === 'mask' || it.kind === 'env' || it.kind === 'model'); if (b) this.applyShelfItem(b); return; }
+    const usable = items.filter((it) => it.kind !== 'unsupported' && it.kind !== 'brush' && it.kind !== 'alpha' && it.kind !== 'mask' && it.kind !== 'env' && it.kind !== 'model');
+    if (!usable.length) { const b = items.find((it) => it.kind === 'brush' || it.kind === 'alpha' || it.kind === 'mask' || it.kind === 'env' || it.kind === 'model'); if (b) this.applyShelfItem(b); return; }
     let n = 0;
     await this.ts.batch(`Add ${usable.length} assets`, async () => { for (const it of usable) if (await this.addAssetLayer(it)) n++; });
     this.paintTarget = 'content';
@@ -3044,7 +3079,7 @@ class App {
     dlg.className = '';
     const rows: [string, string][] = [
       ['Paint / Erase / Picker', 'B / E / P'], ['Brush size / hardness', '[ ]  /  { }'],
-      ['Orbit / Pan / Zoom', 'RMB or Alt+LMB / MMB / Wheel'], ['Frame model (or 2D view)', 'F'],
+      ['Orbit / Pan / Zoom', 'RMB or Alt+LMB / MMB / Wheel'], ['Move the light (sun)', 'Shift + right-drag'], ['Frame model (or 2D view)', 'F'],
       ['Guide', 'F1'], ['Layouts 3D / 2D / 3D+2D', 'F2 / F3 / F4'], ['History panel', 'H'], ['Straight line', 'Shift+click'], ['Path tool / polygon fill', 'L / G'], ['X symmetry', 'X'], ['Views (both panes)', '1 – 9, 0'], ['Camera views (front, top, left…)', 'Hold ~'],
       ['Paint the layer mask', 'M'], ['UV wireframe', 'W'], ['UV overlaps (dark spots)', 'O'], ['Brush size', 'Ctrl + scroll'], ['Brush hardness', 'Ctrl + right-drag'], ['Stroke opacity', 'Ctrl + Shift + scroll'], ['Brush flow / rotation', 'Ctrl + left-drag ←→ / ↑↓'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Y'], ['Select several layers / assets', 'Ctrl+click · Shift+click'], ['Group / duplicate / delete selected layers', 'Ctrl+G / Ctrl+D / Delete'],
       ['Save / Save as / Open / Import', 'Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+I'], ['Export textures', 'Ctrl+Shift+E'], ['Leave Baking mode / close panel', 'Esc'],
@@ -3231,7 +3266,9 @@ class App {
             })()),
           el('div', { class: 'row' }, el('label', {}, ''),
             el('button', { class: 'grow', onclick: async () => { const file = await pickFile('.hdr'); if (file) this.openAny(file); } }, 'Load .hdr environment…')),
-          slider('Rotation', { min: 0, max: 360, step: 1, value: 0, fmt: (v) => `${v}°`, onInput: (v) => (vp.envRotation = v) }).el,
+          slider('Rotation', { min: 0, max: 360, step: 1, value: Math.round(vp.envYaw), fmt: (v) => `${v}°`, onInput: (v) => { vp.envRotation = v; this.settings.envYaw = v; saveSettings(this.settings); } }).el,
+          slider('Light height', { min: -60, max: 60, step: 1, value: Math.round(vp.envTilt), fmt: (v) => `${v}°`, onInput: (v) => { vp.envTiltDeg = v; this.settings.envTilt = v; saveSettings(this.settings); } }).el,
+          el('p', { class: 'note' }, 'Tip: hold Shift and right-drag in the 3D view to move the light.'),
           el('div', { class: 'row' }, el('label', {}, 'Background'),
             select([{ value: 'env', label: 'Blurred environment' }, { value: 'solid', label: 'Solid dark gray' }], vp.bgMode, (v) => { vp.bgMode = v as any; vp.applyBackground(); })),
         ),
@@ -3280,7 +3317,7 @@ class App {
     } }, 'Link folder…');
     const body = el('div', { class: 'dock-body shelf-body' },
       el('div', { class: 'shelf-search' }, el('span', { class: 'si' }), search),
-      el('div', { class: 'chips' }, chip('all', 'All'), chip('model', 'Models'), chip('smart', 'Smart materials'), chip('cloud', 'Scanned'), chip('material', 'Materials'), chip('textures', 'Textures'), chip('mask', 'Smart masks'), chip('brush', 'Brushes'), chip('graph', 'Graphs'), chip('env', 'Environments'), chip('unsupported', 'Substance')),
+      el('div', { class: 'chips' }, chip('all', 'All'), chip('model', 'Models'), chip('smart', 'Smart materials'), chip('cloud', 'Scanned'), chip('material', 'Materials'), chip('textures', 'Textures'), chip('mask', 'Smart masks'), chip('brush', 'Brushes'), chip('alpha', 'Alphas'), chip('graph', 'Graphs'), chip('env', 'Environments'), chip('unsupported', 'Substance')),
       el('div', { class: 'row drop-row', title: 'What dragging an asset onto the model fills' }, el('label', {}, 'Drop onto'),
         select<DropMode>([{ value: 'whole', label: 'Whole model' }, { value: 'object', label: 'Object (separate mesh)' },
           { value: 'part', label: 'Mesh part' }, { value: 'island', label: 'UV island' }, { value: 'tri', label: 'Triangle' }],
@@ -3310,7 +3347,7 @@ class App {
   }
   private static SHELF_SECTIONS: [Exclude<ShelfFilter, 'all'>, string][] = [
     ['model', 'Models'], ['smart', 'Smart materials'], ['cloud', 'Scanned materials'], ['material', 'Materials'], ['textures', 'Textures'], ['mask', 'Smart masks'],
-    ['brush', 'Brushes'], ['graph', 'Graphs'], ['env', 'Environments'], ['unsupported', 'Substance materials'],
+    ['brush', 'Brushes'], ['alpha', 'Alphas'], ['graph', 'Graphs'], ['env', 'Environments'], ['unsupported', 'Substance materials'],
   ];
   /** Sections opened in this session; every section starts closed (a new file closes them again). */
   private shelfOpen = new Set<string>();
@@ -3338,7 +3375,7 @@ class App {
       const list = items.filter((it) => this.shelfGroup(it) === g);
       if (!list.length) continue;
       if (!header('sec:' + g, label, list.length)) continue;
-      const catOf = (it: ShelfItem) => (it.kind === 'smart' && it.category) || (it.kind === 'cloud' && it.cat) || (it.kind === 'unsupported' && (it.cat ?? 'Your files')) || '';
+      const catOf = (it: ShelfItem) => (it.kind === 'smart' && it.category) || (it.kind === 'cloud' && it.cat) || (it.kind === 'alpha' && it.category) || (it.kind === 'unsupported' && (it.cat ?? 'Your files')) || '';
       const cats = [...new Set(list.map(catOf))];
       if (cats.length > 1) {
         for (const c of cats) {
@@ -3409,6 +3446,7 @@ class App {
     }
     if (it.kind === 'textures') return () => this.thumbs.textures('t:' + it.name, it.files as any);
     if (it.kind === 'brush') return () => this.brushTipCanvas(it).then((cv) => cv.toDataURL());
+    if (it.kind === 'alpha') return () => Promise.resolve(builtinTipThumb(it.tip.slice(8), 96).toDataURL());
     if (it.kind === 'cloud') return () => Promise.resolve(it.thumb);
     if (it.kind === 'unsupported' && it.src && /\.sbsar$/i.test(it.file)) return () => this.sbsShelfIcon(it);
     return null;
@@ -3543,6 +3581,9 @@ class App {
       img.classList.add('tip');
       badge = 'BRUSH';
       tip += ' — brush preset: click to use it';
+    } else if (it.kind === 'alpha') {
+      img.classList.add('tip');
+      tip += ` — alpha (${it.category}): click to use it as the brush tip. Your brush size and other settings stay the same`;
     } else if (it.kind === 'cloud') {
       badge = it.downloaded ? 'SCAN' : `↓ ${(it.size / 1e6).toFixed(0)} MB`;
       tip += ` — scanned material (${it.cat}; ${it.maps.join(', ')}). ${it.downloaded ? 'Saved on this PC.' : 'Downloads the first time you use it.'} Click to add as a fill layer`;
@@ -3558,7 +3599,7 @@ class App {
       title: tip + ' · or drag it onto the model / a layer · Ctrl+click to pick several',
       onclick: (e: MouseEvent) => {
         if (e.ctrlKey || e.metaKey || e.shiftKey) {
-          if (it.kind === 'unsupported' || it.kind === 'brush' || it.kind === 'mask' || it.kind === 'env' || it.kind === 'model') return;
+          if (it.kind === 'unsupported' || it.kind === 'brush' || it.kind === 'alpha' || it.kind === 'mask' || it.kind === 'env' || it.kind === 'model') return;
           if (this.shelfPick.has(it)) this.shelfPick.delete(it); else this.shelfPick.add(it);
           tile.classList.toggle('picked', this.shelfPick.has(it));
           this.updatePickBar();
@@ -3701,6 +3742,13 @@ class App {
     if (it.kind === 'cloud') { const t = await this.cloudTextures(it); if (t) await this.applyShelfItem(t); return; }
     if (this.mode === 'bake') this.setMode('paint');
     if (it.kind === 'brush') { await this.applyBrushPreset(it.brush, it.tipFile); return; }
+    if (it.kind === 'alpha') {
+      await this.setTip(it.tip, undefined, it.name);
+      if (this.tool !== 'paint' && this.tool !== 'erase') this.setTool('paint');
+      this.buildToolbar(); this.buildProperties();
+      toast(`Alpha: ${it.name}`);
+      return;
+    }
     if (it.kind === 'mask') { this.applySmartMaskTo(this.ts.activeLayer, it.preset); return; }
     if (it.kind === 'model') { this.loadBuiltin(it.model as BuiltinId); return; }
     if (it.kind === 'env') {
@@ -3806,7 +3854,10 @@ class App {
         this.refresh();
       } catch (e: any) {
         console.error(e);
-        toast(`Couldn't translate ${f.name}: ${e?.message ?? e}`, true);
+        const m = String(e?.message ?? e);
+        toast(/^LocalPaint couldn't/.test(m) ? m + ' (Guide → Help: errors)'
+          : e instanceof RangeError || /outside the bounds/i.test(m) ? `LocalPaint couldn't read ${f.name}: part of it is stored in a way LocalPaint doesn't understand yet (often a paid Substance material packed inside). (Guide → Help: errors)`
+          : `Couldn't translate ${f.name}: ${m}`, true);
       }
     }
   }
