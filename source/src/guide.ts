@@ -43,7 +43,9 @@ export const GUIDES: Guide[] = [
       { h: 'Controls', table: [
         ['Orbit / pan / zoom', 'Right mouse (or Alt + left) / middle mouse / wheel'],
         ['Paint, eraser, picker', 'B, E, P'],
-        ['Brush size, hardness', '[ ]  and  { }   (or Ctrl + right drag)'],
+        ['Brush size', '[ ]   (or Ctrl + scroll)'],
+        ['Brush hardness', '{ }   (or Ctrl + right drag)'],
+        ['Stroke opacity', 'Ctrl + Shift + scroll'],
         ['Flow, rotation', 'Ctrl + left drag'],
         ['Straight line', 'Shift + click'],
         ['Paint the layer mask', 'M'],
@@ -64,6 +66,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.10', steps: ['New brush controls: hold Ctrl and scroll to change brush size, Ctrl + Shift + scroll for stroke opacity, Ctrl + right-drag for hardness. Ctrl + left-drag still sets flow and rotation.'] },
       { h: 'New in v1.09', steps: ['Fixed freezes when dropping smart materials and smart material previews that never showed up: the new mask generators compiled very slowly on Windows. They now compile in under a second, on the loading screen.'] },
       { h: 'New in v1.08', steps: ['Less lag after dropping a smart material, and shelf previews are made only while you pause.'] },
       { h: 'New in v1.07', steps: ['Loading after an update is quick again: new smart material previews are made in the background.'] },
@@ -357,7 +360,7 @@ export const GUIDES: Guide[] = [
     sum: 'Hold Ctrl and drag on the model.',
     tags: ['brush', 'size'], words: 'resize bigger smaller ctrl drag hardness rotation quick adjust radius',
     body: [
-      { table: [['Size', 'Ctrl + right drag left/right'], ['Hardness', 'Ctrl + right drag up/down'], ['Flow', 'Ctrl + left drag left/right'], ['Rotation', 'Ctrl + left drag up/down'], ['Size in steps', '[  ]'], ['Hardness in steps', '{  }']] },
+      { table: [['Size', 'Ctrl + scroll'], ['Hardness', 'Ctrl + right drag (right or up = harder)'], ['Stroke opacity', 'Ctrl + Shift + scroll'], ['Flow', 'Ctrl + left drag left/right'], ['Rotation', 'Ctrl + left drag up/down'], ['Size in steps', '[  ]'], ['Hardness in steps', '{  }']] },
     ],
   },
   {
@@ -1060,7 +1063,7 @@ export const GUIDE_TIPS: GuideTip[] = [
   { text: 'Smart masks add edge wear, dirt in gaps or dust on top to any layer.', id: 'smart-masks' },
   { text: 'Brush tips change the shape of every dab. A grunge tip looks like worn paint.', id: 'brush-tips' },
   { text: 'You can save your favourite brush settings as presets.', id: 'brushes' },
-  { text: 'Ctrl + right-drag changes the brush size, Ctrl + left-drag the flow.', id: 'quick-adjust' },
+  { text: 'Hold Ctrl and scroll to resize the brush. Ctrl + right-drag sets hardness, Ctrl + left-drag the flow.', id: 'quick-adjust' },
   { text: 'You can paint flat on the UVs in the 2D view (F3 or F4).', id: 'paint-2d' },
   { text: 'Your own photos and textures can be used as materials, brush tips or masks.', id: 'import-images' },
   { text: 'LocalPaint can show you where UVs overlap, the cause of strange dark spots.', id: 'uv-overlap' },

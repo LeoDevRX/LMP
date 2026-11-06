@@ -211,7 +211,7 @@ class App {
   private box: { pane: '3d' | '2d'; x0: number; y0: number; x1: number; y1: number; moved: boolean; parts: Part[]; queued: boolean } | null = null;
   private boxEl = el('div', { id: 'box-sel' });
   /** Ctrl + drag brush adjust (right button: size / hardness, left button: rotation / flow). */
-  private adjust: { x: number; y: number; mode: 'size' | 'angle'; r0: number; h0: number; f0: number; a0: number } | null = null;
+  private adjust: { x: number; y: number; mode: 'hard' | 'angle'; r0: number; h0: number; f0: number; a0: number } | null = null;
   private adjustEl = el('div', { id: 'brush-adjust' });
   /** ID color selection mask waiting for a click on the model (layer id), or -1. */
   private idPick = -1;
@@ -1590,6 +1590,7 @@ class App {
     ov.addEventListener('contextmenu', (e) => e.preventDefault());
     ov.addEventListener('wheel', (e) => {
       e.preventDefault();
+      if (this.wheelAdjust(e)) return;
       const at = this.uv.toUV(e.clientX, e.clientY, rect());
       this.uv.zoomAt(Math.exp(e.deltaY * 0.0015), at);
     }, { passive: false });
@@ -1787,6 +1788,11 @@ class App {
   private bindInput(container: HTMLElement) {
     const canvas = this.vp.canvas;
     const controls = this.vp.controls;
+    // Ctrl + scroll = brush size, Ctrl + Shift + scroll = stroke opacity (caught before the camera zoom sees it).
+    container.addEventListener('wheel', (e) => {
+      if (e.target !== canvas) return;
+      if (this.wheelAdjust(e)) { e.preventDefault(); e.stopPropagation(); }
+    }, { capture: true, passive: false });
     container.addEventListener('pointerdown', (e) => {
       if (e.target !== canvas) return;
       if (this.wantsAdjust(e)) {
@@ -1976,15 +1982,47 @@ class App {
 
   // ---------------------------------------------------------------- Ctrl + drag brush adjust
 
-  /** Same as Substance: Ctrl + right drag = size (←→) / hardness (↑↓); Ctrl + left drag = flow (←→) / rotation (↑↓). */
+  /** Ctrl + scroll = size, Ctrl + Shift + scroll = stroke opacity, Ctrl + right drag = hardness,
+   *  Ctrl + left drag = flow (←→) / rotation (↑↓) like Substance. */
+  private canAdjust() {
+    return this.mode === 'paint' && (this.tool === 'paint' || this.tool === 'erase' || this.tool === 'path');
+  }
+
   private wantsAdjust(e: PointerEvent) {
-    return (e.ctrlKey || e.metaKey) && !e.altKey && (e.button === 0 || e.button === 2) && this.mode === 'paint'
-      && (this.tool === 'paint' || this.tool === 'erase' || this.tool === 'path');
+    return (e.ctrlKey || e.metaKey) && !e.altKey && (e.button === 0 || e.button === 2) && this.canAdjust();
+  }
+
+  private adjustHide = 0;
+
+  /** Handles Ctrl (+ Shift) + mouse wheel. Returns true when it used the event. */
+  private wheelAdjust(e: WheelEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || !this.canAdjust() || this.adjust) return false;
+    // Windows turns Shift + wheel into a sideways scroll, so read whichever axis moved.
+    const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (!d) return true;
+    const up = d < 0;
+    const b = this.brush;
+    if (e.shiftKey) {
+      const o = Math.round((b.opacity ?? 1) * 100);
+      const n = Math.min(100, Math.max(1, up ? Math.floor(o / 5) * 5 + 5 : Math.ceil(o / 5) * 5 - 5));
+      this.setBrush('opacity', n / 100);
+    } else {
+      const sz = Math.round(b.radius * 200);
+      const step = Math.max(1, Math.round(sz * 0.08));
+      this.setBrush('radius', Math.min(100, Math.max(1, sz + (up ? step : -step))) / 200);
+    }
+    // The label only; painting and hover carry on normally while it shows.
+    this.drawAdjust({ x: e.clientX, y: e.clientY, mode: e.shiftKey ? 'opacity' : 'size' });
+    clearTimeout(this.adjustHide);
+    this.adjustHide = window.setTimeout(() => { if (!this.adjust) this.adjustEl.style.display = 'none'; }, 900);
+    this.poke();
+    return true;
   }
 
   private startAdjust(e: PointerEvent) {
     const b = this.brush;
-    this.adjust = { x: e.clientX, y: e.clientY, mode: e.button === 2 ? 'size' : 'angle', r0: b.radius, h0: b.hardness, f0: b.flow, a0: b.angle ?? 0 };
+    clearTimeout(this.adjustHide);
+    this.adjust = { x: e.clientX, y: e.clientY, mode: e.button === 2 ? 'hard' : 'angle', r0: b.radius, h0: b.hardness, f0: b.flow, a0: b.angle ?? 0 };
     this.drawAdjust();
   }
 
@@ -1992,14 +2030,14 @@ class App {
     const a = this.adjust;
     if (!a) return;
     const dx = e.clientX - a.x, dy = e.clientY - a.y;
-    if (a.mode === 'size') {
-      this.setBrush('radius', Math.min(100, Math.max(1, a.r0 * 200 + dx * 0.25)) / 200);
-      this.setBrush('hardness', Math.min(1, Math.max(0, a.h0 - dy * 0.004)));
-    } else {
+    if (a.mode === 'hard') {
+      // Right or up = harder, left or down = softer.
+      this.setBrush('hardness', Math.min(1, Math.max(0, a.h0 + (dx - dy) * 0.004)));
+    } else if (a.mode === 'angle') {
       // Like Substance: horizontal = flow, vertical = rotation.
       this.setBrush('flow', Math.min(1, Math.max(0.01, a.f0 + dx * 0.004)));
       this.brush.angle = (((a.a0 - dy * 0.75) % 360) + 360) % 360;
-    }
+    } else return;
     this.drawAdjust();
   }
 
@@ -2011,8 +2049,7 @@ class App {
   }
 
   /** Little label + tip preview next to the cursor while adjusting. */
-  private drawAdjust() {
-    const a = this.adjust;
+  private drawAdjust(a: { x: number; y: number; mode: 'hard' | 'angle' | 'size' | 'opacity' } | null = this.adjust) {
     if (!a) return;
     const b = this.brush;
     const host = this.container.getBoundingClientRect();
@@ -2027,11 +2064,12 @@ class App {
     g.globalAlpha = Math.max(0.15, b.flow);
     if (src) g.drawImage(src, -r, -r, r * 2, r * 2);
     g.restore();
-    const txt = a.mode === 'size'
-      ? `Size ${Math.round(b.radius * 200)} · Hardness ${Math.round(b.hardness * 100)}`
+    const txt = a.mode === 'size' ? `Size ${Math.round(b.radius * 200)}`
+      : a.mode === 'opacity' ? `Stroke opacity ${Math.round((b.opacity ?? 1) * 100)}`
+      : a.mode === 'hard' ? `Hardness ${Math.round(b.hardness * 100)}`
       : `Flow ${Math.round(b.flow * 100)} · Rotation ${Math.round(b.angle ?? 0)}°${tip === 'round' ? ' (round tip: pick a shaped tip to see rotation)' : ''}`;
     this.adjustEl.innerHTML = '';
-    this.adjustEl.append(cv, el('span', {}, txt), el('span', { class: 'muted' }, a.mode === 'size' ? '←→ size · ↑↓ hardness' : '←→ flow · ↑↓ rotation'));
+    this.adjustEl.append(cv, el('span', {}, txt), el('span', { class: 'muted' }, ({ size: 'Ctrl + scroll', opacity: 'Ctrl + Shift + scroll', hard: 'drag right/up = harder', angle: '←→ flow · ↑↓ rotation' } as const)[a.mode]));
     Object.assign(this.adjustEl.style, { display: 'flex', left: `${a.x - host.left + 18}px`, top: `${a.y - host.top + 18}px` });
   }
 
@@ -3008,7 +3046,7 @@ class App {
       ['Paint / Erase / Picker', 'B / E / P'], ['Brush size / hardness', '[ ]  /  { }'],
       ['Orbit / Pan / Zoom', 'RMB or Alt+LMB / MMB / Wheel'], ['Frame model (or 2D view)', 'F'],
       ['Guide', 'F1'], ['Layouts 3D / 2D / 3D+2D', 'F2 / F3 / F4'], ['History panel', 'H'], ['Straight line', 'Shift+click'], ['Path tool / polygon fill', 'L / G'], ['X symmetry', 'X'], ['Views (both panes)', '1 – 9, 0'], ['Camera views (front, top, left…)', 'Hold ~'],
-      ['Paint the layer mask', 'M'], ['UV wireframe', 'W'], ['UV overlaps (dark spots)', 'O'], ['Brush size / hardness', 'Ctrl + right-drag ←→ / ↑↓'], ['Brush flow / rotation', 'Ctrl + left-drag ←→ / ↑↓'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Y'], ['Select several layers / assets', 'Ctrl+click · Shift+click'], ['Group / duplicate / delete selected layers', 'Ctrl+G / Ctrl+D / Delete'],
+      ['Paint the layer mask', 'M'], ['UV wireframe', 'W'], ['UV overlaps (dark spots)', 'O'], ['Brush size', 'Ctrl + scroll'], ['Brush hardness', 'Ctrl + right-drag'], ['Stroke opacity', 'Ctrl + Shift + scroll'], ['Brush flow / rotation', 'Ctrl + left-drag ←→ / ↑↓'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Y'], ['Select several layers / assets', 'Ctrl+click · Shift+click'], ['Group / duplicate / delete selected layers', 'Ctrl+G / Ctrl+D / Delete'],
       ['Save / Save as / Open / Import', 'Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+I'], ['Export textures', 'Ctrl+Shift+E'], ['Leave Baking mode / close panel', 'Esc'],
     ];
     dlg.append(el('header', {}, 'Keyboard shortcuts'),
