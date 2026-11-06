@@ -48,9 +48,25 @@ def materials(cfg):
     size = cfg.get('size', '2K-JPG')
     os.makedirs('out', exist_ok=True)
     used, catalog = set(), []
+    # Scans already published stay (smart materials point at them by id); new ones are added around them.
+    keep = {}
+    try:
+        prev = json.loads(get('https://github.com/LeoDevRX/LMP/releases/download/materials/materials-catalog.json'))
+        for m in prev.get('materials', []): keep.setdefault(m['cat'], []).append(m['id'])
+    except Exception as e:
+        print('no previous catalog', e)
     for c in cfg['categories']:
         picked = []
-        per = max(1, -(-c['count'] // len(c['queries'])))
+        for aid in keep.get(c['cat'], []) + c.get('keep', []):
+            if aid in used: continue
+            try:
+                d = json.loads(get(API + '?' + urllib.parse.urlencode({'id': aid, 'include': 'downloadData,tagData,displayData'})))
+                a = (d.get('foundAssets') or [None])[0]
+            except Exception:
+                a = None
+            url = link(a, size)[0] if a else None
+            if url: used.add(aid); picked.append((a, url))
+        per = max(1, -(-(c['count'] - len(picked)) // len(c['queries'])))
         for q in c['queries']:
             n = 0
             for a in search(q, per * 4):

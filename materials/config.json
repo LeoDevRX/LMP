@@ -5,23 +5,30 @@
     {
       "cat": "Metal",
       "queries": [
-        "metal"
+        "metal",
+        "steel",
+        "brushed metal",
+        "iron"
       ],
-      "count": 14
+      "count": 30
     },
     {
       "cat": "Rust",
       "queries": [
-        "rust"
+        "rust",
+        "rusty metal",
+        "corroded metal"
       ],
-      "count": 8
+      "count": 16
     },
     {
       "cat": "Painted metal",
       "queries": [
-        "painted metal"
+        "painted metal",
+        "metal paint",
+        "peeling paint"
       ],
-      "count": 10
+      "count": 20
     },
     {
       "cat": "Metal plates & sci-fi",
@@ -29,72 +36,116 @@
         "metal plates",
         "diamond plate",
         "sheet metal",
-        "corrugated steel"
+        "corrugated steel",
+        "metal grate"
       ],
-      "count": 14
+      "count": 24
     },
     {
       "cat": "Wood",
       "queries": [
         "wood",
-        "planks"
+        "planks",
+        "wood floor",
+        "bark"
       ],
-      "count": 12
+      "count": 30
     },
     {
       "cat": "Stone & concrete",
       "queries": [
         "concrete",
         "rock",
-        "marble"
+        "marble",
+        "granite"
       ],
-      "count": 12
+      "count": 30
     },
     {
       "cat": "Bricks & tiles",
       "queries": [
         "bricks",
         "tiles",
-        "paving stones"
+        "paving stones",
+        "cobblestone"
       ],
-      "count": 12
+      "count": 30
     },
     {
       "cat": "Ground",
       "queries": [
         "ground",
         "gravel",
-        "snow"
+        "snow",
+        "sand",
+        "grass"
       ],
-      "count": 8
+      "count": 22
     },
     {
       "cat": "Fabric & leather",
       "queries": [
         "fabric",
         "leather",
-        "carpet"
+        "carpet",
+        "wicker"
       ],
-      "count": 12
+      "count": 30
     },
     {
       "cat": "Plastic & rubber",
       "queries": [
         "plastic",
-        "rubber"
+        "rubber",
+        "foam"
       ],
-      "count": 6
+      "count": 14
     },
     {
       "cat": "Paint & plaster",
       "queries": [
         "painted plaster",
-        "paint"
+        "paint",
+        "plaster",
+        "wallpaper"
+      ],
+      "count": 18
+    },
+    {
+      "cat": "Asphalt & road",
+      "queries": [
+        "asphalt",
+        "road"
+      ],
+      "count": 10
+    },
+    {
+      "cat": "Roofing",
+      "queries": [
+        "roofing tiles",
+        "roof"
+      ],
+      "count": 10
+    },
+    {
+      "cat": "Terrazzo & marble",
+      "queries": [
+        "terrazzo",
+        "marble tiles"
+      ],
+      "count": 10
+    },
+    {
+      "cat": "Ice & glass",
+      "queries": [
+        "ice",
+        "glass"
       ],
       "count": 6
     }
   ],
   "build": [
+    "materials",
     "grunges"
   ],
   "grunge_size": "2K-JPG",
