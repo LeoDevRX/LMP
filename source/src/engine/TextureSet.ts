@@ -1765,6 +1765,12 @@ void main() {
   private matSpPack2 = quadShader(FRAG_SP_PACK2, { uSrc: { value: null }, uMesh: { value: null } });
   private matSpBlur = quadShader(FRAG_SP_BLUR, { uSrc: { value: null }, uDir: { value: new THREE.Vector2() } });
 
+  /** Compile every Painter-style generator's shader now (loading screen), so the first smart material doesn't stall. */
+  warmupPainter(kinds: SpKind[]) {
+    const tiny = makeRT(4, { type: THREE.HalfFloatType });
+    for (const k of kinds) this.runPainterGen({ kind: k, p: {} } as SpSettings, null, tiny, 0, 1, false, 0);
+    tiny.dispose();
+  }
   private spMat(kind: SpKind) {
     let m = this.spMats.get(kind);
     if (!m) {

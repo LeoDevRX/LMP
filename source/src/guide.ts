@@ -64,6 +64,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.09', steps: ['Fixed freezes when dropping smart materials and smart material previews that never showed up: the new mask generators compiled very slowly on Windows. They now compile in under a second, on the loading screen.'] },
       { h: 'New in v1.08', steps: ['Less lag after dropping a smart material, and shelf previews are made only while you pause.'] },
       { h: 'New in v1.07', steps: ['Loading after an update is quick again: new smart material previews are made in the background.'] },
       { h: 'New in v1.06', steps: [

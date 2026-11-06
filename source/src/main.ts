@@ -3422,6 +3422,7 @@ class App {
     };
     await step('Compiling painting shaders…', 4, () => this.ts.warmup());
     await step('Compiling viewport shaders…', 8, () => this.vp.warmup());
+    await step('Compiling mask generators…', 10, () => this.ts.warmupPainter(SP_KINDS));
     await step('Compiling Material Designer nodes…', 12, () => { this.designer.runner.warmup(); this.graphRunner.warmup(); });
     await step('Preparing Material Designer…', 16, () => this.designer.changed(false));
     await step('Preparing bake previews…', 19, async () => {

@@ -6,7 +6,6 @@
  * .spsm / .spmsk files carry over 1:1. The maths follows the public Substance node definitions
  * (histogram scan, blend modes, blur HQ, levels); grunge textures come from LocalPaint's CC0 grunge library.
  */
-import { GLSL_NOISE } from './Procedural';
 
 export type SpKind = 'dirt' | 'wear' | 'fiberwear' | 'dust' | 'editor' | 'builder' | 'light' | 'position' | 'ao' | 'curvature'
   | 'gradient3d' | 'distance3d' | 'grounddirt' | 'grunge';
@@ -304,7 +303,13 @@ uniform bool uOutInv;
 uniform bool uSelfInv;
 uniform float uShift;
 varying vec2 vUv;
-${GLSL_NOISE}
+// Small hash noise (kept tiny on purpose: big shaders take seconds to compile on Windows).
+float hsh(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vnoise(vec3 p) {
+  vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hsh(i), hsh(i + vec3(1, 0, 0)), f.x), mix(hsh(i + vec3(0, 1, 0)), hsh(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(hsh(i + vec3(0, 0, 1)), hsh(i + vec3(1, 0, 1)), f.x), mix(hsh(i + vec3(0, 1, 1)), hsh(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
 vec3 gPos, gN, gPn, gP01;
 float gAO, gCv, gTh;
 
@@ -377,10 +382,10 @@ float curvMode(float c, float mode) {
   if (mode < 3.5) return clamp(abs(c - 0.5) * 2.0, 0.0, 1.0);
   return c;
 }
+// Stand-in while a grunge downloads: two octaves of value noise (k varies it per category).
 float procG(int k, float sc, bool tri, float triC) {
-  uint us = uint(uSeed) + uint(k) * 7919u;
-  if (tri) return triPattern(k, gPn, gN, sc * 2.0, us);
-  return tcPattern(k, vec3(vUv * sc * 2.0, 0.0), us);
+  vec3 p = (tri ? gPn : vec3(vUv, 0.0)) * sc * 4.0 + vec3(float(k) * 7.31 + uSeed * 0.137);
+  return clamp(vnoise(p) * 0.65 + vnoise(p * 2.7) * 0.35, 0.0, 1.0);
 }
 float texG(sampler2D t, float sc, bool tri, float triC) {
   if (!tri) return texture2D(t, vUv * sc).r;
@@ -398,7 +403,7 @@ float grunge(int slot, float sc, bool tri, float triC) {
   if (slot == 0) return uGOk0 ? texG(uG0, sc, tri, triC) : procG(uGPat0, sc, tri, triC);
   return uGOk1 ? texG(uG1, sc, tri, triC) : procG(uGPat1, sc, tri, triC);
 }
-float whiteNoise(float sc) { return hash01(ivec3(floor(gPn * sc)), uint(uSeed) + 101u); }
+float whiteNoise(float sc) { return hsh(floor(gPn * sc) + vec3(uSeed * 0.71 + 3.1)); }
 float fxMix(int m, float a, float b) {
   if (m == 1) return a * b;
   if (m == 2) return max(a, b);
