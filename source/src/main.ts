@@ -3409,12 +3409,26 @@ class App {
     });
     const saved = await loadThumbs();
     for (const [k, v] of saved) this.thumbCache.set(k, v);
-    const items = this.shelf.items.filter((it) => this.thumbJob(it) && !this.thumbCache.has(this.thumbKey(it)));
+    // Previews that need a scan which isn't downloaded yet are left for later (the shelf makes them when shown),
+    // so the loading screen never waits on the internet.
+    const needsDownload = (it: ShelfItem) => {
+      if (it.kind !== 'smart') return false;
+      const files: string[] = [];
+      const walk = (ls: any[]) => { for (const l of ls) { if (l?.scan?.file) files.push(l.scan.file); if (l?.children) walk(l.children); } };
+      walk(it.smart.layers);
+      return files.some((f) => !this.cloudItems.some((c) => c.kind === 'cloud' && c.file === f && c.downloaded));
+    };
+    // Smart material / smart mask previews that aren't shipped ready-made are slow to make (they run the whole layer
+    // stack), so they're made in the background after loading, when the shelf shows them.
+    const slow = (it: ShelfItem) => (it.kind === 'smart' || it.kind === 'mask')
+      && !(SCAN_PREVIEWS as Record<string, string>)[it.kind === 'mask' ? 'mask:' + it.preset : it.name];
+    const items = this.shelf.items.filter((it) => this.thumbJob(it) && !this.thumbCache.has(this.thumbKey(it)) && !needsDownload(it) && !slow(it));
     let n = 0, last = performance.now();
     const pctOf = (k: number) => 20 + Math.round((k / Math.max(1, items.length)) * 80);
     if (items.length && txt) txt.textContent = saved.size ? `Loading new assets… 0 / ${items.length}` : `Preparing materials (first start only)… 0 / ${items.length}`;
     for (const it of items) {
-      await this.thumbOf(it);
+      // One slow preview never holds up loading: after a few seconds it carries on in the background.
+      await Promise.race([this.thumbOf(it), new Promise((r) => setTimeout(r, 6000))]);
       n++;
       if (performance.now() - last > 40) {
         if (bar) bar.style.width = `${pctOf(n)}%`;
