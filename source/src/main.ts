@@ -131,11 +131,25 @@ class App {
   /** Runs smart materials for real on a preview shape (made on first use). */
   private smartPrev: SmartPreview | null = null;
   private get smartPreview() {
-    if (!this.smartPrev) { this.smartPrev = new SmartPreview(this.gpu, this.settings.lowPerf ? 128 : 256); this.smartPrev.graphBaker = (g) => this.bakeGraph(g); this.smartPrev.scanResolver = (r) => this.scanImages(r); this.smartPrev.grungeResolver = (r) => this.grunges.resolve(r); }
+    if (!this.smartPrev) { this.smartPrev = new SmartPreview(this.gpu, this.settings.lowPerf ? 128 : 256); this.smartPrev.graphBaker = (g) => this.bakeGraph(g); this.smartPrev.scanResolver = (r) => this.scanImagesIfDownloaded(r); this.smartPrev.grungeResolver = (r) => this.grunges.resolve(r); }
     return this.smartPrev;
   }
-  private smartThumb(key: string, sm: any): Promise<string> {
-    return this.smartPreview.maps(sm).then((px) => this.thumbs.previewMaps(key, this.smartPreview.geometry, px));
+  /** Last time the user did something (pointer, keys, drops): background previews wait until they've paused. */
+  private lastInput = 0;
+  private previewMissedScan = false;
+  private noPersist = new Set<string>();
+  private async waitIdle() {
+    // Never while loading (the loading screen wants them), otherwise after 1.5 s without input.
+    while (document.getElementById('splash') === null && performance.now() - this.lastInput < 1500) await new Promise((r) => setTimeout(r, 300));
+  }
+  private async smartThumb(key: string, sm: any): Promise<string> {
+    await this.waitIdle();
+    this.previewMissedScan = false;
+    const px = await this.smartPreview.maps(sm);
+    const url = await this.thumbs.previewMaps(key, this.smartPreview.geometry, px);
+    // A preview made without a scan that isn't downloaded yet is shown, but not saved: it's made again later.
+    if (this.previewMissedScan) this.noPersist.add(key);
+    return url;
   }
   private shelfFilter: ShelfFilter = 'all';
   private shelfSearch = '';
@@ -1318,12 +1332,17 @@ class App {
     else if (this.settings.startScreen && this.native) this.openWindow('recent');
     if (this.settings.checkUpdates) setTimeout(() => this.checkForUpdates(false), 2500);
     void this.findSbsEngine().then(() => this.loadSbsLibrary());
+    let grungeTimer = 0;
     this.grunges.onLoad = () => {
-      // A grunge arrived: masks with Painter generators render again with the real texture.
-      this.ts.grungeVersion++;
-      for (const l of this.ts.allLayers) if (l.mask?.gen && JSON.stringify(l.mask.gen).includes('"sp"')) this.ts.maskChanged(l);
-      if (this.smartPrev) this.smartPrev.grungeVersion++;
+      // Grunges arrived: masks with Painter generators render again with the real textures — once per batch, not per file.
+      clearTimeout(grungeTimer);
+      grungeTimer = window.setTimeout(() => {
+        this.ts.grungeVersion++;
+        for (const l of this.ts.allLayers) if (l.mask?.gen && JSON.stringify(l.mask.gen).includes('"sp"')) this.ts.maskChanged(l);
+        if (this.smartPrev) this.smartPrev.grungeVersion++;
+      }, 600);
     };
+    for (const ev of ['pointerdown', 'keydown', 'wheel', 'dragover', 'drop'] as const) window.addEventListener(ev, () => { this.lastInput = performance.now(); }, { passive: true, capture: true });
     void this.grunges.loadCatalog();
     this.sbsTimer = window.setInterval(() => this.sbsTick(), 120);
   }
@@ -3381,7 +3400,8 @@ class App {
     if (!job) return Promise.resolve(null);
     w = job().then((u) => {
       this.thumbCache.set(key, u);
-      if (this.thumbPersist(it)) saveThumb(key, u);
+      const k2 = it.kind === 'smart' ? 's:' + it.file : it.kind === 'mask' ? 'k:' + it.preset : '';
+      if (this.thumbPersist(it) && !this.noPersist.has(k2)) saveThumb(key, u);
       return u;
     }).catch(() => null).finally(() => this.thumbWaits.delete(key));
     this.thumbWaits.set(key, w);
@@ -3611,6 +3631,12 @@ class App {
     return images;
   }
   /** Maps of a scanned material for smart materials built from scans (downloads it the first time). */
+  /** For previews: a scan only if it's already on this computer (previews never start downloads). */
+  async scanImagesIfDownloaded(ref: ScanRef): Promise<Partial<Record<Ch, FillImage>>> {
+    const c = this.cloudItems.find((x) => x.kind === 'cloud' && x.file === ref.file);
+    if (!this.cloudCache.has(ref.file) && !(c && c.kind === 'cloud' && c.downloaded)) { this.previewMissedScan = true; throw new Error('scan not downloaded'); }
+    return this.scanImages(ref);
+  }
   async scanImages(ref: ScanRef): Promise<Partial<Record<Ch, FillImage>>> {
     const it: ShelfItem = this.cloudItems.find((c) => c.kind === 'cloud' && c.file === ref.file)
       ?? { kind: 'cloud', name: ref.name, file: ref.file, cat: ref.cat, thumb: '', size: 0, tags: [], maps: [] };

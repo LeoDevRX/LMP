@@ -64,6 +64,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.08', steps: ['Less lag after dropping a smart material, and shelf previews are made only while you pause.'] },
       { h: 'New in v1.07', steps: ['Loading after an update is quick again: new smart material previews are made in the background.'] },
       { h: 'New in v1.06', steps: [
         'Every smart material uses the Painter-style generators now, so edges, dirt, dust and rust look like Painter\'s.',
