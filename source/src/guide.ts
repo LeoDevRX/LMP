@@ -66,6 +66,7 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.15', steps: ['The baker remembers which maps you ticked, for new projects and the next time you open LocalPaint.'] },
       { h: 'New in v1.14', steps: ['Layers stack properly over glowing materials: a smart material or brush stroke on top now covers the glow (emission) of the layers below, like Substance Painter. To make a brush glow, pick an Emission color in Properties.'] },
       { h: 'New in v1.13', steps: ['Reset lighting button in Display settings: puts the light rotation, height and exposure back to the start.'] },
       { h: 'New in v1.12', steps: ['Opal smart material in Basic: a milky body with flecks of green, orange, purple and red fire.', 'Move the light: hold Shift and right-drag in the 3D view, or use Rotation and Light height in Display settings.', 'Assets > Alphas: 150+ stamps, including bolts, nuts, screws, rivets, panels, seams, vents, grilles, gears, hinges, tread plate, arrows, signs, shapes and lines.', 'Baking AO, curvature and thickness is faster (about a quarter on its own, more on PCs with many cores) and gives exactly the same result.', 'Smart materials with parts LocalPaint can\'t read import the rest instead of failing. New guide page: Help: errors.'] },

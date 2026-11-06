@@ -21,6 +21,8 @@ export interface Settings {
   /** Lighting environment shown in the 3D view (an HDR on the shelf; '' = built-in studio). */
   envName: string;
   /** Light direction (Shift + right-drag in the 3D view). */
+  /** Which maps the baker bakes (remembered between sessions and projects). */
+  bakeMaps?: Record<string, boolean>;
   envYaw?: number;
   envTilt?: number;
   /** Render Substance materials with Adobe's engine (sbsrender) when it's installed. */

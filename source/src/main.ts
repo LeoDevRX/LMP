@@ -288,7 +288,7 @@ class App {
     const bake = this.ts?.bakeSettings;
     const hs = this.ts?.heightStrength;
     const highSettings = this.ts?.highSettings;
-    const maps = this.ts?.bakeMaps;
+    const maps = this.ts?.bakeMaps ?? this.settings.bakeMaps;
     this.ts?.dispose();
     this.model = model;
     const res = resolution ?? this.ts?.size ?? 1024;
@@ -300,7 +300,7 @@ class App {
     if (bake) this.ts.bakeSettings = { ...bake };
     if (hs !== undefined) this.ts.heightStrength = hs;
     if (highSettings) this.ts.highSettings = { ...highSettings };
-    if (maps) this.ts.bakeMaps = { ...maps };
+    if (maps) this.ts.bakeMaps = { ...this.ts.bakeMaps, ...maps };
     this.high = null;
     this.mapThumbs.clear();
     // Many engine changes can happen in one go (e.g. translating a smart material): rebuild the UI once per frame.
@@ -2077,6 +2077,9 @@ class App {
   }
 
   /** Little label + tip preview next to the cursor while adjusting. */
+  /** Remember the ticked bake maps for the next project and the next time LocalPaint opens. */
+  private saveBakeMaps() { this.settings.bakeMaps = { ...this.ts.bakeMaps }; saveSettings(this.settings); }
+
   private sunDrag: { x: number; y: number; yaw0: number; tilt0: number } | null = null;
   private drawSun(x: number, y: number) {
     const host = this.container.getBoundingClientRect();
@@ -4381,7 +4384,7 @@ class App {
       if (key) {
         const box = el('input', { type: 'checkbox', checked: maps[key], title: 'Bake this map (unticked maps keep their last result)' }) as HTMLInputElement;
         box.addEventListener('click', (e) => e.stopPropagation());
-        box.addEventListener('change', () => { maps[key] = box.checked; this.buildBakeDock(); });
+        box.addEventListener('change', () => { maps[key] = box.checked; this.saveBakeMaps(); this.buildBakeDock(); });
         row.append(box);
       } else row.append(el('span', { class: 'bake-dot' }));
       row.append(el('span', { class: 'grow' }, label));
@@ -4390,7 +4393,7 @@ class App {
     };
     const all = BAKE_ITEMS.every(([k]) => maps[k]);
     const allBox = el('input', { type: 'checkbox', checked: all, title: 'Tick / untick every map' }) as HTMLInputElement;
-    allBox.addEventListener('change', () => { for (const [k] of BAKE_ITEMS) maps[k] = allBox.checked; this.buildBakeDock(); });
+    allBox.addEventListener('change', () => { for (const [k] of BAKE_ITEMS) maps[k] = allBox.checked; this.saveBakeMaps(); this.buildBakeDock(); });
     const list = el('div', { class: 'bake-list' },
       item('common', 'Common parameters'),
       el('label', { class: 'bake-all' }, allBox, ' All maps'),
