@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('texpaintNative', {
   openPresetsFolder: () => ipcRenderer.invoke('presets:open'),
   saveProject: (name, data, filePath, saveAs) => ipcRenderer.invoke('project:save', name, data, filePath, saveAs),
   openProject: () => ipcRenderer.invoke('project:open'),
-  readProject: (p) => ipcRenderer.invoke('project:read', p),
+  readProject: (p, autosave) => ipcRenderer.invoke('project:read', p, !!autosave),
   importFiles: () => ipcRenderer.invoke('file:import'),
   onOpenPath: (cb) => ipcRenderer.on('project:open-path', (_e, p) => cb(p)),
   onCloseRequest: (cb) => ipcRenderer.on('app:close-request', () => cb()),

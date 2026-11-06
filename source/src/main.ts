@@ -1053,7 +1053,7 @@ class App {
     const openAuto = async (a: { path: string; name: string }) => {
       close();
       if (!(await this.confirmUnsaved('Restore this autosave anyway?'))) return;
-      await this.openProjectFromPath(a.path);
+      await this.openProjectFromPath(a.path, undefined, true);
       this.projectPath = ''; // restored copies never overwrite the original until you save
       this.modified = true;
       this.updateTitle();
@@ -1237,15 +1237,16 @@ class App {
     if (f) this.openProjectFile(f);
   }
 
-  async openProjectFromPath(path: string, data?: ArrayBuffer) {
+  /** `autosave`: a backup copy — it never goes in the recent lists (in the app or Windows' taskbar menu). */
+  async openProjectFromPath(path: string, data?: ArrayBuffer, autosave = false) {
     const native = (window as any).texpaintNative;
     try {
       checkProjectFileName(path);
-      if (!data) data = (await native.readProject(path)).data as ArrayBuffer;
+      if (!data) data = (await native.readProject(path, autosave)).data as ArrayBuffer;
       await this.openProjectText(new TextDecoder().decode(data));
       this.projectPath = /\.lp$/i.test(path) ? path : '';
       this.updateTitle();
-      if (this.projectPath) setTimeout(() => native?.recentAdd?.(path, this.projectName(), this.snapshotThumb()), 800);
+      if (this.projectPath && !autosave) setTimeout(() => native?.recentAdd?.(path, this.projectName(), this.snapshotThumb()), 800);
       toast(`Opened ${path.split(/[\\/]/).pop()}`);
     } catch (e: any) {
       this.projectOpenFailed(e);

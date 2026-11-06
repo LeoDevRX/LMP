@@ -67,6 +67,10 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.21', steps: [
+        'Autosaves no longer show up in the taskbar\'s right-click Recent list or in Recent on the start screen. Only projects you saved or opened yourself go there, each once, newest 10.',
+        'Restoring an autosave doesn\'t add it to Recent either. Save it to put it back in the list under its real name.',
+      ] },
       { h: 'New in v1.20', steps: [
         'Projected pictures now get a real 3D manipulator in the viewport, like Substance\'s: arrows to move, rings to rotate, cubes to stretch on one axis. W / E / R switch between them.',
         'Drag on the model to stick the projection to the surface, hold Shift to snap, and switch between Local and World axes or Reset from the top bar.',

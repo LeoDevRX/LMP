@@ -88,7 +88,7 @@ ipcMain.handle('project:save', async (e, name, data, filePath, saveAs) => {
   fs.writeFileSync(tmp, Buffer.from(data));
   fs.renameSync(tmp, target); // a crash mid-save never leaves a broken project
   lastDir = path.dirname(target);
-  app.addRecentDocument(target);
+  if (!isAutosave(target)) addRecent(target);
   return target;
 });
 
@@ -104,11 +104,10 @@ ipcMain.handle('project:open', async (e) => {
   // .spp selection can be several GB and must not be read as a JSON project.
   return { path: r.filePaths[0] };
 });
-ipcMain.handle('project:read', (_e, p) => readProject(p));
-function readProject(p) {
+ipcMain.handle('project:read', (_e, p, autosave) => readProject(p, autosave));
+function readProject(p, autosave = false) {
   const b = fs.readFileSync(p);
-  lastDir = path.dirname(p);
-  app.addRecentDocument(p);
+  if (!autosave && !isAutosave(p)) { lastDir = path.dirname(p); addRecent(p); }
   return { path: p, data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) };
 }
 
@@ -171,6 +170,34 @@ function autosaveDir() {
 }
 const metaOf = (f) => f.replace(/\.(lp|lmp)$/i, '.json');
 
+/** Autosave copies ("Name__2026-11-06T18-15-…lp" or anything in an autosave folder) stay out of the recent lists. */
+function isAutosave(p) {
+  const f = String(p || '');
+  return /__\d{4}-\d{2}-\d{2}T\d{2}-\d{2}/.test(path.basename(f)) || /[\\/]autosave[\\/][^\\/]+$/i.test(f);
+}
+const sameFile = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+/** Add to the in-app recent list's order and to Windows' taskbar / Start recent list. */
+function addRecent(p) {
+  try { app.addRecentDocument(p); } catch { /* fine */ }
+}
+/**
+ * Rebuild Windows' taskbar recent list from LocalPaint's own list: only real projects that still exist, each once,
+ * newest 10. This clears out autosave copies older versions put there.
+ */
+function rebuildJumpList() {
+  if (process.platform !== 'win32') return;
+  try {
+    const seen = [];
+    for (const r of readRecent()) {
+      if (!r?.path || isAutosave(r.path) || !fs.existsSync(r.path) || seen.some((s) => sameFile(s, r.path))) continue;
+      seen.push(r.path);
+      if (seen.length >= 10) break;
+    }
+    app.clearRecentDocuments();
+    for (const p of seen.reverse()) app.addRecentDocument(p); // oldest first, so the newest ends up on top
+  } catch { /* fine */ }
+}
+
 /** Write an autosave (keeps the newest `keep` per project). */
 ipcMain.handle('autosave:write', (_e, name, data, thumb, projectPath, keep) => {
   const dir = autosaveDir();
@@ -211,9 +238,10 @@ app.on('will-quit', () => { try { fs.unlinkSync(lockFile()); } catch { /* fine *
 
 const recentFile = () => path.join(app.getPath('userData'), 'recent.json');
 function readRecent() { try { return JSON.parse(fs.readFileSync(recentFile(), 'utf8')); } catch { return []; } }
-ipcMain.handle('recent:list', () => readRecent().filter((r) => fs.existsSync(r.path)));
+ipcMain.handle('recent:list', () => readRecent().filter((r) => !isAutosave(r.path) && fs.existsSync(r.path)));
 ipcMain.handle('recent:add', (_e, p, name, thumb) => {
-  const list = readRecent().filter((r) => r.path !== p);
+  if (isAutosave(p)) return false;
+  const list = readRecent().filter((r) => !isAutosave(r.path) && !sameFile(r.path, p));
   list.unshift({ path: p, name, thumb: thumb || '', time: Date.now() });
   try { fs.writeFileSync(recentFile(), JSON.stringify(list.slice(0, 12))); } catch { /* fine */ }
   return true;
@@ -599,6 +627,7 @@ if (!app.requestSingleInstanceLock()) {
     pendingOpen = projectArg(process.argv);
     createWindow();
     registerFileType();
+    rebuildJumpList();
   });
   app.on('window-all-closed', () => app.quit());
 }
