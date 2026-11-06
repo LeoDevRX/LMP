@@ -6,6 +6,9 @@ import { ALPHA_LIBRARY, drawAlpha, drawProcTip } from './alphas';
 export interface BrushSettings {
   radius: number; hardness: number; flow: number; spacing: number;
   angle: number; angleJitter: number; followStroke: boolean; sizeJitter: number; scatter: number;
+  flowJitter?: number; hueJitter?: number; satJitter?: number; valJitter?: number;
+  /** Stroke opacity (0..1). */
+  opacity?: number;
 }
 export interface BrushPreset {
   format: 'texpaint-brush';
@@ -15,6 +18,8 @@ export interface BrushPreset {
   tip: string;
   tipPng?: string;
   settings: Partial<BrushSettings>;
+  /** Shelf group (Basic, Artistic, Dirt & dust…). */
+  category?: string;
 }
 
 export const BUILTIN_TIPS: { id: string; label: string }[] = [
@@ -311,6 +316,20 @@ export function tipPreview(tip: string, canvas?: HTMLCanvasElement, hardness = 0
   return cv;
 }
 
+/** Shelf groups for the starter brushes, like Substance Painter's brush categories. */
+const BRUSH_CATEGORY: Record<string, string> = {
+  'Basic hard': 'Basic', 'Basic soft': 'Basic', 'Square': 'Basic', 'Airbrush': 'Basic', 'Dots': 'Stamps & shapes', 'Dots (spaced)': 'Stamps & shapes',
+  'Star stamp': 'Stamps & shapes', 'Stars': 'Stamps & shapes', 'Hexagons': 'Stamps & shapes',
+  'Chalk': 'Artistic', 'Chalk (sponge)': 'Artistic', 'Dry brush': 'Artistic', 'Pencil': 'Artistic', 'Cross hatch (toon)': 'Artistic', 'Soft smudge': 'Artistic', 'Sea sponge': 'Artistic',
+  'Cloud': 'Dirt & dust', 'Grunge': 'Dirt & dust', 'Grunge spots': 'Dirt & dust', 'Speckle': 'Dirt & dust', 'Gubby': 'Dirt & dust', 'Dust (soft spray)': 'Dirt & dust', 'Spray': 'Dirt & dust',
+  'Splatter': 'Leaks & stains', 'Splatter drops': 'Leaks & stains', 'Drips': 'Leaks & stains', 'Leaks': 'Leaks & stains',
+  'Scratches': 'Damage', 'Scratches (lines)': 'Damage', 'Chips': 'Damage', 'Cracks': 'Damage', 'Dry cracks': 'Damage', 'Dents and bumps': 'Damage', 'Chipped paint': 'Damage',
+  'Rust blotches': 'Rust & paint',
+  'Stitches': 'Fabric, skin & hair', 'Fur': 'Fabric, skin & hair', 'Hair - fur strands': 'Fabric, skin & hair', 'Cloth weave': 'Fabric, skin & hair', 'Skin pores': 'Fabric, skin & hair', 'Bubbles': 'Fabric, skin & hair',
+  'Leaves': 'Nature', 'Wood grain': 'Nature', 'Gravel': 'Nature', 'Torn tape': 'Damage',
+  'Rivets': 'Hard surface', 'Bolts': 'Hard surface', 'Screws': 'Hard surface', 'Vent slots': 'Hard surface',
+};
+
 const P = (name: string, tip: string, settings: Partial<BrushSettings>): BrushPreset => ({ format: 'texpaint-brush', version: 1, name, tip, settings });
 export const STARTER_BRUSHES: BrushPreset[] = [
   P('Basic hard', 'round', { hardness: 0.9, flow: 1, spacing: 0.15, angle: 0, angleJitter: 0, followStroke: false, sizeJitter: 0, scatter: 0 }),
@@ -326,7 +345,68 @@ export const STARTER_BRUSHES: BrushPreset[] = [
   // TextureCraft's brush presets (crates/paint/src/presets.rs). Its spacing is per diameter, TexPaint's per radius.
   ...TC_BRUSHES(),
   ...MORE_BRUSHES(),
-];
+  ...PAINTERLIKE_BRUSHES(),
+].map((b) => ({ ...b, category: b.category ?? BRUSH_CATEGORY[b.name] ?? 'Basic' }));
+
+/** A brush's shelf group: its own, else the built-in one with that name, else Basic (your own brushes: Custom). */
+export function brushCategory(b: BrushPreset, custom = false): string {
+  return b.category ?? BRUSH_CATEGORY[b.name] ?? STARTER_BRUSHES.find((x) => x.name === b.name)?.category ?? (custom ? 'Custom' : 'Basic');
+}
+
+
+/** v1.18: brushes covering Substance Painter's brush categories, on LocalPaint's own tips. */
+function PAINTERLIKE_BRUSHES(): BrushPreset[] {
+  const d = { hardness: 0.5, flow: 1, spacing: 0.3, angle: 0, angleJitter: 0, followStroke: false, sizeJitter: 0, scatter: 0 };
+  const B = (cat: string, name: string, tip: string, o: Partial<BrushSettings>): BrushPreset => ({ ...P(name, tip, { ...d, ...o }), category: cat });
+  const t = (id: string) => 'builtin:tc_' + id;
+  return [
+    // Artistic
+    B('Artistic', 'Watercolour', t('watercolor'), { flow: 0.35, spacing: 0.25, angleJitter: 1, sizeJitter: 0.25, hueJitter: 0.03, valJitter: 0.12 }),
+    B('Artistic', 'Watercolour wet edge', t('wet_edge'), { flow: 0.5, spacing: 0.35, angleJitter: 1, sizeJitter: 0.2 }),
+    B('Artistic', 'Charcoal', t('charcoal'), { flow: 0.85, spacing: 0.18, followStroke: true, sizeJitter: 0.1 }),
+    B('Artistic', 'Crayon', t('crayon'), { flow: 0.9, spacing: 0.12, followStroke: true }),
+    B('Artistic', 'Oil paint', t('bristle'), { flow: 0.9, spacing: 0.08, followStroke: true, valJitter: 0.06 }),
+    B('Artistic', 'Marker', 'round', { hardness: 0.75, flow: 0.45, spacing: 0.05, opacity: 0.85 }),
+    B('Artistic', 'Hand-painted', 'round', { hardness: 0.55, flow: 0.35, spacing: 0.1, hueJitter: 0.04, satJitter: 0.08, valJitter: 0.12 }),
+    B('Artistic', 'Ink splat', t('ink_splat'), { spacing: 1.6, angleJitter: 1, sizeJitter: 0.5, scatter: 0.8 }),
+    // Dirt & dust
+    B('Dirt & dust', 'Dirt', t('dirt_clump'), { flow: 0.7, spacing: 0.5, angleJitter: 1, sizeJitter: 0.4, scatter: 0.6 }),
+    B('Dirt & dust', 'Dust specks', t('dust_specks'), { flow: 0.8, spacing: 0.7, angleJitter: 1, sizeJitter: 0.3, scatter: 0.5 }),
+    B('Dirt & dust', 'Dust soft', 'builtin:cloud', { flow: 0.2, spacing: 0.3, angleJitter: 1, sizeJitter: 0.3, scatter: 0.3, flowJitter: 0.5 }),
+    B('Dirt & dust', 'Sand', t('grain'), { flow: 0.7, spacing: 0.4, angleJitter: 1, sizeJitter: 0.2, scatter: 0.3 }),
+    B('Dirt & dust', 'Fingerprints', t('fingerprint'), { flow: 0.55, spacing: 2.2, angleJitter: 0.35, sizeJitter: 0.25, scatter: 0.6 }),
+    B('Dirt & dust', 'Smudged grime', t('smoke'), { flow: 0.35, spacing: 0.4, angleJitter: 1, sizeJitter: 0.3, flowJitter: 0.4 }),
+    // Leaks & stains
+    B('Leaks & stains', 'Leak drips', t('drip'), { spacing: 1.1, sizeJitter: 0.5, scatter: 0.35, flowJitter: 0.3 }),
+    B('Leaks & stains', 'Coffee stains', t('stain_ring'), { flow: 0.8, spacing: 2.2, angleJitter: 1, sizeJitter: 0.5, scatter: 0.7 }),
+    B('Leaks & stains', 'Water stains', t('wet_edge'), { flow: 0.35, spacing: 1.4, angleJitter: 1, sizeJitter: 0.5, scatter: 0.6 }),
+    B('Leaks & stains', 'Ink splatter', t('ink_splat'), { spacing: 1.2, angleJitter: 1, sizeJitter: 0.7, scatter: 1 }),
+    // Damage
+    B('Damage', 'Scuffs', t('scuffs'), { flow: 0.8, spacing: 0.9, angleJitter: 1, sizeJitter: 0.3, scatter: 0.4 }),
+    B('Damage', 'Edge chips', t('chips'), { spacing: 0.6, angleJitter: 1, sizeJitter: 0.6, scatter: 0.5 }),
+    B('Damage', 'Scratches (fine)', t('scratches'), { flow: 0.7, spacing: 0.7, angleJitter: 0.1, followStroke: true, sizeJitter: 0.4, scatter: 0.4, flowJitter: 0.5 }),
+    // Rust & paint
+    B('Rust & paint', 'Rust flakes', t('rust_flake'), { spacing: 0.6, angleJitter: 1, sizeJitter: 0.4, scatter: 0.4, hueJitter: 0.02, valJitter: 0.15 }),
+    B('Rust & paint', 'Spray paint', t('spray_fine'), { flow: 0.8, spacing: 0.15, angleJitter: 1 }),
+    B('Rust & paint', 'Spray paint (soft)', 'round', { hardness: 0, flow: 0.15, spacing: 0.08 }),
+    B('Rust & paint', 'Paint drips', t('drip'), { spacing: 1.4, sizeJitter: 0.6, scatter: 0.5 }),
+    // Nature
+    B('Nature', 'Grass', t('grass'), { spacing: 0.7, sizeJitter: 0.35, scatter: 0.5, hueJitter: 0.04, valJitter: 0.15 }),
+    B('Nature', 'Moss', t('moss'), { flow: 0.8, spacing: 0.5, angleJitter: 1, sizeJitter: 0.4, scatter: 0.5, hueJitter: 0.03, valJitter: 0.12 }),
+    B('Nature', 'Lichen spots', t('moss'), { flow: 0.6, spacing: 1.4, angleJitter: 1, sizeJitter: 0.6, scatter: 0.9, satJitter: 0.15 }),
+    // Hard surface (one click per stamp works best: raise spacing or click)
+    B('Hard surface', 'Rivet row', t('rivet_flat'), { hardness: 0.9, spacing: 2.6, followStroke: true }),
+    B('Hard surface', 'Hex bolt', t('hex_bolt'), { spacing: 3 }),
+    B('Hard surface', 'Seam line', t('seam'), { spacing: 0.25, followStroke: true }),
+    B('Hard surface', 'Riveted seam', t('seam_riveted'), { spacing: 1.7, followStroke: true }),
+    B('Hard surface', 'Weld bead', t('weld_bead'), { spacing: 0.35, followStroke: true, sizeJitter: 0.1 }),
+    B('Hard surface', 'Panel line', t('panel_line'), { spacing: 3 }),
+    B('Hard surface', 'Tread plate', t('tread_plate'), { spacing: 1.6 }),
+    // FX
+    B('FX', 'Smoke', t('smoke'), { flow: 0.4, spacing: 0.35, angleJitter: 1, sizeJitter: 0.4, scatter: 0.3, flowJitter: 0.4 }),
+    B('FX', 'Glow dots', 'round', { hardness: 0, flow: 0.6, spacing: 1.5, sizeJitter: 0.6, scatter: 0.8 }),
+  ];
+}
 
 /** v1.00: brushes like the ones in common texturing packs (surface imperfections, rust, cloth, fur, toon…). */
 function MORE_BRUSHES(): BrushPreset[] {

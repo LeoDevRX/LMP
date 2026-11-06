@@ -115,6 +115,9 @@ const sv = (d: string, w = 18) => `<svg width="${w}" height="${w}" viewBox="0 0 
 export const ICON2 = {
   paint: sv('<path d="M18.4 2.6a2 2 0 0 1 2.9 2.9L11 15.8 8.2 13z"/><path d="M8 14c-2.5 0-4 1.6-4 3.6 0 1.4-.8 2.2-2 2.4 1.2 1.1 3 1.5 4.6 1.5 2.6 0 4.4-1.8 4.4-4.2"/>'),
   erase: sv('<path d="M7 21h13"/><path d="M5.6 15.4 14.8 6.2a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12 19H8.4z"/><path d="m9 11 5 5"/>'),
+  smudge: sv('<path d="M8 13V4.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11.5v-2a1.5 1.5 0 0 1 3 0V12"/><path d="M14 10.5a1.5 1.5 0 0 1 3 0V12"/><path d="M17 11.5a1.5 1.5 0 0 1 3 0V16a6 6 0 0 1-6 6h-2a6 6 0 0 1-4.6-2.2L4.6 16a1.6 1.6 0 0 1 2.4-2l1 1"/>'),
+  clone: sv('<path d="M5 22h14"/><path d="M19 15H5a2 2 0 0 0-2 2v2h18v-2a2 2 0 0 0-2-2z"/><path d="M14 15V9.5a3 3 0 1 0-4 0V15"/>'),
+  blur: sv('<path d="M12 2.7 6.3 8.4a8 8 0 1 0 11.4 0z"/><path d="M8.5 14a3.5 3.5 0 0 0 3.5 3.5"/>'),
   picker: sv('<path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3z"/>'),
   mask: sv('<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 21 21 3" /><path d="M12 21h7a2 2 0 0 0 2-2v-7" fill="currentColor" stroke="none" opacity=".6"/>'),
   history: sv('<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/>'),

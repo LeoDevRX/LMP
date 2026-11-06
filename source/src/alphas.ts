@@ -378,6 +378,116 @@ const MORE: Record<string, [string, string, () => Gen]> = {
   grid: ['Grid', 'Lines & patterns', () => (x, y) => fill(Math.min(Math.abs(x * 3 - Math.round(x * 3)), Math.abs(y * 3 - Math.round(y * 3))) / 3 - 0.02) * fill(box(x, y, 0.92, 0.92))],
   rings: ['Concentric rings', 'Lines & patterns', () => (x, y) => (Math.abs(((len(x, y) * 5) % 1) - 0.5) < 0.22 ? 1 : 0) * fill(circ(x, y, 0.92))],
   checker: ['Checker', 'Lines & patterns', () => (x, y) => ((Math.floor(x * 3 + 3) + Math.floor(y * 3 + 3)) % 2) * fill(box(x, y, 0.92, 0.92))],
+
+  // Organic (brush tips for dirt, stains, artistic strokes…)
+  watercolor: ['Watercolour blob', 'Organic', () => (x, y) => {
+    const n = fbm([x * 2.2, y * 2.2, 0.3], 4, SEED + 11, perlin);
+    const d = len(x, y) - 0.62 - 0.22 * (n - 0.5);
+    if (d > 0.02) return 0;
+    const rim = Math.exp(-((d + 0.04) ** 2) / 0.0025);
+    return clamp01((0.38 + 0.22 * fbm([x * 6, y * 6, 1.7], 3, SEED + 12, value) + 0.5 * rim) * smooth(0.02, -0.03, d));
+  }],
+  charcoal: ['Charcoal', 'Organic', () => (x, y) => {
+    const r = len(x * 0.8, y * 1.25);
+    const g = value([x * 38, y * 38, 0.5], SEED + 21) * 0.6 + value([x * 90, y * 14, 2.5], SEED + 22) * 0.4;
+    return clamp01(smooth(0.3, 0.72, g + 0.55 * (1 - r) - 0.15)) * smooth(1, 0.75, r);
+  }],
+  crayon: ['Crayon', 'Organic', () => (x, y) => {
+    const r = len(x * 0.65, y * 1.6);
+    const g = value([x * 9, y * 70, 4.1], SEED + 23) * 0.65 + value([x * 40, y * 40, 1.1], SEED + 24) * 0.35;
+    return clamp01(smooth(0.42, 0.62, g + 0.35 * (1 - r) - 0.1)) * smooth(1, 0.8, r);
+  }],
+  fingerprint: ['Fingerprint', 'Organic', () => (x, y) => {
+    const w = 0.06 * fbm([x * 2, y * 2, 0.9], 3, SEED + 31, perlin);
+    const r = len(x * 1.15 + 0.08 * y, (y + 0.1) * 0.95) + w;
+    const ridge = 0.5 + 0.5 * Math.cos(r * 70);
+    const oval = smooth(1, 0.82, len(x * 1.25, y));
+    const breaks = smooth(0.25, 0.45, value([x * 14, y * 14, 3.3], SEED + 32));
+    return clamp01(smooth(0.45, 0.75, ridge) * oval * (0.35 + 0.65 * breaks));
+  }],
+  stain_ring: ['Coffee stain', 'Organic', () => (x, y) => {
+    const n = fbm([x * 3, y * 3, 2.2], 4, SEED + 41, perlin);
+    const r = len(x, y) + 0.12 * (n - 0.5);
+    const ring = Math.exp(-((r - 0.72) ** 2) / 0.0012) * (0.6 + 0.4 * value([x * 20, y * 20, 0], SEED + 42));
+    return clamp01(ring + (r < 0.72 ? 0.16 + 0.1 * n : 0) * smooth(0.74, 0.7, r));
+  }],
+  dust_specks: ['Dust specks', 'Organic', () => (x, y) => {
+    const [f1, , id] = cellular([x * 14, y * 14, 0.5], SEED + 51);
+    const size = 0.1 + 0.22 * id * id;
+    const keep = id > 0.12 ? 1 : 0;
+    return keep * smooth(size, size * 0.45, f1) * smooth(1, 0.55, len(x, y)) * (0.55 + 0.45 * id);
+  }],
+  dirt_clump: ['Dirt clump', 'Organic', () => (x, y) => {
+    const n = fbm([x * 3.5, y * 3.5, 1.3], 5, SEED + 61, perlin);
+    const g = value([x * 50, y * 50, 0.7], SEED + 62);
+    return clamp01(smooth(0.48, 0.72, n + 0.45 * (1 - len(x, y)) - 0.2) * (0.65 + 0.35 * g));
+  }],
+  smoke: ['Smoke wisp', 'Organic', () => (x, y) => {
+    const qx = fbm([x * 1.6, y * 1.6, 0], 3, SEED + 71, perlin), qy = fbm([x * 1.6 + 5.2, y * 1.6 + 1.3, 0], 3, SEED + 72, perlin);
+    const n = fbm([x * 2.5 + 3 * qx, y * 2.5 + 3 * qy, 0.4], 5, SEED + 73, perlin);
+    return clamp01(smooth(0.42, 0.8, n) * smooth(1, 0.45, len(x, y)));
+  }],
+  drip: ['Leak drip', 'Organic', () => (x, y) => {
+    const t = (0.9 - y) / 1.8; // 0 top … 1 bottom
+    if (t < 0 || t > 1) return 0;
+    const w = 0.22 * (1 - t) ** 1.4 + 0.035 + 0.03 * (fbm([y * 6, 0.5, 0], 3, SEED + 81, perlin) - 0.5);
+    const body = smooth(w, w - 0.03, Math.abs(x + 0.04 * Math.sin(y * 3)));
+    const bulb = smooth(0.09, 0.06, len(x + 0.04 * Math.sin(-0.85 * 3), y + 0.78));
+    return clamp01(Math.max(body * (0.55 + 0.45 * (1 - t)), bulb * 0.9));
+  }],
+  scuffs: ['Scuff marks', 'Organic', () => (x, y) => {
+    let v = 0;
+    for (let i = 0; i < 9; i++) {
+      const cx = rnd(i, 1) * 1.4 - 0.7, cy = rnd(i, 2) * 1.4 - 0.7, a = rnd(i, 3) * Math.PI, l = 0.15 + 0.3 * rnd(i, 4);
+      const [d] = seg(x, y, [cx - Math.cos(a) * l, cy - Math.sin(a) * l], [cx + Math.cos(a) * l, cy + Math.sin(a) * l]);
+      v = Math.max(v, smooth(0.035, 0.005, d) * (0.4 + 0.6 * rnd(i, 5)));
+    }
+    return clamp01(v * (0.6 + 0.4 * value([x * 30, y * 30, 0], SEED + 91))) * smooth(1, 0.8, len(x, y));
+  }],
+  bristle: ['Oil bristles', 'Organic', () => (x, y) => {
+    const e = len(x * 0.75, y * 1.35);
+    const s = 0.5 + 0.5 * Math.sin(y * 70 + 6 * fbm([x * 1.5, y * 6, 0], 3, SEED + 101, perlin));
+    return clamp01(Math.pow(s, 1.6) * smooth(1, 0.7, e) * (0.6 + 0.4 * value([x * 5, y * 40, 1], SEED + 102)));
+  }],
+  ink_splat: ['Ink splat', 'Organic', () => (x, y) => {
+    const a = Math.atan2(y, x), r = len(x, y);
+    const spikes = 0.38 + 0.2 * Math.pow(Math.abs(Math.cos(a * 4.5 + 0.6)), 10) + 0.1 * (fbm([Math.cos(a) * 2, Math.sin(a) * 2, 0], 3, SEED + 111, perlin) - 0.5);
+    let v = fill(r - spikes);
+    for (let i = 0; i < 7; i++) { const aa = rnd(i, 7) * Math.PI * 2, rr = 0.6 + 0.3 * rnd(i, 8), s2 = 0.03 + 0.06 * rnd(i, 9); v = Math.max(v, fill(len(x - Math.cos(aa) * rr, y - Math.sin(aa) * rr) - s2)); }
+    return v;
+  }],
+  rust_flake: ['Rust flakes', 'Organic', () => (x, y) => {
+    const [f1, f2] = cellular([x * 5, y * 5, 0.3], SEED + 121);
+    const n = fbm([x * 4, y * 4, 1.1], 4, SEED + 122, perlin);
+    return clamp01(smooth(0.42, 0.62, n + 0.3 * (f2 - f1)) * smooth(1, 0.65, len(x, y)));
+  }],
+  spray_fine: ['Fine spray', 'Organic', () => (x, y) => {
+    const s = 0.045, i = Math.floor(x / s), j = Math.floor(y / s);
+    const cx = (i + 0.2 + 0.6 * rnd(i * 7919 + j, 15)) * s, cy = (j + 0.2 + 0.6 * rnd(i * 7919 + j, 16)) * s;
+    const h = rnd(i * 7919 + j, 13), r = len(cx, cy), dr = (0.25 + 0.2 * rnd(i * 31 + j, 14)) * s;
+    return h < Math.exp(-r * r * 3.2) * 0.7 ? smooth(dr, dr * 0.5, len(x - cx, y - cy)) * smooth(1, 0.9, r) : 0;
+  }],
+  grass: ['Grass blades', 'Organic', () => (x, y) => {
+    let v = 0;
+    for (let i = 0; i < 9; i++) {
+      const bx = -0.6 + 1.2 * (i + rnd(i, 21) * 0.6) / 9, h = 0.8 + 0.9 * rnd(i, 22), bend = (rnd(i, 23) - 0.5) * 0.5;
+      const t = (y + 0.9) / h; if (t < 0 || t > 1) continue;
+      const cx = bx + bend * t * t, w = 0.045 * (1 - t);
+      v = Math.max(v, smooth(w + 0.006, w, Math.abs(x - cx)) * (0.55 + 0.45 * t));
+    }
+    return v;
+  }],
+  moss: ['Moss / lichen', 'Organic', () => (x, y) => {
+    const n = fbm([x * 4, y * 4, 0.6], 5, SEED + 131, perlin);
+    const g = worley([x * 18, y * 18, 0.2], SEED + 132);
+    return clamp01(smooth(0.4, 0.55, n + 0.3 * (1 - len(x, y)) - 0.12) * smooth(0.75, 0.2, g));
+  }],
+  grain: ['Sand grain', 'Organic', () => (x, y) => clamp01(smooth(0.55, 0.7, value([x * 70, y * 70, 0.9], SEED + 141)) * smooth(1, 0.6, len(x, y)))],
+  wet_edge: ['Wet edge', 'Organic', () => (x, y) => {
+    const n = fbm([x * 2.6, y * 2.6, 3.1], 4, SEED + 151, perlin);
+    const d = len(x, y) - 0.7 - 0.18 * (n - 0.5);
+    return clamp01(Math.exp(-(d * d) / 0.004) * (d < 0.03 ? 1 : 0) + (d < 0 ? 0.12 : 0));
+  }],
 };
 for (const [k, [, , g]] of Object.entries(MORE)) SHAPES[k] = g;
 export const MORE_ALPHAS = Object.entries(MORE).map(([k, [label, category]]) => ({ id: 'tc_' + k, label, category }));

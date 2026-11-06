@@ -78,6 +78,16 @@ export interface Brush {
   pressureFlow?: boolean;
   /** Lazy mouse: the brush trails the cursor on a string this long (0..1 → 0..100 px). */
   smoothing?: number;
+  /** Backface culling: don't paint surface turned away from the view by more than this angle (degrees; 180 = off). */
+  cullAngle?: number;
+  /** Random flow per stamp (0..1). */
+  flowJitter?: number;
+  /** Colour variation per stroke: random hue (0..1 = up to ±180°), saturation and value (0..1 = up to ±100%). */
+  hueJitter?: number;
+  satJitter?: number;
+  valJitter?: number;
+  /** What a stroke does: paint (default), or smudge / clone / blur what's already on the layer. */
+  tool?: 'paint' | 'smudge' | 'clone' | 'blur';
 }
 
 /** How a fill layer's images are laid on the model (Substance's UV transformations / projection). */
@@ -370,6 +380,8 @@ uniform vec3 tanU;
 uniform vec3 tanV;
 uniform vec2 rotCS;
 uniform float stampFlow;
+uniform vec3 viewPos;
+uniform float cullCos;
 varying vec2 vUv;
 float tipAt(vec2 q) {
   if (abs(q.x) >= 1.0 || abs(q.y) >= 1.0) return -1.0;
@@ -405,7 +417,85 @@ void main() {
   }
   vec3 n = texture2D(nrmMap, vUv).xyz;
   f *= smoothstep(-0.05, 0.3, dot(n, bnormal));
+  // Backface culling (like Substance): skip surface turned away from the view by more than the angle.
+  if (cullCos > -1.5) f *= smoothstep(cullCos - 0.05, cullCos + 0.05, dot(normalize(n), normalize(viewPos - p.xyz)));
+  if (f <= 0.0) discard;
   gl_FragColor = vec4(f) * stampFlow;
+}`;
+
+// Smudge / clone / blur: blend the layer towards a source under this stamp's mask.
+const FRAG_TOOL = /* glsl */ `
+uniform sampler2D cur;
+uniform sampler2D snap;
+uniform sampler2D mask;
+uniform sampler2D posMap;
+uniform int mode; // 1 smudge, 2 clone, 3 blur
+uniform vec2 delta;
+uniform sampler2D carry;
+uniform vec2 centerUV;
+uniform float rUV;
+uniform float depth;
+uniform float blurUV;
+uniform float blurWorld;
+uniform vec2 texel;
+varying vec2 vUv;
+const vec2 P[12] = vec2[12](vec2(-0.326,-0.406), vec2(-0.840,-0.074), vec2(-0.696,0.457), vec2(-0.203,0.621), vec2(0.962,-0.195), vec2(0.473,-0.480),
+  vec2(0.519,0.767), vec2(0.185,-0.893), vec2(0.507,0.064), vec2(0.896,0.412), vec2(-0.322,-0.933), vec2(-0.792,-0.598));
+bool inside(vec2 uv) { return uv.x >= 0.0 && uv.y >= 0.0 && uv.x <= 1.0 && uv.y <= 1.0 && texture2D(posMap, uv).a > 0.5; }
+void main() {
+  vec4 c = texture2D(cur, vUv);
+  float m = clamp(texture2D(mask, vUv).r, 0.0, 1.0);
+  if (m <= 0.0) { gl_FragColor = c; return; }
+  vec4 s = c;
+  if (mode == 1) {
+    // Smudge: lay down the paint the brush is carrying (brush space → this texel).
+    vec2 q = (vUv - centerUV) / rUV;
+    if (abs(q.x) >= 1.0 || abs(q.y) >= 1.0) { gl_FragColor = c; return; }
+    s = texture2D(carry, q * 0.5 + 0.5);
+    m *= depth;
+  } else if (mode == 2) {
+    vec2 uv = vUv + delta;
+    if (!inside(uv)) { gl_FragColor = c; return; }
+    s = texture2D(snap, uv);
+  } else {
+    float r = blurUV;
+    if (r <= 0.0) {
+      // Blur radius in UV from the brush's world size and this texel's world size.
+      vec3 p = texture2D(posMap, vUv).xyz;
+      vec4 q = texture2D(posMap, vUv + vec2(texel.x, 0.0));
+      if (q.a < 0.5) q = texture2D(posMap, vUv - vec2(texel.x, 0.0));
+      float tw = max(1e-6, length(q.xyz - p));
+      r = clamp(blurWorld / tw, 1.0, 32.0) * texel.x;
+    }
+    vec4 acc = c; float w = 1.0;
+    for (int i = 0; i < 12; i++) {
+      for (int k = 1; k <= 2; k++) {
+        vec2 uv = vUv + P[i] * r * (float(k) * 0.5);
+        if (!inside(uv)) continue;
+        acc += texture2D(cur, uv); w += 1.0;
+      }
+    }
+    s = acc / w;
+  }
+  gl_FragColor = mix(c, s, m);
+}`;
+
+// Smudge pickup: what the brush carries (brush space) mixes with the paint under it.
+const FRAG_PICKUP = /* glsl */ `
+uniform sampler2D cur;
+uniform sampler2D carry;
+uniform sampler2D posMap;
+uniform vec2 centerUV;
+uniform float rUV;
+uniform float keep;
+uniform bool first;
+varying vec2 vUv;
+void main() {
+  vec2 uv = centerUV + (vUv * 2.0 - 1.0) * rUV;
+  vec4 old = texture2D(carry, vUv);
+  bool ok = uv.x >= 0.0 && uv.y >= 0.0 && uv.x <= 1.0 && uv.y <= 1.0 && texture2D(posMap, uv).a > 0.5;
+  vec4 under = ok ? texture2D(cur, uv) : old;
+  gl_FragColor = first ? under : mix(under, old, keep);
 }`;
 
 const FRAG_APPLY = /* glsl */ `
@@ -598,6 +688,8 @@ export class TextureSet {
     layer: Layer; entry: UndoEntry; brush: Brush; target: PaintTarget; pending: boolean;
     last3?: THREE.Vector3; dir3?: number; last2?: THREE.Vector2; dir2?: number;
     copies?: { last3?: THREE.Vector3; dir3?: number }[];
+    /** Smudge: the UV of the previous stamp. */
+    lastUV?: THREE.Vector2;
   } | null = null;
   private nextId = 1;
 
@@ -624,6 +716,7 @@ export class TextureSet {
     uvMode: { value: false }, centerUV: { value: new THREE.Vector2() }, radiusUV: { value: 0.03 },
     shape: { value: 0 }, tipTex: { value: null }, tanU: { value: new THREE.Vector3(1, 0, 0) }, tanV: { value: new THREE.Vector3(0, 1, 0) },
     rotCS: { value: new THREE.Vector2(1, 0) }, stampFlow: { value: 1 },
+    viewPos: { value: new THREE.Vector3(0, 0, 10) }, cullCos: { value: -2 },
   }, {
     // Flow builds up like Substance's: each stamp adds flow × (1 − coverage so far).
     blending: THREE.CustomBlending,
@@ -631,6 +724,45 @@ export class TextureSet {
     blendSrc: THREE.OneFactor,
     blendDst: THREE.OneMinusSrcColorFactor,
   });
+  private matTool = quadShader(FRAG_TOOL, {
+    cur: { value: null }, snap: { value: null }, mask: { value: null }, posMap: { value: null }, mode: { value: 1 },
+    delta: { value: new THREE.Vector2() }, blurUV: { value: 0 }, blurWorld: { value: 0 }, texel: { value: new THREE.Vector2() },
+    carry: { value: null }, centerUV: { value: new THREE.Vector2() }, rUV: { value: 0.01 }, depth: { value: 1 },
+  });
+  private matPickup = quadShader(FRAG_PICKUP, {
+    cur: { value: null }, carry: { value: null }, posMap: { value: null }, centerUV: { value: new THREE.Vector2() }, rUV: { value: 0.01 }, keep: { value: 0.9 }, first: { value: true },
+  });
+  /** Smudge: the paint the brush carries, per channel (brush-space ping-pong pair). */
+  private carry = new Map<string, [RT, RT]>();
+  private uvPerWorldCache = 0;
+  /** Average UV distance per model-space distance (UV area / surface area), for brush sizes in UV. */
+  get uvPerWorld(): number {
+    if (this.uvPerWorldCache) return this.uvPerWorldCache;
+    let wa = 0, ua = 0;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    for (const g of this.geometries) {
+      const pos = g.attributes.position, uv = g.attributes.uv, idx = g.index;
+      if (!uv) continue;
+      const n = idx ? idx.count / 3 : pos.count / 3;
+      const step = Math.max(1, Math.floor(n / 20000));
+      for (let t = 0; t < n; t += step) {
+        const i0 = idx ? idx.getX(t * 3) : t * 3, i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1, i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+        a.fromBufferAttribute(pos, i0); b.fromBufferAttribute(pos, i1); c.fromBufferAttribute(pos, i2);
+        wa += b.sub(a).cross(c.sub(a)).length() / 2;
+        const ux = uv.getX(i1) - uv.getX(i0), uy = uv.getY(i1) - uv.getY(i0), vx = uv.getX(i2) - uv.getX(i0), vy = uv.getY(i2) - uv.getY(i0);
+        ua += Math.abs(ux * vy - uy * vx) / 2;
+      }
+    }
+    this.uvPerWorldCache = wa > 1e-12 && ua > 1e-12 ? Math.sqrt(ua / wa) : 0.5;
+    return this.uvPerWorldCache;
+  }
+  private toolMaskRT: RT | null = null;
+  private toolTmpRT: RT | null = null;
+  /** Clone tool: the source point (UV) and, once the first clone stroke starts, the fixed offset to it. */
+  cloneSource: THREE.Vector2 | null = null;
+  cloneOffset: THREE.Vector2 | null = null;
+  setCloneSource(uv: THREE.Vector2) { this.cloneSource = uv.clone(); this.cloneOffset = null; }
+
   private matApply = quadShader(FRAG_APPLY, {
     snap: { value: null }, mask: { value: null }, value: { value: new THREE.Vector3() },
     flow: { value: 1 }, erase: { value: false },
@@ -1316,6 +1448,7 @@ void main() {
     for (const m of this.knownMasks) { m.rt.dispose(); m.paintRT.dispose(); m.genRT?.dispose(); }
     this.known.clear(); this.knownMasks.clear();
     for (const t of this.tips.values()) t.dispose();
+    this.toolMaskRT?.dispose(); this.toolTmpRT?.dispose();
     this.tips.clear();
     this.clearProcCache();
     this.maskTmp.forEach((t) => t.dispose());
@@ -2248,7 +2381,19 @@ void main() {
       entry.rts[k] = snap;
     }
     this.gpu.clear(this.strokeRT);
-    this.stroke = { layer, entry, brush: { ...brush, values: { ...brush.values } }, target, pending: false };
+    const values = { ...brush.values };
+    // Colour variation: every stroke gets a slightly different colour.
+    if (brush.hueJitter || brush.satJitter || brush.valJitter) {
+      const c = new THREE.Color(...values.color), hsl = { h: 0, s: 0, l: 0 };
+      c.getHSL(hsl);
+      const r = () => Math.random() * 2 - 1;
+      hsl.h = (((hsl.h + r() * 0.5 * (brush.hueJitter ?? 0)) % 1) + 1) % 1;
+      hsl.s = Math.min(1, Math.max(0, hsl.s + r() * (brush.satJitter ?? 0)));
+      hsl.l = Math.min(1, Math.max(0, hsl.l + r() * 0.5 * (brush.valJitter ?? 0)));
+      c.setHSL(hsl.h, hsl.s, hsl.l);
+      values.color = [c.r, c.g, c.b];
+    }
+    this.stroke = { layer, entry, brush: { ...brush, values }, target, pending: false };
     return true;
   }
 
@@ -2311,12 +2456,14 @@ void main() {
   }
 
   /** Stamp at a surface point (model space), plus its mirror images when symmetry is on. */
-  stamp(point: THREE.Vector3, normal: THREE.Vector3) {
+  stamp(point: THREE.Vector3, normal: THREE.Vector3, uv?: THREE.Vector2) {
     const st = this.stroke;
     if (!st) return;
+    this.stampUVHint = uv ?? null;
     const sym = st.brush.symmetry;
     const axes = sym ? (['x', 'y', 'z'] as const).filter((a) => sym[a]) : [];
-    if (!axes.length) { this.stampOne(point, normal, 0); return; }
+    // Smudge / clone / blur work on what's under the brush; mirrored copies are painting only.
+    if (!axes.length || (st.brush.tool ?? 'paint') !== 'paint') { this.stampOne(point, normal, 0); return; }
     const c = this.symmetryCenter(st.brush);
     for (let m = 0; m < 1 << axes.length; m++) {
       const p = point.clone(), n = normal.clone();
@@ -2361,11 +2508,84 @@ void main() {
     u.radius.value = r;
     u.hardness.value = b.hardness;
     u.uvMode.value = false;
-    u.stampFlow.value = Math.max(0.005, Math.min(1, b.flow * this.pFlow(b)));
-    this.gpu.run(this.matStamp, this.strokeRT);
+    const cullDeg = b.cullAngle ?? 90;
+    u.viewPos.value.copy(this.viewPos);
+    u.cullCos.value = cullDeg >= 179.5 ? -2 : Math.cos((cullDeg * Math.PI) / 180);
+    u.stampFlow.value = Math.max(0.005, Math.min(1, b.flow * this.pFlow(b) * (b.flowJitter ? 1 - b.flowJitter * Math.random() : 1)));
+    if ((b.tool ?? 'paint') !== 'paint') this.toolStamp(this.stampUVHint, 0, r);
+    else this.gpu.run(this.matStamp, this.strokeRT);
     u.tipTex.value = null;
     cm.last3 = st.last3; cm.dir3 = st.dir3;
     st.pending = true;
+  }
+
+  private stampUVHint: THREE.Vector2 | null = null;
+  /** Camera position in model space (the app sets it), for backface culling. */
+  viewPos = new THREE.Vector3(0, 0, 10);
+
+  /** Smudge / clone / blur one stamp: its footprint goes to its own mask, then the layer is blended towards the source. */
+  private toolStamp(uv: THREE.Vector2 | null, radiusUV: number, radiusWorld: number) {
+    const st = this.stroke!;
+    const tool = st.brush.tool!;
+    const delta = new THREE.Vector2();
+    const rUV = radiusUV > 0 ? radiusUV : radiusWorld * this.uvPerWorld;
+    let firstPick = false;
+    if (tool === 'smudge') {
+      // The brush picks paint up and carries it along the stroke.
+      const prev = st.lastUV;
+      st.lastUV = uv?.clone();
+      if (!uv) return;
+      firstPick = !prev || prev.distanceTo(uv) > Math.max(0.08, rUV * 4); // stroke start, or jumped to another UV island
+    } else if (tool === 'clone') {
+      if (!uv || !this.cloneSource) return;
+      this.cloneOffset ??= new THREE.Vector2().subVectors(this.cloneSource, uv);
+      delta.copy(this.cloneOffset);
+    }
+    if (this.toolMaskRT && this.toolMaskRT.width !== this.size) { this.toolMaskRT.dispose(); this.toolTmpRT?.dispose(); this.toolMaskRT = this.toolTmpRT = null; }
+    this.toolMaskRT ??= makeRT(this.size);
+    this.toolTmpRT ??= makeRT(this.size);
+    this.gpu.clear(this.toolMaskRT);
+    this.gpu.run(this.matStamp, this.toolMaskRT);
+    const t = this.matTool.uniforms;
+    t.mask.value = this.toolMaskRT.texture; t.posMap.value = this.posRT.texture;
+    t.mode.value = tool === 'smudge' ? 1 : tool === 'clone' ? 2 : 3;
+    t.delta.value.copy(delta);
+    t.blurUV.value = radiusUV > 0 ? radiusUV * 0.35 : 0;
+    t.blurWorld.value = radiusWorld * 0.35;
+    t.texel.value.set(1 / this.size, 1 / this.size);
+    t.centerUV.value.copy(uv ?? new THREE.Vector2()); t.rUV.value = Math.max(1e-4, rUV);
+    const pk = this.matPickup.uniforms;
+    pk.posMap.value = this.posRT.texture; pk.centerUV.value.copy(uv ?? new THREE.Vector2()); pk.rUV.value = Math.max(1e-4, rUV);
+    // Flow sets how far the paint is carried (higher = longer smears).
+    // Like a finger in wet paint: the brush lays down part of what it carries and keeps picking up more.
+    // Flow sets the strength (higher = longer, stronger smears).
+    const fl = Math.min(1, Math.max(0, st.brush.flow));
+    pk.keep.value = 0.55 + 0.33 * fl;
+    t.depth.value = 0.15 + 0.4 * fl;
+    for (const k of Object.keys(st.entry.rts) as StrokeKey[]) {
+      const target = this.targetRT(st.layer, k);
+      this.matCopy.uniforms.src.value = target.texture;
+      this.gpu.run(this.matCopy, this.toolTmpRT);
+      this.matCopy.uniforms.src.value = null;
+      t.cur.value = this.toolTmpRT.texture; t.snap.value = st.entry.rts[k]!.texture;
+      if (tool === 'smudge') {
+        let pair = this.carry.get(k);
+        if (!pair) { pair = [makeRT(128), makeRT(128)]; this.carry.set(k, pair); }
+        if (!firstPick) { t.carry.value = pair[0].texture; this.gpu.run(this.matTool, target); }
+        // Pick up from the layer as it is now (after laying paint down).
+        this.matCopy.uniforms.src.value = target.texture;
+        this.gpu.run(this.matCopy, this.toolTmpRT);
+        this.matCopy.uniforms.src.value = null;
+        pk.cur.value = this.toolTmpRT.texture; pk.carry.value = pair[0].texture; pk.first.value = firstPick;
+        this.gpu.run(this.matPickup, pair[1]);
+        pk.cur.value = pk.carry.value = null;
+        this.carry.set(k, [pair[1], pair[0]]);
+        t.carry.value = null;
+      } else this.gpu.run(this.matTool, target);
+      if (k === 'mask') { const m = st.entry.mask ?? st.layer.mask!; m.painted = true; m.dirty = true; this.markDirty(); }
+      else this.dirty.add(k);
+    }
+    t.cur.value = t.snap.value = t.mask.value = null;
   }
 
   /** Stamp the brush tip in UV space (painting in the 2D view). */
@@ -2390,8 +2610,9 @@ void main() {
     u.radiusUV.value = r;
     u.rotCS.value.set(Math.cos(a), Math.sin(a));
     u.hardness.value = b.hardness;
-    u.stampFlow.value = Math.max(0.005, Math.min(1, b.flow * this.pFlow(b)));
-    this.gpu.run(this.matStamp, this.strokeRT);
+    u.stampFlow.value = Math.max(0.005, Math.min(1, b.flow * this.pFlow(b) * (b.flowJitter ? 1 - b.flowJitter * Math.random() : 1)));
+    if ((b.tool ?? 'paint') !== 'paint') this.toolStamp(c, r, 0);
+    else this.gpu.run(this.matStamp, this.strokeRT);
     u.uvMode.value = false;
     u.tipTex.value = null;
     st.pending = true;
@@ -2401,6 +2622,7 @@ void main() {
   flushStroke() {
     const st = this.stroke;
     if (!st || !st.pending) return;
+    if ((st.brush.tool ?? 'paint') !== 'paint') { st.pending = false; return; }
     const u = this.matApply.uniforms;
     u.mask.value = this.strokeRT.texture;
     u.flow.value = st.brush.opacity ?? 1;
@@ -2456,6 +2678,8 @@ void main() {
   endStroke() {
     const st = this.stroke;
     if (!st) return;
+    for (const [a, b] of this.carry.values()) { a.dispose(); b.dispose(); }
+    this.carry.clear();
     this.flushStroke();
     this.stroke = null;
     this.lastKey = '';

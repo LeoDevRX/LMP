@@ -43,6 +43,7 @@ export const GUIDES: Guide[] = [
       { h: 'Controls', table: [
         ['Orbit / pan / zoom', 'Right mouse (or Alt + left) / middle mouse / wheel'],
         ['Paint, eraser, picker', 'B, E, P'],
+        ['Smudge, clone, blur', 'U, C, R   (clone source: hold V + click)'],
         ['Brush size', '[ ]   (or Ctrl + scroll)'],
         ['Brush hardness', '{ }   (or Ctrl + right drag)'],
         ['Stroke opacity', 'Ctrl + Shift + scroll'],
@@ -66,6 +67,11 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.18', steps: [
+        'New tools: Smudge (U) drags wet paint along, Clone (C) copies one area onto another (hold V + click to set the source), Blur (R) softens what\'s painted.',
+        'Brushes: 85+ presets in groups like Substance Painter\'s (Artistic, Dirt & dust, Leaks & stains, Damage, Rust & paint, Nature, Hard surface, FX…), with 18 new tips: watercolour, charcoal, crayon, oil bristles, fingerprints, coffee stains, dust specks, dirt, smoke, leak drips, scuffs, ink splats, rust flakes, fine spray, grass, moss, sand and wet edges.',
+        'Brush settings: flow jitter, colour variation per stroke (hue, saturation, value) and backface culling (don\'t paint sides facing away from you).',
+      ] },
       { h: 'New in v1.17', steps: ['Layer opacity works like Substance: hold the mouse on the number and drag left or right to change it (Shift for fine steps). Click it to type a value instead. The mouse wheel no longer changes it by accident.'] },
       { h: 'New in v1.16', steps: [
         'Bake by mesh name like Substance Painter: Match: By mesh name with _low / _high suffixes, plus "Only same mesh name" for AO, curvature and thickness, so parts next to each other stop baking onto each other.',
@@ -336,7 +342,31 @@ export const GUIDES: Guide[] = [
       { steps: ['Press E. Press it again to go back to the brush.', 'Paint over what you want to remove.', 'On a mask the eraser paints black, which hides the layer there.'] },
     ],
     show: [{ label: 'Eraser', act: 'tool:erase' }],
-    related: ['masks'],
+    related: ['masks', 'smudge-clone-blur'],
+  },
+  {
+    id: 'smudge-clone-blur', title: 'Smudge, clone and blur', cat: 'Painting',
+    sum: 'Push wet paint around, copy one area onto another, or soften what\'s already painted.',
+    tags: ['brush'], words: 'smudge smear finger drag push wet mix blend clone copy stamp duplicate source repeat blur soften soft fuzzy sharp edges tools u c r v',
+    body: [
+      { h: 'Smudge (U)', steps: [
+        'Press U, or click the finger on the left toolbar.',
+        'Drag across paint that\'s already on the layer: it gets picked up and smeared along, like a finger in wet paint.',
+        'Flow sets the strength. High flow makes long smears, low flow short soft ones.',
+      ] },
+      { h: 'Clone (C)', steps: [
+        'Press C, or click the stamp on the toolbar.',
+        'Hold V and click where you want to copy from.',
+        'Paint somewhere else. The copy follows your brush at the same distance from the source. Hold V and click again to pick a new source.',
+      ] },
+      { h: 'Blur (R)', steps: [
+        'Press R, or click the drop on the toolbar.',
+        'Paint over hard edges or noisy spots to soften them. A bigger brush blurs more; flow sets the strength.',
+      ] },
+      { tips: ['All three work on the channels ticked under Properties > Material, on paint layers and on masks (press M first).', 'Any brush preset or tip works with them: pick a grungy tip to smudge in a rough way.', 'Ctrl+Z undoes them like any stroke.'] },
+    ],
+    show: [{ label: 'Smudge', act: 'tool:smudge' }],
+    related: ['eraser', 'brushes', 'masks'],
   },
   {
     id: 'brush-tips', title: 'Brush tips and alphas', cat: 'Painting',
@@ -349,6 +379,11 @@ export const GUIDES: Guide[] = [
         'Rotation, Follow stroke, angle jitter, size jitter and scatter make it look less repetitive.',
         'Spacing (in Properties > Brush) is the gap between each dab.',
       ] },
+      { h: 'More randomness', steps: [
+        'Flow jitter changes how strong each dab is.',
+        'Colour variation (hue, saturation, value) gives every stroke a slightly different colour around the brush colour: great for hand-painted looks, rust, moss and leaves.',
+        'Backface culling (in Properties > Brush) stops a big brush wrapping onto sides that face away from you. 90° is like Substance; slide it to the end to turn it off.',
+      ] },
       { h: 'Alphas on the shelf', p: 'Assets > Alphas has 150+ stamps: bolts, nuts, screws, rivets, panels and seams, vents and grilles, gears, hinges, tread plate, arrows and signs, shapes, lines and stencil letters. Click one to use it as the brush tip; your size and other settings stay the same. For hard-surface detail, paint with only Height turned on and click once per stamp (or raise Spacing).' },
     ],
     show: [{ label: 'Brush tips', act: 'props', hl: '#right' }],
@@ -357,13 +392,14 @@ export const GUIDES: Guide[] = [
   {
     id: 'brushes', title: 'Brush presets', cat: 'Painting',
     sum: 'Ready made brushes on the shelf, and saving your own.',
-    tags: ['brush'], words: 'gubby bunny funny preset presets brushes dirt chalk spray leaks rust tape hair fur fibers wood grain smudge pencil airbrush save brush',
+    tags: ['brush'], words: 'gubby bunny funny preset presets brushes dirt chalk spray leaks rust tape hair fur fibers wood grain smudge pencil airbrush save brush watercolour watercolor charcoal crayon oil paint marker hand painted fingerprint fingerprints stain stains coffee water ink splatter scuff scuffs dust sand grime moss lichen grass weld rivet bolt seam smoke glow artistic categories',
     body: [
       { steps: [
         'Open Brushes on the Assets shelf on the left.',
         'Click one to load its tip and settings.',
         'If you set up a brush you like, click Save brush in Properties to keep it.',
       ] },
+      { h: 'What\'s there', p: '85+ brushes in groups like Substance Painter\'s: Basic, Artistic (watercolour, charcoal, crayon, oil paint, marker, hand-painted), Dirt & dust (dirt, dust specks, sand, fingerprints, grime), Leaks & stains (drips, coffee and water stains, ink splatter), Damage (scratches, scuffs, chips, cracks), Rust & paint (rust flakes, spray paint, paint drips), Nature (grass, moss, lichen, leaves), Fabric, skin & hair, Hard surface (rivets, bolts, seams, weld beads, panel lines) and FX (smoke, glow dots). Your own brushes go under Custom.' },
     ],
     show: [{ label: 'Brushes', act: 'shelf:brush', hl: '.shelf-sec', text: 'Brushes' }],
     related: ['brush-tips'],

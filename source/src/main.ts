@@ -7,7 +7,7 @@ import {
   TextureSet, Brush, CHANNELS, CH_LABEL, Ch, ChannelValues, Layer, FillLayer, FillImage,
   PaintTarget, BlendMode, BLEND_LABEL, GroupLayer, BakeKey, IdSource, ID_SOURCE_LABEL, DEFAULT_XF, DEFAULT_ADJ, FillAdjust, ScanRef,
 } from './engine/TextureSet';
-import { BrushPreset, BrushSettings, BUILTIN_TIPS, STARTER_BRUSHES, builtinTip, builtinTipThumb, imageTip, tipTexture, tipPreview } from './brushes';
+import { BrushPreset, BrushSettings, BUILTIN_TIPS, STARTER_BRUSHES, brushCategory, builtinTip, builtinTipThumb, imageTip, tipTexture, tipPreview } from './brushes';
 import { ALPHA_LIBRARY } from './alphas';
 import { installColorPopover } from './colorPopover';
 import { meshKey } from './engine/meshNames';
@@ -114,7 +114,9 @@ const BAKE_QUALITY = [
   { value: 32, label: 'Draft (32 directions)' }, { value: 64, label: 'Normal (64)' },
   { value: 96, label: 'High (96)' }, { value: 160, label: 'Very high (160)' },
 ];
-type Tool = 'paint' | 'erase' | 'picker' | 'fill' | 'path';
+type Tool = 'paint' | 'erase' | 'picker' | 'fill' | 'path' | 'smudge' | 'clone' | 'blur';
+/** Tools that work with the brush (size, hardness, tip…). */
+const BRUSH_TOOLS: Tool[] = ['paint', 'erase', 'smudge', 'clone', 'blur'];
 type DropMode = 'whole' | PartMode;
 type Mode = 'paint' | 'bake' | 'design';
 type Layout = 'split' | '3d' | '2d';
@@ -840,7 +842,7 @@ class App {
     else if (a.startsWith('layout:')) this.setLayout(a.slice(7) as any);
     else if (a.startsWith('shelf:')) { paint(); this.historyOpen = false; this.shelfOpen.add('sec:' + a.slice(6)); this.shelfFilter = 'all'; this.buildShelf(); this.buildToolstrip(); }
     else if (a === 'history') { paint(); this.toggleHistory(true); }
-    else if (a === 'props') { paint(); if (this.tool !== 'paint' && this.tool !== 'erase') this.setTool('paint'); this.buildProperties(); }
+    else if (a === 'props') { paint(); if (!BRUSH_TOOLS.includes(this.tool)) this.setTool('paint'); this.buildProperties(); }
     else if (a === 'settings') this.openSettings();
     else if (a === 'open') { if (this.native) this.openWindow('recent'); else this.openProjectDialog(); }
     else if (a === 'autosaves') this.openWindow('autosave');
@@ -1757,6 +1759,8 @@ class App {
   private canPaint(): boolean {
     if (!this.paintable()) return false;
     this.brush.erase = this.tool === 'erase';
+    this.brush.tool = this.tool === 'smudge' || this.tool === 'clone' || this.tool === 'blur' ? this.tool : 'paint';
+    if (this.tool === 'clone' && !this.ts.cloneSource) { toast('Clone: hold V and click where to copy from first', true); return false; }
     this.ensureTip();
     if (!this.ts.beginStroke(this.brush, this.paintTarget)) {
       toast('Turn on at least one channel in Properties → Material', true);
@@ -1767,6 +1771,7 @@ class App {
 
   startUVStroke(uv: THREE.Vector2, shift = false) {
     if (this.tool === 'picker') { this.pickAt(uv); return; }
+    if (this.tool === 'clone' && this.vHeld) { this.ts.setCloneSource(uv); toast('Clone source set. Now paint where you want the copy.'); this.buildProperties(); return; }
     if (this.tool === 'path') { this.addPathPoint2(uv); return; }
     if (!this.canPaint()) return;
     if (shift && this.lastEnd2) {
@@ -1871,6 +1876,12 @@ class App {
         if (this.idPick >= 0) { const h = this.vp.pick(e.clientX, e.clientY); if (h?.uv) this.pickIdColor(h.uv); else toast('Click on the model to pick an ID color', true); return; }
         if (this.tool === 'fill' && this.mode === 'paint') { this.startBox('3d', e.clientX, e.clientY); return; }
         if (this.tool === 'path') { if (!this.pathDown3(e.clientX, e.clientY, e.ctrlKey || e.metaKey)) { controls.enabled = true; } return; }
+        if (this.tool === 'clone' && this.vHeld) {
+          const h = this.vp.pick(e.clientX, e.clientY);
+          if (h?.uv) { this.ts.setCloneSource(h.uv); toast('Clone source set. Now paint where you want the copy.'); this.buildProperties(); }
+          controls.enabled = true;
+          return;
+        }
         this.setPressure(e);
         this.startStroke(e.clientX, e.clientY, e.shiftKey);
         if (this.stroke) this.lazyStart(e.clientX, e.clientY);
@@ -1926,6 +1937,10 @@ class App {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     window.addEventListener('keydown', (e) => this.onKey(e));
+    // V held: the clone tool's "set source" key (like Substance).
+    window.addEventListener('keydown', (e) => { if (e.key.toLowerCase() === 'v' && !e.ctrlKey && !e.metaKey) this.vHeld = true; });
+    window.addEventListener('keyup', (e) => { if (e.key.toLowerCase() === 'v') this.vHeld = false; });
+    window.addEventListener('blur', () => (this.vHeld = false));
     window.addEventListener('pointermove', (e) => { this.mouseX = e.clientX; this.mouseY = e.clientY; if (this.pie) this.pieMove(e.clientX, e.clientY); }, true);
     window.addEventListener('keyup', (e) => { if (e.code === 'Backquote' && this.pie) this.pieRelease(); });
     window.addEventListener('blur', () => this.closePie());
@@ -1977,6 +1992,7 @@ class App {
   startStroke(x: number, y: number, shift = false) {
     const hit = this.vp.pick(x, y);
     if (!hit) return;
+    this.ts.viewPos.copy(this.vp.camera.position);
     if (this.tool === 'picker') { if (hit.uv) this.pickAt(hit.uv); return; }
     if (this.tool === 'path') { this.addPathPoint3(hit); return; }
     if (this.tool === 'fill') { this.polyFillAt(hit); return; }
@@ -1986,14 +2002,14 @@ class App {
       const s = this.toScreen(this.lastEnd3);
       const start = s ? this.vp.pick(s.x, s.y) : null;
       if (start) {
-        this.ts.stamp(start.point, start.normal);
+        this.ts.stamp(start.point, start.normal, start.uv);
         this.stroke = { hit: start, x: s!.x, y: s!.y };
         this.continueStroke(x, y);
         this.modified = true;
         return;
       }
     }
-    this.ts.stamp(hit.point, hit.normal);
+    this.ts.stamp(hit.point, hit.normal, hit.uv);
     this.stroke = { hit, x, y };
     this.modified = true;
   }
@@ -2054,7 +2070,7 @@ class App {
   /** Ctrl + scroll = size, Ctrl + Shift + scroll = stroke opacity, Ctrl + right drag = hardness,
    *  Ctrl + left drag = flow (←→) / rotation (↑↓) like Substance. */
   private canAdjust() {
-    return this.mode === 'paint' && (this.tool === 'paint' || this.tool === 'erase' || this.tool === 'path');
+    return this.mode === 'paint' && (BRUSH_TOOLS.includes(this.tool) || this.tool === 'path');
   }
 
   private wantsAdjust(e: PointerEvent) {
@@ -2136,6 +2152,7 @@ class App {
   /** Remember the ticked bake maps for the next project and the next time LocalPaint opens. */
   private saveBakeMaps() { this.settings.bakeMaps = { ...this.ts.bakeMaps }; saveSettings(this.settings); }
 
+  private vHeld = false;
   private sunDrag: { x: number; y: number; yaw0: number; tilt0: number } | null = null;
   private drawSun(x: number, y: number) {
     const host = this.container.getBoundingClientRect();
@@ -2522,6 +2539,7 @@ class App {
       const curve = this.pathCurve3();
       const step = Math.max(this.brush.spacing * this.brush.radius, 1e-4);
       let prev = curve[0];
+      this.ts.viewPos.copy(this.vp.camera.position);
       const s0 = this.snapToSurface(prev); if (s0) this.ts.stamp(s0.point, s0.normal);
       for (let i = 1; i < curve.length; i++) {
         const d = curve[i].distanceTo(prev);
@@ -2664,6 +2682,7 @@ class App {
   continueStroke(x: number, y: number) {
     const st = this.stroke;
     if (!st) return;
+    this.ts.viewPos.copy(this.vp.camera.position);
     const hit = this.vp.pick(x, y);
     if (!hit) { st.x = x; st.y = y; return; }
     const step = Math.max(this.brush.spacing * this.brush.radius, 1e-4);
@@ -2674,7 +2693,7 @@ class App {
     for (let i = 1; i <= n; i++) {
       const t = i / n;
       const h = i === n ? hit : this.vp.pick(st.x + (x - st.x) * t, st.y + (y - st.y) * t);
-      if (h) { this.ts.stamp(h.point, h.normal); last = h; }
+      if (h) { this.ts.stamp(h.point, h.normal, h.uv); last = h; }
     }
     if (last) { st.hit = last; st.x = x; st.y = y; }
   }
@@ -2717,6 +2736,9 @@ class App {
       this.setBrush('hardness', Math.min(1, Math.max(0, this.brush.hardness + (k === '}' ? 0.1 : -0.1))));
     } else if (k === 'e') this.setTool(this.tool === 'erase' ? 'paint' : 'erase');
     else if (k === 'b') this.setTool('paint');
+    else if (k === 'u' && !e.ctrlKey && !e.metaKey) this.setTool('smudge');
+    else if (k === 'c' && !e.ctrlKey && !e.metaKey) this.setTool('clone');
+    else if (k === 'r' && !e.ctrlKey && !e.metaKey) this.setTool('blur');
     else if (k === 'p') { if (this.tool === 'picker') { this.setTool(this.pickReturn ?? 'paint'); this.pickReturn = null; } else { this.pickReturn = this.tool === 'erase' || this.tool === 'path' || this.tool === 'fill' ? this.tool : 'paint'; this.setTool('picker'); } }
     else if (k === 'g') this.setTool('fill');
     else if (k === 'l') this.setTool('path');
@@ -2762,7 +2784,7 @@ class App {
     if (this.hover && this.mode === 'paint' && !(this.vp.controls.enabled && this.isDraggingCamera())) {
       hit = this.vp.pick(this.hover.x, this.hover.y);
     }
-    const brushCursor = this.tool === 'paint' || this.tool === 'erase';
+    const brushCursor = BRUSH_TOOLS.includes(this.tool);
     this.vp.showCursor(brushCursor || this.tool === 'path' ? hit : null, this.tool === 'path' ? this.brush.radius * 0.5 : this.brush.radius);
     if (this.box) { /* box selection draws its own highlight */ }
     else if (this.tool === 'fill' && !this.dragItem && this.mode === 'paint') {
@@ -2927,9 +2949,9 @@ class App {
     try {
       await this.setTip(bp.tip, tipFile ?? bp.tipPng, bp.name);
     } catch (e: any) { toast('Could not load that brush tip: ' + (e?.message ?? e), true); return; }
-    const d: BrushSettings = { radius: this.brush.radius, hardness: 0.5, flow: 1, spacing: 0.12, angle: 0, angleJitter: 0, followStroke: false, sizeJitter: 0, scatter: 0 };
+    const d: BrushSettings = { radius: this.brush.radius, hardness: 0.5, flow: 1, spacing: 0.12, angle: 0, angleJitter: 0, followStroke: false, sizeJitter: 0, scatter: 0, flowJitter: 0, hueJitter: 0, satJitter: 0, valJitter: 0, opacity: 1 };
     Object.assign(this.brush, d, bp.settings);
-    if (this.tool !== 'paint' && this.tool !== 'erase') this.setTool('paint');
+    if (!BRUSH_TOOLS.includes(this.tool)) this.setTool('paint');
     this.buildToolbar();
     this.buildProperties();
     toast(`Brush: ${bp.name}`);
@@ -2940,7 +2962,7 @@ class App {
     if (!f) return;
     try {
       await this.setTip('image', f, f.name.replace(/\.[^.]+$/, ''));
-      if (this.tool !== 'paint' && this.tool !== 'erase') this.setTool('paint');
+      if (!BRUSH_TOOLS.includes(this.tool)) this.setTool('paint');
       this.buildProperties();
       toast(`Brush tip: ${f.name} (white / opaque = paint)`);
     } catch (e: any) { toast(e?.message ?? 'Could not read that image', true); }
@@ -2954,7 +2976,8 @@ class App {
     const bp: BrushPreset = {
       format: 'texpaint-brush', version: 1, name,
       tip: t.startsWith('img:') ? 'image' : t, tipPng: t.startsWith('img:') ? this.tipPng.get(t) : undefined,
-      settings: { radius: b.radius, hardness: b.hardness, flow: b.flow, spacing: b.spacing, angle: b.angle ?? 0, angleJitter: b.angleJitter ?? 0, followStroke: !!b.followStroke, sizeJitter: b.sizeJitter ?? 0, scatter: b.scatter ?? 0 },
+      settings: { radius: b.radius, hardness: b.hardness, flow: b.flow, spacing: b.spacing, angle: b.angle ?? 0, angleJitter: b.angleJitter ?? 0, followStroke: !!b.followStroke, sizeJitter: b.sizeJitter ?? 0, scatter: b.scatter ?? 0,
+        flowJitter: b.flowJitter ?? 0, hueJitter: b.hueJitter ?? 0, satJitter: b.satJitter ?? 0, valJitter: b.valJitter ?? 0, opacity: b.opacity ?? 1 },
     };
     try {
       const msg = await this.shelf.saveJSON(`${name.replace(/[^\w\- ]+/g, '_').trim() || 'brush'}.tpbrush`, bp);
@@ -2982,7 +3005,7 @@ class App {
       const img = el('img', { src: url, alt: label }) as HTMLImageElement;
       row.append(el('button', { class: 'tip-btn' + (cur === id ? ' on' : ''), title: label, onclick: async () => { await this.setTip(id); this.buildProperties(); } }, img));
     }
-    const num = (label: string, key: 'angle' | 'angleJitter' | 'sizeJitter' | 'scatter', min: number, max: number, step: number, fmt: (v: number) => string) =>
+    const num = (label: string, key: 'angle' | 'angleJitter' | 'sizeJitter' | 'scatter' | 'flowJitter' | 'hueJitter' | 'satJitter' | 'valJitter', min: number, max: number, step: number, fmt: (v: number) => string) =>
       slider(label, { min, max, step, value: (b[key] as number) ?? 0, fmt, onInput: (v) => { b[key] = v; this.drawBrushPreview(); } }).el;
     const follow = el('input', { type: 'checkbox', checked: !!b.followStroke }) as HTMLInputElement;
     follow.addEventListener('change', () => { b.followStroke = follow.checked; this.drawBrushPreview(); });
@@ -2999,6 +3022,12 @@ class App {
       num('Angle jitter', 'angleJitter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
       num('Size jitter', 'sizeJitter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
       num('Scatter', 'scatter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
+      num('Flow jitter', 'flowJitter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
+      el('h5', {}, 'Colour variation (per stroke)'),
+      num('Hue', 'hueJitter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
+      num('Saturation', 'satJitter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
+      num('Value', 'valJitter', 0, 1, 0.01, (v) => Math.round(v * 100).toString()),
+      el('p', { class: 'note' }, 'Every stroke picks a slightly different colour around the brush colour — handy for hand-painted looks, freckles, rust or leaves.'),
     ];
   }
 
@@ -3138,7 +3167,7 @@ class App {
     dlg.innerHTML = '';
     dlg.className = '';
     const rows: [string, string][] = [
-      ['Paint / Erase / Picker', 'B / E / P'], ['Brush size / hardness', '[ ]  /  { }'],
+      ['Paint / Erase / Picker', 'B / E / P'], ['Smudge / Clone / Blur', 'U / C / R'], ['Clone source', 'Hold V + click'], ['Brush size / hardness', '[ ]  /  { }'],
       ['Orbit / Pan / Zoom', 'RMB or Alt+LMB / MMB / Wheel'], ['Move the light (sun)', 'Shift + right-drag'], ['Frame model (or 2D view)', 'F'],
       ['Guide', 'F1'], ['Layouts 3D / 2D / 3D+2D', 'F2 / F3 / F4'], ['History panel', 'H'], ['Straight line', 'Shift+click'], ['Path tool / polygon fill', 'L / G'], ['X symmetry', 'X'], ['Views (both panes)', '1 – 9, 0'], ['Camera views (front, top, left…)', 'Hold ~'],
       ['Paint the layer mask', 'M'], ['UV wireframe', 'W'], ['UV overlaps (dark spots)', 'O'], ['Brush size', 'Ctrl + scroll'], ['Brush hardness', 'Ctrl + right-drag'], ['Stroke opacity', 'Ctrl + Shift + scroll'], ['Brush flow / rotation', 'Ctrl + left-drag ←→ / ↑↓'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Y'], ['Select several layers / assets', 'Ctrl+click · Shift+click'], ['Group / duplicate / delete selected layers', 'Ctrl+G / Ctrl+D / Delete'],
@@ -3168,6 +3197,9 @@ class App {
     if (!layer?.mask) maskBtn.disabled = true;
     host.append(
       t('paint', I.paint, 'Paint (B) — Shift+click draws a straight line'), t('erase', I.erase, 'Eraser (E)'),
+      t('smudge', I.smudge, 'Smudge (U) — drags the paint along with the brush, like a finger in wet paint'),
+      t('clone', I.clone, 'Clone (C) — hold V and click to set where to copy from, then paint to copy it'),
+      t('blur', I.blur, 'Blur (R) — softens the paint under the brush'),
       t('fill', I.polyfill, 'Polygon fill (G) — click a triangle / UV island / mesh part to fill it'),
       t('path', I.path, 'Path / bezier (L) — click to add points, click-drag to pull handles; the brush follows the curve live. Enter finishes'),
       t('picker', I.picker, 'Picker (P) — click the model to pick its material (or only its color) into the brush; P again goes back'),
@@ -3441,7 +3473,7 @@ class App {
       const list = items.filter((it) => this.shelfGroup(it) === g);
       if (!list.length) continue;
       if (!header('sec:' + g, label, list.length)) continue;
-      const catOf = (it: ShelfItem) => (it.kind === 'smart' && it.category) || (it.kind === 'cloud' && it.cat) || (it.kind === 'alpha' && it.category) || (it.kind === 'unsupported' && (it.cat ?? 'Your files')) || '';
+      const catOf = (it: ShelfItem) => (it.kind === 'smart' && it.category) || (it.kind === 'cloud' && it.cat) || (it.kind === 'alpha' && it.category) || (it.kind === 'brush' && brushCategory(it.brush, true)) || (it.kind === 'unsupported' && (it.cat ?? 'Your files')) || '';
       const cats = [...new Set(list.map(catOf))];
       if (cats.length > 1) {
         for (const c of cats) {
@@ -3810,7 +3842,7 @@ class App {
     if (it.kind === 'brush') { await this.applyBrushPreset(it.brush, it.tipFile); return; }
     if (it.kind === 'alpha') {
       await this.setTip(it.tip, undefined, it.name);
-      if (this.tool !== 'paint' && this.tool !== 'erase') this.setTool('paint');
+      if (!BRUSH_TOOLS.includes(this.tool)) this.setTool('paint');
       this.buildToolbar(); this.buildProperties();
       toast(`Alpha: ${it.name}`);
       return;
@@ -5742,7 +5774,7 @@ class App {
           el('button', { class: 'primary', onclick: () => this.addMaskTo(layer, 'black', null) }, 'Add black mask & paint'),
           el('button', { onclick: () => this.addMaskTo(layer, 'white', null) }, 'White mask'))));
     } else {
-      title = this.tool === 'picker' ? 'Properties — picker' : 'Properties — paint';
+      title = this.tool === 'picker' ? 'Properties — picker' : this.tool === 'smudge' ? 'Properties — smudge' : this.tool === 'clone' ? 'Properties — clone' : this.tool === 'blur' ? 'Properties — blur' : 'Properties — paint';
       this.brushPreview = el('canvas', { width: 220, height: 110, class: 'brush-prev' }) as HTMLCanvasElement;
       this.matPreview = el('img', { class: 'mat-prev', alt: '' }) as HTMLImageElement;
       body.append(
@@ -5751,9 +5783,15 @@ class App {
           this.brushSlider('Size', 'radius'), this.brushSlider('Flow', 'flow'), this.brushSlider('Stroke opacity', 'opacity'),
           this.brushSlider('Hardness', 'hardness'), this.brushSlider('Spacing', 'spacing'),
           this.smoothingSlider(), this.pressureRow(),
+          slider('Backface culling', { min: 0, max: 180, step: 1, value: this.brush.cullAngle ?? 90, fmt: (v) => (v >= 180 ? 'Off' : `${v}°`),
+            onInput: (v) => (this.brush.cullAngle = v) }).el,
           el('div', { class: 'row' }, el('label', {}, 'Symmetry'), this.symmetryButtons()),
           ...this.symmetryOffsets(),
-          el('p', { class: 'note' }, 'Flow builds up with every stamp (low = see-through, layers up as you go over an area); Stroke opacity is the most one stroke can cover. Smoothing (lazy mouse) makes the brush trail the cursor for steady lines. Pen pressure works with drawing tablets. Symmetry mirrors strokes across the model\'s centre (X, Y, Z).')),
+          el('p', { class: 'note' }, 'Flow builds up with every stamp (low = see-through, layers up as you go over an area); Stroke opacity is the most one stroke can cover. Backface culling stops the brush painting surface that faces away from you by more than that angle (90° like Substance; slide to the end to turn it off). Smoothing (lazy mouse) makes the brush trail the cursor for steady lines. Pen pressure works with drawing tablets. Symmetry mirrors strokes across the model\'s centre (X, Y, Z).')),
+        this.tool === 'smudge' || this.tool === 'clone' || this.tool === 'blur' ? group(this.tool === 'smudge' ? 'Smudge' : this.tool === 'clone' ? 'Clone' : 'Blur', el('p', { class: 'note' },
+          this.tool === 'smudge' ? 'Drags the paint that\'s already on the layer along with the brush. Flow is the strength. Works on the channels ticked under Material.'
+          : this.tool === 'clone' ? `Hold V and click where to copy from, then paint somewhere else: the copy follows the brush at the same offset. ${this.ts.cloneSource ? 'Source is set.' : 'No source set yet.'} Copies the channels ticked under Material.`
+          : 'Softens the paint under the brush. Flow is the strength; a bigger brush blurs more. Works on the channels ticked under Material.')) : '',
         group('Brush tip', ...this.brushTipProps()),
         this.materialProps(null),
       );
