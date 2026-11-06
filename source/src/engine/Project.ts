@@ -1,3 +1,4 @@
+import { LayerFx, newFxId } from './LayerFx';
 import { CHANNELS, Ch, ChannelValues, FillImage, Layer, TextureSet, BlendMode, GroupLayer, FillTransform, FillAdjust, DEFAULT_XF, DEFAULT_ADJ, BakeKey, ScanRef } from './TextureSet';
 import { imageTexture } from './images';
 import type { ModelSource } from './ModelLoader';
@@ -9,7 +10,7 @@ import { SBS_FILES, SBS_LOADED, SbsState, registerSbs, stateKey } from './Substa
 /** One layer as stored in a project (.tpaint) or smart material (.tpsmart). */
 export type LayerJSON =
   | {
-      kind: 'fill'; name: string; visible: boolean; opacity: number; blend?: BlendMode; anchor?: boolean;
+      kind: 'fill'; name: string; visible: boolean; opacity: number; blend?: BlendMode; anchor?: boolean; fx?: LayerFx[]; tag?: number;
       values: ChannelValues; enabled: Record<Ch, boolean>;
       tiling?: number; images?: Partial<Record<Ch, { name: string; data: string; flipG?: boolean }>>;
       xf?: FillTransform; adj?: FillAdjust; note?: string;
@@ -22,16 +23,16 @@ export type LayerJSON =
       mask?: MaskJSON;
     }
   | {
-      kind: 'paint'; name: string; visible: boolean; opacity: number; blend?: BlendMode; anchor?: boolean;
+      kind: 'paint'; name: string; visible: boolean; opacity: number; blend?: BlendMode; anchor?: boolean; fx?: LayerFx[]; tag?: number;
       channels: Partial<Record<Ch, string>>;
       mask?: MaskJSON;
     }
   | {
-      kind: 'group'; name: string; visible: boolean; opacity: number; blend?: BlendMode; open?: boolean; anchor?: boolean;
+      kind: 'group'; name: string; visible: boolean; opacity: number; blend?: BlendMode; open?: boolean; anchor?: boolean; fx?: LayerFx[]; tag?: number;
       children: LayerJSON[];
       mask?: MaskJSON;
     };
-export interface MaskJSON { base: 'white' | 'black'; gen: GenSettings | null; paint?: string }
+export interface MaskJSON { base: 'white' | 'black'; gen: GenSettings | null; paint?: string; off?: boolean; inv?: boolean }
 
 /** Project file (.tpaint): JSON with gzipped raw layer pixels, so nothing is lost. */
 export interface ProjectFile {
@@ -77,9 +78,17 @@ export function fromB64(b64: string): Uint8Array {
 }
 
 export async function serializeLayer(ts: TextureSet, l: Layer, withPaint = true): Promise<LayerJSON | null> {
+  const j = await serializeLayerCore(ts, l, withPaint);
+  if (j) {
+    if (l.fx?.length) j.fx = structuredClone(l.fx);
+    if (l.tag) j.tag = l.tag;
+  }
+  return j;
+}
+async function serializeLayerCore(ts: TextureSet, l: Layer, withPaint: boolean): Promise<LayerJSON | null> {
   let mask: MaskJSON | undefined;
   if (l.mask) {
-    mask = { base: l.mask.base, gen: l.mask.gen ? { ...l.mask.gen } : null };
+    mask = { base: l.mask.base, gen: l.mask.gen ? { ...l.mask.gen } : null, off: l.mask.off || undefined, inv: l.mask.inv || undefined };
     if (withPaint && l.mask.painted) mask.paint = toB64(await gzip(ts.readRT(l.mask.paintRT)));
   }
   if (l.kind === 'fill') {
@@ -167,8 +176,12 @@ export async function restoreLayer(ts: TextureSet, l: LayerJSON, resolution: num
   layer.opacity = l.opacity;
   layer.blend = l.blend ?? 'normal';
   if (l.anchor) layer.anchor = true;
+  if (l.fx?.length) layer.fx = structuredClone(l.fx).map((f) => ({ ...f, id: newFxId() }));
+  if (l.tag) layer.tag = l.tag;
   if (l.mask) {
     ts.addMask(layer, { base: l.mask.base, gen: l.mask.gen ? structuredClone(l.mask.gen) : null });
+    if (l.mask.off) layer.mask!.off = true;
+    if (l.mask.inv) layer.mask!.inv = true;
     if (l.mask.paint) {
       ts.writeRT(layer.mask!.paintRT, await gunzip(fromB64(l.mask.paint)), resolution);
       layer.mask!.painted = true;

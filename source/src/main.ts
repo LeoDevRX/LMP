@@ -12,6 +12,7 @@ import { ALPHA_LIBRARY } from './alphas';
 import { installColorPopover } from './colorPopover';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { meshKey } from './engine/meshNames';
+import { LayerFx, LayerFxKind, defaultFx, FILTERS, FILTER_TYPES, FilterType, fxTitle, FX_KIND_LABEL } from './engine/LayerFx';
 import { DEFAULT_THICK } from './engine/Thickness';
 import { GEN_LABEL, GEN_TYPES, GenType, defaultGen, Axis, SMART_MASKS, smartMask, findSmartMask, MaskFx, FX_BLENDS, FX_BLEND_LABEL, GenSettings, SHAPE_KINDS, SHAPE_LABEL, ShapeKind, MICRO_TYPES } from './engine/Masks';
 import { PATTERNS, PATTERN_LABEL, PatternType } from './engine/Procedural';
@@ -32,7 +33,7 @@ import {
   loadExportState, saveExportState, allTemplates, fileName, channelsOf, compose, nearestFill, pad, encodePNG, encodeTGA, encodeJPG,
 } from './engine/ExportTemplates';
 import {
-  parseProject, restoreLayers, restoreLayer, serializeLayer, serializeProject, toB64, fromB64, makeSmartMaterial, applySmartMaterial, restoreMeshMaps,
+  LayerJSON, parseProject, restoreLayers, restoreLayer, serializeLayer, serializeProject, toB64, fromB64, makeSmartMaterial, applySmartMaterial, restoreMeshMaps,
 } from './engine/Project';
 import { checkProjectFileName } from './engine/ProjectFormat';
 import { STARTER } from './starter';
@@ -132,6 +133,11 @@ const BAKE_VIEW: Record<BakeItem, ViewMode> = {
 type ShelfFilter = 'all' | 'model' | 'smart' | 'material' | 'textures' | 'brush' | 'alpha' | 'unsupported' | 'mask' | 'env' | 'graph' | 'cloud';
 
 /** Dock: a titled panel like the ones in Substance (title bar + body). */
+/** Colour tags for layers (Substance's colour labels); index 0 = none. */
+const TAG_COLORS = ['', '#d24a4a', '#e07b39', '#c9a227', '#6aa84f', '#2f9e8f', '#3d7fd6', '#8e5bd6'];
+const FX_ICON: Record<LayerFxKind, string> = { filter: '≋', generator: '◐', levels: '▥', fill: '◼' };
+const FX_CHANS: [Ch, string][] = [['color', 'color'], ['height', 'height'], ['rough', 'rough'], ['metal', 'metal'], ['normal', 'nrm'], ['emit', 'emiss']];
+
 function dock(title: string | HTMLElement, body: HTMLElement, cls = '') {
   return el('section', { class: 'dock ' + cls }, el('div', { class: 'dock-head' }, title), body);
 }
@@ -277,8 +283,12 @@ class App {
   private pathQueued = false;
   pathSmooth = true;
   private ctxMenu = el('div', { id: 'ctx-menu', class: 'menu-items' });
+  /** Selected content effect (its settings show in Properties); 0 = the layer itself. */
+  private fxSel = 0;
 
   constructor() {
+    // Smart masks made with "Create smart mask" (kept in the settings).
+    for (const m of this.settings.userMasks ?? []) if (!findSmartMask(m.id)) SMART_MASKS.push({ id: m.id, label: m.label, build: () => structuredClone(m.gen) });
     // App icon: tab / window icon, the logo in the menu bar and on the loading screen.
     { const v = document.getElementById('brand-ver'); if (v) v.textContent = 'v' + VERSION; }
     { const v = document.getElementById('splash-ver'); if (v) v.textContent = `v${VERSION}`; }
@@ -301,7 +311,7 @@ class App {
       rebuildSide: () => { if (this.mode === 'design') { this.buildShelf(); this.buildProperties(); } },
     });
     document.body.append(this.ctxMenu, this.pickPreview);
-    window.addEventListener('click', () => this.ctxMenu.classList.remove('open'));
+    window.addEventListener('click', () => { this.ctxMenu.classList.remove('open'); this.closeFlyouts(); });
     new ResizeObserver(() => { this.layout(); this.poke(); }).observe(container);
     for (const ev of ['pointermove', 'pointerdown', 'pointerup', 'wheel', 'keydown', 'keyup', 'dragover', 'drop', 'input', 'change', 'click'])
       window.addEventListener(ev, () => this.poke(), { capture: true, passive: true });
@@ -558,6 +568,14 @@ class App {
       document.body.append(wrap);
       (btns.find((b) => b.classList.contains('primary')) ?? btns[0])?.focus();
     });
+  }
+
+  /** Ask for a name (Electron has no window.prompt). Resolves with the text, or null when cancelled. */
+  async askText(title: string, text: string, def = ''): Promise<string | null> {
+    const inp = el('input', { type: 'text', value: def, class: 'lmp-input', spellcheck: false }) as HTMLInputElement;
+    setTimeout(() => { inp.focus(); inp.select(); }, 40);
+    const r = await this.modal({ title, text, icon: 'question', content: inp, buttons: [['OK', 'ok', 'primary'], ['Cancel', 'cancel']] });
+    return r === 'ok' ? (inp.value.trim() || null) : null;
   }
 
   /** Unsaved work: offer Save / Don't save / Cancel. Returns true when it's OK to go on. */
@@ -2731,6 +2749,17 @@ class App {
     if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); this.redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k === 'g' && this.mode === 'paint') { e.preventDefault(); this.groupLayers(this.selection()); return; }
     if ((e.ctrlKey || e.metaKey) && k === 'd' && this.mode === 'paint') { e.preventDefault(); this.duplicateLayers(this.selection()); return; }
+    // Layer clipboard (Substance's shortcuts). Ctrl+C with text selected in a panel copies the text as usual.
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && this.mode === 'paint' && ['c', 'x', 'v', 'm'].includes(k) && !window.getSelection()?.toString()) {
+      e.preventDefault();
+      const act = this.ts.activeLayer;
+      if (e.altKey) { if (k === 'c' && act) this.copyMask(act); else if (k === 'v') this.pasteMask(this.selection()); return; }
+      if (k === 'c') this.copyLayers(this.selection());
+      else if (k === 'x') this.cutLayers(this.selection());
+      else if (k === 'v') this.pasteLayers();
+      else this.flattenLayers(this.selection());
+      return;
+    }
     if (k === 'delete' && this.mode === 'paint' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); this.deleteLayers(this.selection()); return; }
     if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); this.saveProject(e.shiftKey); return; }
     if ((e.ctrlKey || e.metaKey) && k === 'o') { e.preventDefault(); this.openProjectDialog(); return; }
@@ -2982,7 +3011,7 @@ class App {
   }
 
   private async saveBrushPreset() {
-    const name = prompt('Brush preset name:', 'My brush');
+    const name = await this.askText('Save brush preset', 'Name for the new brush preset:', 'My brush');
     if (!name) return;
     const b = this.brush;
     const t = b.tip ?? 'round';
@@ -3183,7 +3212,7 @@ class App {
       ['Paint / Erase / Picker', 'B / E / P'], ['Smudge / Clone / Blur', 'U / C / R'], ['Clone source', 'Hold V + click'], ['Brush size / hardness', '[ ]  /  { }'],
       ['Orbit / Pan / Zoom', 'RMB or Alt+LMB / MMB / Wheel'], ['Move the light (sun)', 'Shift + right-drag'], ['Frame model (or 2D view)', 'F'],
       ['Guide', 'F1'], ['Layouts 3D / 2D / 3D+2D', 'F2 / F3 / F4'], ['History panel', 'H'], ['Straight line', 'Shift+click'], ['Path tool / polygon fill', 'L / G'], ['X symmetry', 'X'], ['Views (both panes)', '1 – 9, 0'], ['Camera views (front, top, left…)', 'Hold ~'],
-      ['Paint the layer mask', 'M'], ['UV wireframe', 'W'], ['UV overlaps (dark spots)', 'O'], ['Brush size', 'Ctrl + scroll'], ['Brush hardness', 'Ctrl + right-drag'], ['Stroke opacity', 'Ctrl + Shift + scroll'], ['Brush flow / rotation', 'Ctrl + left-drag ←→ / ↑↓'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Y'], ['Select several layers / assets', 'Ctrl+click · Shift+click'], ['Group / duplicate / delete selected layers', 'Ctrl+G / Ctrl+D / Delete'],
+      ['Paint the layer mask', 'M'], ['UV wireframe', 'W'], ['UV overlaps (dark spots)', 'O'], ['Brush size', 'Ctrl + scroll'], ['Brush hardness', 'Ctrl + right-drag'], ['Stroke opacity', 'Ctrl + Shift + scroll'], ['Brush flow / rotation', 'Ctrl + left-drag ←→ / ↑↓'], ['Undo / Redo', 'Ctrl+Z / Ctrl+Y'], ['Cut / copy / paste layers', 'Ctrl+X / Ctrl+C / Ctrl+V'], ['Copy / paste mask', 'Ctrl+Alt+C / Ctrl+Alt+V'], ['Flatten layer or folder', 'Ctrl+M'], ['Select several layers / assets', 'Ctrl+click · Shift+click'], ['Group / duplicate / delete selected layers', 'Ctrl+G / Ctrl+D / Delete'],
       ['Save / Save as / Open / Import', 'Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+I'], ['Export textures', 'Ctrl+Shift+E'], ['Projection: move / rotate / scale', 'W / E / R (while editing a projection)'], ['Snap while dragging the manipulator', 'Shift'], ['Leave Baking mode / close panel', 'Esc'],
     ];
     dlg.append(el('header', {}, 'Keyboard shortcuts'),
@@ -4447,7 +4476,7 @@ class App {
 
   /** Save an image fill layer (maps + placement + adjustments) as one .tptex file. */
   private async saveTexMaterial(fill: FillLayer) {
-    const name = prompt('Material name (saves its images, placement and adjustments in one .tptex file):', fill.name);
+    const name = await this.askText('Save material', 'Saves its images, placement and adjustments in one .tptex file.', fill.name);
     if (!name) return;
     const maps: Record<string, { name: string; data: string }> = {};
     for (const [ch, img] of Object.entries(fill.images ?? {}) as [Ch, FillImage][]) maps[ch] = { name: img.name, data: toB64(new Uint8Array(img.bytes)) };
@@ -4463,7 +4492,7 @@ class App {
     const layer = this.ts.activeLayer;
     if (layer?.kind === 'fill' && Object.keys(layer.images ?? {}).length) return this.saveTexMaterial(layer);
     const fromFill = layer?.kind === 'fill' && !Object.keys(layer.images ?? {}).length ? layer : null;
-    const name = prompt('Material preset name:', fromFill ? fromFill.name : 'My material');
+    const name = await this.askText('Save material preset', 'Name for the material preset:', fromFill ? fromFill.name : 'My material');
     if (!name) return;
     const p: MaterialPreset = {
       format: 'texpaint-material', version: 1, name,
@@ -4475,7 +4504,7 @@ class App {
   }
 
   async saveSmartMaterial() {
-    const name = prompt('Smart material name (saves every fill layer and its mask):', 'My smart material');
+    const name = await this.askText('Save smart material', 'Saves every fill layer and its mask (or the selected folder).', 'My smart material');
     if (!name) return;
     try {
       const { smart, skipped } = await makeSmartMaterial(this.ts, name);
@@ -4770,7 +4799,25 @@ class App {
     mBtn.onclick = (e) => { e.stopPropagation(); const o = maskMenu.classList.contains('open'); document.querySelectorAll('.menu.open').forEach((x) => x.classList.remove('open')); if (!o) maskMenu.classList.add('open'); };
     if (!active) mBtn.disabled = true;
     maskMenu.append(mBtn, mm);
+    // Add effect (Substance's first layer-toolbar button): goes on the selected layer's content, or its mask if that's selected.
+    const fxMenu = el('div', { class: 'menu fx-menu' });
+    const fxAdd = (fn: () => void) => () => { fxMenu.classList.remove('open'); fn(); };
+    const onMask = !!active?.mask && this.paintTarget === 'mask';
+    const fxItems = el('div', { class: 'menu-items' },
+      el('button', { onclick: fxAdd(() => active && (onMask ? this.addGenerator(active, { ...defaultGen('painter'), sp: spDefaults('dirt') }, true) : this.addFx(active, { ...defaultFx('generator'), gen: null }))) }, onMask ? 'Add generator (mask)' : 'Add generator'),
+      el('button', { onclick: fxAdd(() => active && this.addPaintEffect(active)) }, 'Add paint'),
+      el('button', { disabled: onMask, onclick: fxAdd(() => active && this.addFx(active, defaultFx('fill'))) }, 'Add fill'),
+      el('button', { disabled: onMask, onclick: fxAdd(() => active && this.addFx(active, defaultFx('levels'))) }, 'Add levels'),
+      el('button', { disabled: onMask, onclick: fxAdd(() => active && this.addFx(active, defaultFx('filter'))) }, 'Add filter'),
+      el('button', { onclick: fxAdd(() => active && this.addMaskTo(active, 'black', 'id')) }, 'Add color selection'),
+      el('button', { onclick: fxAdd(() => active && this.toggleAnchor(active)) }, active?.anchor ? 'Remove anchor point' : 'Add anchor point'));
+    const fxBtn = icon(I.addMask, 'Add effect: generator, paint, fill, levels, filter…', () => {});
+    fxBtn.classList.add('fx-btn'); fxBtn.textContent = 'fx';
+    fxBtn.onclick = (e) => { e.stopPropagation(); const o = fxMenu.classList.contains('open'); document.querySelectorAll('.menu.open').forEach((x) => x.classList.remove('open')); if (!o) fxMenu.classList.add('open'); };
+    if (!active || active.kind === 'group') fxBtn.disabled = true;
+    fxMenu.append(fxBtn, fxItems);
     const tools = el('div', { class: 'layer-toolbar' },
+      fxMenu,
       icon(I.layerPaint, 'Add paint layer', () => { this.paintTarget = 'content'; ts.addPaintLayer(); this.modified = true; }),
       icon(I.layerFill, 'Add fill layer', () => { this.paintTarget = 'content'; ts.addFillLayer(); this.modified = true; }),
       icon(I.folder2, 'Add folder', () => { this.paintTarget = 'content'; ts.addGroup(); this.modified = true; }),
@@ -4787,6 +4834,7 @@ class App {
       for (const l of [...layers].reverse()) {
         this.rowOrder.push(l.id);
         list.append(this.layerRow(l, depth));
+        if (l.kind !== 'group') for (const f of [...(l.fx ?? [])].reverse()) list.append(this.fxRow(l, f, depth));
         if (l.kind === 'group' && l.open) add(l.children, depth + 1);
       }
     };
@@ -5457,6 +5505,7 @@ class App {
   private clickLayer(l: Layer, e: MouseEvent, target?: PaintTarget) {
     const ts = this.ts;
     this.syncSel();
+    if (this.fxSel && (e.ctrlKey || e.metaKey || e.shiftKey)) this.fxSel = 0;
     if (e.ctrlKey || e.metaKey) {
       if (this.sel.has(l.id) && this.sel.size > 1) {
         this.sel.delete(l.id);
@@ -5632,45 +5681,434 @@ class App {
     if (label) { this.modified = true; toast(`Redo: ${label}`); this.queueLayerThumbs(); } else toast('Nothing to redo');
   }
 
-  /** Right-click menu on a layer (like Substance's layer context menu). */
+  /** Right-click menu on a layer, laid out like Substance Painter's. */
   private layerMenu(l: Layer, x: number, y: number) {
     const ts = this.ts;
     const m = this.ctxMenu;
     m.innerHTML = '';
-    const item = (label: string, fn: () => void, disabled = false) => el('button', { disabled, onclick: () => { m.classList.remove('open'); fn(); } }, label);
-    const many = this.sel.has(l.id) && this.sel.size > 1 ? this.selection() : null;
-    if (many) {
-      m.append(
-        el('div', { class: 'ctx-title muted' }, `${many.length} layers selected`),
-        item('Put in a new folder  (Ctrl+G)', () => this.groupLayers(many)),
-        item('Duplicate  (Ctrl+D)', () => this.duplicateLayers(many)),
-        item(many.every((x) => x.visible) ? 'Hide all' : 'Show all', () => {
-          ts.checkpoint('Visibility'); const v = !many.every((x) => x.visible); many.forEach((x) => (x.visible = v)); ts.layerChanged(); this.modified = true;
-        }),
-        el('hr'),
-        item(`Delete ${many.length} layers`, () => this.deleteLayers(many)),
-      );
-    } else m.append(
-      item('Add black mask (paint to reveal)', () => this.addMaskTo(l, 'black', null)),
-      item('Add white mask', () => this.addMaskTo(l, 'white', null)),
-      el('div', { class: 'ctx-sub ctx-scroll' }, el('span', { class: 'muted' }, 'Smart mask presets'),
-        ...SMART_MASKS.map((p) => item(p.label, () => this.applySmartMaskTo(l, p.id)))),
-      el('div', { class: 'ctx-sub' }, el('span', { class: 'muted' }, 'Add generator (black mask + generator)'),
-        ...GEN_TYPES.map((t) => item(GEN_LABEL[t], () => this.addMaskTo(l, 'black', t)))),
-      item('Remove mask', () => { ts.removeMask(l); this.paintTarget = 'content'; this.modified = true; }, !l.mask),
-      item(l.anchor ? 'Remove anchor point' : 'Add anchor point (use as micro details)', () => this.toggleAnchor(l)),
-      el('hr'),
-      item('New folder above', () => { ts.activeId = l.id; ts.addGroup(); this.modified = true; }),
-      item('Put in a new folder  (Ctrl+G)', () => this.groupLayers([l])),
-      item('Duplicate  (Ctrl+D)', () => this.duplicateLayers([l])),
-      el('hr'),
-      item('Rename', () => { this.renaming = l.id; this.refresh(); }),
-      item('Delete', () => this.deleteLayer(l)),
+    this.closeFlyouts();
+    const close = () => { m.classList.remove('open'); this.closeFlyouts(); };
+    const item = (label: string, keys: string, fn: () => void, disabled = false) => el('button', {
+      disabled, onclick: (e: Event) => { e.stopPropagation(); close(); fn(); }, onmouseenter: () => this.closeFlyouts(),
+    }, el('span', {}, label), el('span', { class: 'ctx-key' }, keys));
+    const sub = (label: string, build: () => HTMLElement[], disabled = false) => {
+      const b = el('button', { class: 'ctx-has-sub', disabled, onclick: (e: Event) => { e.stopPropagation(); open(); } }, el('span', {}, label), el('span', { class: 'ctx-key' }, '▸'));
+      const open = () => {
+        this.closeFlyouts();
+        const fly = el('div', { class: 'menu-items ctx-fly' }, ...build());
+        document.body.append(fly);
+        this.flyouts.push(fly);
+        const r = b.getBoundingClientRect(), fr = fly.getBoundingClientRect();
+        const left = r.right + fr.width + 4 > innerWidth ? r.left - fr.width - 2 : r.right + 2;
+        fly.style.left = `${Math.max(4, left)}px`;
+        fly.style.top = `${Math.max(4, Math.min(r.top - 4, innerHeight - fr.height - 8))}px`;
+      };
+      b.addEventListener('mouseenter', open);
+      return b;
+    };
+    const flyItem = (label: string, fn: () => void, on = false) => el('button', { class: on ? 'on' : '', onclick: (e: Event) => { e.stopPropagation(); close(); fn(); } }, el('span', {}, label), el('span', { class: 'ctx-key' }, on ? '✓' : ''));
+    const hr = () => el('hr');
+    const list = this.sel.has(l.id) && this.sel.size > 1 ? this.selection() : [l];
+    const many = list.length > 1;
+    const solo = many ? null : l;
+    const mk = solo?.mask;
+    const isGroup = l.kind === 'group';
+    const onMask = this.paintTarget === 'mask' && !!mk && ts.activeId === l.id;
+    if (many) m.append(el('div', { class: 'ctx-title muted' }, `${list.length} layers selected`));
+    m.append(
+      // masks
+      item('Add white mask', '', () => this.addMaskTo(l, 'white', null), many),
+      item('Add black mask', '', () => this.addMaskTo(l, 'black', null), many),
+      item('Add bitmap mask…', '', () => this.addBitmapMask(l), many),
+      item('Add mask with color selection', '', () => this.addMaskTo(l, 'black', 'id'), many),
+      sub('Add smart mask', () => SMART_MASKS.map((p) => flyItem(p.label, () => this.applySmartMaskTo(l, p.id)))),
+      hr(),
+      item(mk?.off ? 'Turn mask on' : 'Toggle mask (turn off)', '', () => this.maskFlag(l, 'off'), !mk),
+      item('Invert mask background', '', () => this.maskFlag(l, 'base'), !mk),
+      item(mk?.inv ? 'Un-invert mask' : 'Invert mask', '', () => this.maskFlag(l, 'inv'), !mk),
+      item('Clear mask', '', () => this.clearMask(l), !mk),
+      item('Remove mask', '', () => { ts.removeMask(l); this.paintTarget = 'content'; this.modified = true; this.refresh(); }, !mk),
+      hr(),
+      item('Create smart mask…', '', () => this.createSmartMask(l), !mk?.gen),
+      item('Create smart material…', '', () => this.createSmartMaterialFrom(list)),
+      item('Flatten layer', 'Ctrl+M', () => this.flattenLayers(list)),
+      item('Export mask to file', '', () => this.exportMask(l, 'file'), !mk),
+      item('Export mask to clipboard', '', () => this.exportMask(l, 'clip'), !mk),
+      item('Export channels to files', '', () => this.exportChannels(l), many),
+      hr(),
+      item('Cut layer(s)', 'Ctrl+X', () => this.cutLayers(list)),
+      item('Copy layer(s)', 'Ctrl+C', () => this.copyLayers(list)),
+      item('Paste layer(s)', 'Ctrl+V', () => this.pasteLayers(), !this.layerClip),
+      item('Duplicate layer(s)', 'Ctrl+D', () => this.duplicateLayers(list)),
+      item('Remove layer(s)', 'Del', () => this.deleteLayers(list)),
+      item('Group layer(s)', 'Ctrl+G', () => this.groupLayers(list)),
+      el('div', { class: 'ctx-tags' }, ...TAG_COLORS.map((c, k) => el('button', {
+        class: 'ctx-tag' + (k === 0 ? ' none' : '') + (list.every((x) => (x.tag ?? 0) === k) ? ' on' : ''), title: k === 0 ? 'No colour' : 'Colour tag',
+        style: c ? { background: c } : {}, onclick: (e: Event) => { e.stopPropagation(); close(); this.setTag(list, k); },
+      }))),
+      hr(),
+      item('Copy mask', 'Ctrl+Alt+C', () => this.copyMask(l), !mk),
+      item('Paste into mask', 'Ctrl+Alt+V', () => this.pasteMask(list), !this.maskClip),
+      sub('Blending options', () => (Object.keys(BLEND_LABEL) as BlendMode[]).map((b) => flyItem(BLEND_LABEL[b], () => this.setBlend(list, b), list.every((x) => x.blend === b)))),
+      hr(),
+      sub(onMask ? 'Add generator (mask)' : 'Add generator', () => this.genChoices().map(([label, mkGen]) => flyItem(label, () => this.addGenerator(l, mkGen(), onMask))), many || (isGroup && !onMask)),
+      item(onMask ? 'Add paint (mask)' : 'Add paint', '', () => this.addPaintEffect(l), many),
+      item('Add fill', '', () => this.addFx(l, defaultFx('fill')), many || isGroup),
+      item('Add levels', '', () => this.addFx(l, defaultFx('levels')), many || isGroup),
+      sub('Add filter', () => FILTER_TYPES.map((f) => flyItem(FILTERS[f].label, () => this.addFx(l, defaultFx('filter', { filter: f })))), many || isGroup),
+      item('Add color selection', '', () => onMask || !mk ? this.addMaskTo(l, 'black', 'id') : this.addGenerator(l, defaultGen('id'), true), many),
+      item(l.anchor ? 'Remove anchor point' : 'Add anchor point', '', () => this.toggleAnchor(l), many),
+      hr(),
+      item('Rename', 'Double-click', () => { this.renaming = l.id; this.refresh(); }, many),
+      item(list.every((x) => x.visible) ? 'Hide' : 'Show', '', () => {
+        ts.checkpoint('Visibility'); const v = !list.every((x) => x.visible); list.forEach((x) => (x.visible = v)); ts.layerChanged(); this.modified = true;
+      }),
+      item('New folder above', '', () => { ts.activeId = l.id; ts.addGroup(); this.modified = true; }),
     );
+    void solo;
     m.classList.add('open');
     const r = m.getBoundingClientRect();
-    m.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
-    m.style.top = `${Math.min(y, innerHeight - r.height - 8)}px`;
+    m.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 8))}px`;
+    m.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 8))}px`;
+  }
+  private flyouts: HTMLElement[] = [];
+  private closeFlyouts() { this.flyouts.forEach((f) => f.remove()); this.flyouts = []; }
+
+  // ---------------------------------------------------------------- layer actions (right-click menu, shortcuts)
+
+  /** Generators to add, Painter-style ones first. */
+  private genChoices(): [string, () => GenSettings][] {
+    return [
+      ...SP_KINDS.map((k): [string, () => GenSettings] => [SP_DEFS[k].label, () => ({ ...defaultGen('painter'), sp: spDefaults(k) })]),
+      ...GEN_TYPES.filter((t) => t !== 'painter' && t !== 'id').map((t): [string, () => GenSettings] => [this.classicGenLabel(t), () => defaultGen(t)]),
+    ];
+  }
+  /** LocalPaint's own generators; "(simple)" where a Painter-style one has the same name. */
+  private classicGenLabel(t: GenType) {
+    const n = GEN_LABEL[t];
+    return SP_KINDS.some((k) => SP_DEFS[k].label.toLowerCase() === n.toLowerCase()) ? `${n} (simple)` : n;
+  }
+  private genName(g: GenSettings) { return g.type === 'painter' && g.sp ? SP_DEFS[g.sp.kind].label : this.classicGenLabel(g.type); }
+
+  /** Add a content effect on top of the layer's effects and show its settings. */
+  addFx(l: Layer, f: LayerFx) {
+    if (l.kind === 'group') { toast('Effects go on paint and fill layers (not folders).', true); return; }
+    this.ts.checkpoint(`Add ${FX_KIND_LABEL[f.kind].toLowerCase()}`);
+    l.fx = [...(l.fx ?? []), f];
+    this.ts.activeId = l.id; this.sel = new Set([l.id]);
+    this.paintTarget = 'content';
+    this.fxSel = f.id;
+    this.ts.markDirty(); this.modified = true;
+    this.refresh();
+  }
+  /** Generator on the mask (when the mask is selected) or on the content. */
+  private addGenerator(l: Layer, g: GenSettings, onMask: boolean) {
+    if (onMask && l.mask) {
+      this.ts.checkpoint('Add generator');
+      if (!l.mask.gen) l.mask.gen = g;
+      else l.mask.gen.fx = [...(l.mask.gen.fx ?? []), { ...g, blend: 'multiply', opacity: 1, on: true }];
+      if (g.type === 'shape') this.placeShapeAtView(g);
+      this.ts.maskChanged(l); this.modified = true;
+      this.ts.activeId = l.id; this.paintTarget = 'mask'; this.fxSel = 0;
+      this.refresh();
+      return;
+    }
+    this.addFx(l, defaultFx('generator', { gen: g }));
+  }
+  /** "Add paint": paint on the layer's mask (adds a black one first if needed) with the brush. */
+  private addPaintEffect(l: Layer) {
+    if (l.kind === 'paint' && !(this.paintTarget === 'mask' && l.mask)) {
+      this.selectLayer(l, 'content'); this.setTool('paint'); toast('Paint layer selected: paint on it with the brush (B).'); return;
+    }
+    if (!l.mask) this.addMaskTo(l, 'black', null);
+    this.fxSel = 0;
+    this.selectLayer(l, 'mask');
+    this.setTool('paint');
+    toast('Painting the mask: white shows the layer, black hides it (hold X-key colours with the brush colour).');
+  }
+  private removeFx(l: Layer, f: LayerFx) {
+    this.ts.checkpoint('Remove effect');
+    l.fx = (l.fx ?? []).filter((x) => x.id !== f.id);
+    if (!l.fx.length) delete l.fx;
+    if (this.fxSel === f.id) this.fxSel = 0;
+    this.ts.markDirty(); this.modified = true; this.refresh();
+  }
+  private moveFx(l: Layer, f: LayerFx, dir: 1 | -1) {
+    const a = l.fx ?? [], i = a.findIndex((x) => x.id === f.id), j = i + dir;
+    if (i < 0 || j < 0 || j >= a.length) return;
+    this.ts.checkpoint('Move effect');
+    [a[i], a[j]] = [a[j], a[i]];
+    this.ts.markDirty(); this.modified = true; this.refresh();
+  }
+
+  private maskFlag(l: Layer, what: 'off' | 'inv' | 'base') {
+    const mk = l.mask;
+    if (!mk) return;
+    this.ts.checkpoint(what === 'off' ? 'Toggle mask' : what === 'inv' ? 'Invert mask' : 'Invert mask background');
+    if (what === 'off') mk.off = !mk.off;
+    else if (what === 'inv') mk.inv = !mk.inv;
+    else mk.base = mk.base === 'white' ? 'black' : 'white';
+    this.ts.maskChanged(l); this.modified = true; this.refresh();
+  }
+  /** Fresh mask with the same background (undo brings the old one back). */
+  private clearMask(l: Layer) {
+    const mk = l.mask;
+    if (!mk) return;
+    this.ts.batchSync('Clear mask', () => { const base = mk.base; this.ts.removeMask(l); this.ts.addMask(l, { base, gen: null }); });
+    this.modified = true; this.refresh();
+  }
+  private async addBitmapMask(l: Layer) {
+    const f = await pickFile('image/*');
+    if (!f) return;
+    try {
+      const tex = await imageTexture(await f.arrayBuffer(), f.name);
+      this.ts.batchSync('Add bitmap mask', () => { if (l.mask) this.ts.removeMask(l); this.ts.addMask(l, { base: 'black', gen: null }); });
+      this.ts.maskFromImage(l, tex, 0.5, 0);
+      tex.dispose();
+      this.ts.activeId = l.id; this.paintTarget = 'mask'; this.fxSel = 0; this.modified = true;
+      toast(`Mask from ${f.name}: white shows the layer, black hides it.`);
+      this.refresh();
+    } catch (e: any) { toast('Could not read that picture: ' + (e?.message ?? e), true); }
+  }
+
+  private layerClip: LayerJSON[] | null = null;
+  async copyLayers(list: Layer[], quiet = false) {
+    if (!list.length) return;
+    const out: LayerJSON[] = [];
+    for (const l of list) { const j = await serializeLayer(this.ts, l, true); if (j) out.push(j); }
+    this.layerClip = out;
+    if (!quiet) toast(`Copied ${out.length} layer${out.length === 1 ? '' : 's'} (Ctrl+V to paste)`);
+  }
+  async cutLayers(list: Layer[]) {
+    if (!list.length) return;
+    await this.copyLayers(list, true);
+    this.deleteLayers(list);
+    toast(`Cut ${list.length} layer${list.length === 1 ? '' : 's'} (Ctrl+V to paste)`);
+  }
+  async pasteLayers() {
+    const clip = this.layerClip;
+    if (!clip?.length) { toast('Nothing copied yet: right-click a layer > Copy layer(s), or Ctrl+C', true); return; }
+    const ts = this.ts;
+    const made: number[] = [];
+    await ts.batch(clip.length > 1 ? `Paste ${clip.length} layers` : 'Paste layer', async () => {
+      for (const j of clip) { const l = await restoreLayer(ts, j, ts.size, true); made.push(l.id); }
+    });
+    if (!made.length) return;
+    ts.activeId = made[made.length - 1];
+    this.sel = new Set(made);
+    this.paintTarget = 'content'; this.fxSel = 0;
+    this.modified = true;
+    ts.layerChanged();
+    toast(`Pasted ${made.length} layer${made.length === 1 ? '' : 's'}`);
+  }
+
+  private maskClip: { base: 'white' | 'black'; gen: GenSettings | null; paint: Uint8Array | null; size: number; off?: boolean; inv?: boolean } | null = null;
+  private copyMask(l: Layer) {
+    const mk = l.mask;
+    if (!mk) { toast('This layer has no mask to copy', true); return; }
+    this.maskClip = { base: mk.base, gen: mk.gen ? structuredClone(mk.gen) : null, paint: mk.painted ? this.ts.readRT(mk.paintRT) : null, size: this.ts.size, off: mk.off, inv: mk.inv };
+    toast('Mask copied (right-click another layer > Paste into mask)');
+  }
+  private pasteMask(list: Layer[]) {
+    const c = this.maskClip;
+    if (!c) { toast('Copy a mask first (right-click a layer > Copy mask)', true); return; }
+    const ts = this.ts;
+    ts.batchSync('Paste into mask', () => {
+      for (const l of list) {
+        if (l.mask) ts.removeMask(l);
+        ts.addMask(l, { base: c.base, gen: c.gen ? structuredClone(c.gen) : null });
+        l.mask!.off = c.off; l.mask!.inv = c.inv;
+      }
+    });
+    for (const l of list) {
+      if (c.paint && c.size === ts.size) { ts.writeRT(l.mask!.paintRT, c.paint, c.size); l.mask!.painted = true; }
+      ts.maskChanged(l);
+    }
+    if (c.paint && c.size !== ts.size) toast('The painted part of the mask was made at another texture size, so only its generators were pasted.', true);
+    this.modified = true; this.refresh();
+  }
+
+  private setTag(list: Layer[], k: number) {
+    this.ts.checkpoint('Colour tag');
+    for (const l of list) { if (k) l.tag = k; else delete l.tag; }
+    this.modified = true; this.refresh();
+  }
+  private setBlend(list: Layer[], b: BlendMode) {
+    this.ts.checkpoint('Blend mode');
+    for (const l of list) l.blend = b;
+    this.ts.markDirty(); this.modified = true; this.refresh();
+  }
+
+  /** Ctrl+M: bake layers (effects, mask, opacity) or folders into single paint layers. */
+  flattenLayers(list: Layer[]) {
+    if (!list.length) return;
+    const ts = this.ts;
+    const made = ts.batchSync(list.length > 1 ? `Flatten ${list.length} layers` : 'Flatten layer', () => list.map((l) => ts.flattenLayer(l)).filter((x) => !!x));
+    if (!made.length) return;
+    ts.activeId = made[made.length - 1]!.id;
+    this.sel = new Set(made.map((x) => x!.id));
+    this.paintTarget = 'content'; this.fxSel = 0;
+    this.modified = true;
+    ts.layerChanged();
+    toast(`Flattened into ${made.length} paint layer${made.length === 1 ? '' : 's'}`);
+  }
+
+  private async exportMask(l: Layer, to: 'file' | 'clip') {
+    const px = this.ts.maskPixels(l);
+    if (!px) return;
+    const blob = await pixelsToPng(px, this.ts.size);
+    const name = `${l.name.replace(/[^\w\- ]+/g, '_')}_mask.png`;
+    if (to === 'clip') {
+      try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); toast('Mask copied to the clipboard as a picture'); }
+      catch { toast('The clipboard refused the picture. Use Export mask to file instead.', true); }
+      return;
+    }
+    try { toast(await saveFiles([{ name, blob }])); } catch (e: any) { if (e?.name !== 'AbortError') toast('Could not save: ' + (e?.message ?? e), true); }
+  }
+  private async exportChannels(l: Layer) {
+    const files: { name: string; blob: Blob }[] = [];
+    const base = l.name.replace(/[^\w\- ]+/g, '_');
+    for (const ch of CHANNELS) {
+      const px = this.ts.layerChannelPixels(l, ch);
+      let any = false;
+      for (let i = 3; i < px.length; i += 4 * 97) if (px[i] > 0) { any = true; break; }
+      if (any) files.push({ name: `${base}_${CH_LABEL[ch].replace(/\s+/g, '')}.png`, blob: await pixelsToPng(px, this.ts.size) });
+    }
+    if (!files.length) { toast('This layer doesn\'t paint anything yet', true); return; }
+    try { toast(await saveFiles(files)); } catch (e: any) { if (e?.name !== 'AbortError') toast('Could not save: ' + (e?.message ?? e), true); }
+  }
+
+  private async createSmartMask(l: Layer) {
+    const g = l.mask?.gen;
+    if (!g) { toast('Smart masks save the mask\'s generators. This mask is only painted, so there\'s nothing to save.', true); return; }
+    const name = await this.askText('Create smart mask', 'Saves this mask\'s generators to Smart masks on the shelf.', `${l.name} mask`);
+    if (!name) return;
+    const id = 'user_' + name.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '_' + Date.now().toString(36);
+    const gen = structuredClone(g);
+    SMART_MASKS.push({ id, label: name, build: () => structuredClone(gen) });
+    this.shelf.items = [...this.shelf.items, { kind: 'mask', name, file: 'mask:' + id, preset: id }];
+    this.settings.userMasks = [...(this.settings.userMasks ?? []), { id, label: name, gen }];
+    saveSettings(this.settings);
+    this.buildShelf();
+    toast(`Smart mask “${name}” saved to the shelf (Smart masks)`);
+  }
+  private async createSmartMaterialFrom(list: Layer[]) {
+    const name = await this.askText('Create smart material', 'Saves the selected layers (fill layers, folders and their masks) as a smart material on the shelf.', list.length === 1 ? list[0].name : 'My smart material');
+    if (!name) return;
+    const src = list.length === 1 && list[0].kind === 'group' ? list[0].children : list;
+    const layers: LayerJSON[] = [];
+    let skipped = 0;
+    for (const l of src) { const j = await serializeLayer(this.ts, l, false); if (j) layers.push(j); else skipped++; }
+    if (!layers.length) { toast('Nothing to save: smart materials are made of fill layers and masks (hand painting is model-specific).', true); return; }
+    try {
+      const msg = await this.shelf.saveJSON(`${name.replace(/[^\w\- ]+/g, '_').trim() || 'smart'}.tpsmart`, { format: 'texpaint-smart', version: 1, name, layers });
+      toast(skipped ? `${msg} · ${skipped} paint layer(s) skipped` : msg);
+      this.buildShelf();
+    } catch (e: any) { toast('Could not save smart material: ' + e?.message, true); }
+  }
+
+  /** One effect's row under its layer in the Layers panel. */
+  private fxRow(l: Layer, f: LayerFx, depth: number) {
+    const ts = this.ts;
+    const sel = this.fxSel === f.id && ts.activeId === l.id;
+    const eye = el('button', { class: 'eye' + (f.on ? ' on' : ''), title: 'Turn this effect on / off', onclick: (e: Event) => {
+      e.stopPropagation(); ts.checkpoint(f.on ? 'Hide effect' : 'Show effect'); f.on = !f.on; ts.markDirty(); this.modified = true; this.refresh();
+    } });
+    eye.innerHTML = f.on ? I.eye : I.eyeOff;
+    const blend = select<string>(FX_BLENDS.map((b) => ({ value: b, label: FX_BLEND_LABEL[b].split(' ')[0] })), f.blend, (v) => {
+      ts.checkpoint('Effect blend'); f.blend = v as LayerFx['blend']; ts.markDirty(); this.modified = true;
+    });
+    blend.classList.add('mini'); blend.title = 'How it mixes with the content below it';
+    blend.addEventListener('click', (e) => e.stopPropagation());
+    const op = el('input', { type: 'number', min: 0, max: 100, step: 1, value: Math.round(f.opacity * 100), class: 'mini-num', title: 'Opacity %' }) as HTMLInputElement;
+    op.addEventListener('click', (e) => e.stopPropagation());
+    const applyOp = () => { ts.checkpoint('Effect opacity', 'fxop:' + f.id); f.opacity = Math.min(1, Math.max(0, (+op.value || 0) / 100)); ts.markDirty(); this.modified = true; this.poke(); };
+    op.addEventListener('input', applyOp);
+    scrubNumber(op, 0, 100, applyOp);
+    const x = el('button', { class: 'fx-x', title: 'Remove this effect', onclick: (e: Event) => { e.stopPropagation(); this.removeFx(l, f); } }, '×');
+    const row = el('div', {
+      class: 'layer fx-row' + (sel ? ' active' : '') + (f.on ? '' : ' off'),
+      title: 'Click to edit · right-click for more',
+      onclick: () => { this.fxSel = f.id; ts.activeId = l.id; this.sel = new Set([l.id]); this.paintTarget = 'content'; this.refresh(); },
+      oncontextmenu: (e: MouseEvent) => {
+        e.preventDefault(); e.stopPropagation();
+        const m = this.ctxMenu; m.innerHTML = ''; this.closeFlyouts();
+        const it = (label: string, fn: () => void, dis = false) => el('button', { disabled: dis, onclick: () => { m.classList.remove('open'); fn(); } }, label);
+        const i = (l.fx ?? []).indexOf(f);
+        m.append(it('Move up', () => this.moveFx(l, f, 1), i >= (l.fx ?? []).length - 1), it('Move down', () => this.moveFx(l, f, -1), i <= 0),
+          it(f.on ? 'Turn off' : 'Turn on', () => eye.click()), el('hr'), it('Remove effect', () => this.removeFx(l, f)));
+        m.classList.add('open');
+        m.style.left = `${Math.min(e.clientX, innerWidth - 250)}px`; m.style.top = `${Math.min(e.clientY, innerHeight - 160)}px`;
+      },
+    }, eye, el('span', { class: 'fx-ico' }, FX_ICON[f.kind]), el('span', { class: 'name' }, fxTitle(f, (g) => this.genName(g))), el('div', { class: 'layer-ctl' }, blend, op), x);
+    row.style.paddingLeft = `${30 + depth * 18}px`;
+    return row;
+  }
+
+  /** Properties of the selected content effect. */
+  private fxProps(l: Layer, f: LayerFx): HTMLElement[] {
+    const ts = this.ts;
+    const pre = (k: string) => ts.checkpoint('Edit effect', `fx:${f.id}:${k}`);
+    const live = () => { ts.markDirty(); this.modified = true; this.poke(); };
+    const relist = () => { live(); this.buildProperties(); this.buildRight(); };
+    const out: HTMLElement[] = [];
+    const chips = el('div', { class: 'fx-chans' }, ...FX_CHANS.map(([ch, label]) => {
+      const on = f.chans ? !!f.chans[ch] : ch !== 'normal';
+      return el('button', { class: on ? 'on' : '', title: `Apply to ${CH_LABEL[ch]}`, onclick: () => {
+        pre('chans' + Math.random());
+        const cur: Partial<Record<Ch, boolean>> = f.chans ?? Object.fromEntries(CHANNELS.map((c) => [c, c !== 'normal']));
+        cur[ch] = !on; f.chans = cur; relist();
+      } }, label);
+    }));
+    const head = group(`${FX_KIND_LABEL[f.kind]} · ${l.name}`, chips,
+      el('div', { class: 'row' }, el('label', {}, 'Blend'), select<string>(FX_BLENDS.map((b) => ({ value: b, label: FX_BLEND_LABEL[b] })), f.blend, (v) => { pre('blend'); f.blend = v as LayerFx['blend']; live(); this.buildRight(); })),
+      slider('Opacity', { min: 0, max: 1, step: 0.01, value: f.opacity, fmt: (v) => `${Math.round(v * 100)}%`, onInput: (v) => { pre('op'); f.opacity = v; live(); } }).el);
+    out.push(head);
+    const colour = (label: string, get: () => [number, number, number], set: (c: [number, number, number]) => void) => {
+      const c = el('input', { type: 'color', value: rgbToHex(get()) }) as HTMLInputElement;
+      c.addEventListener('input', () => { pre('col'); set(hexToRgb(c.value) as [number, number, number]); live(); });
+      return el('div', { class: 'row' }, el('label', {}, label), c);
+    };
+    if (f.kind === 'filter') {
+      const g = group('Filter', select<string>([{ value: '', label: 'Pick a filter…' }, ...FILTER_TYPES.map((t) => ({ value: t, label: FILTERS[t].label }))], f.filter ?? '', (v) => {
+        pre('type'); f.filter = (v || null) as FilterType | null; f.p = f.filter ? FILTERS[f.filter].params.map((d) => d.def) : []; relist();
+      }));
+      if (f.filter) {
+        const d = FILTERS[f.filter];
+        g.append(el('p', { class: 'note' }, d.desc));
+        d.params.forEach((q, k) => g.append(slider(q.label, { min: q.min, max: q.max, step: q.step, value: f.p?.[k] ?? q.def, fmt: q.fmt, onInput: (v) => { pre('p' + k); (f.p ??= [])[k] = v; live(); } }).el));
+        if (f.filter === 'tint' || f.filter === 'gradmap') g.append(colour('Colour', () => f.color ?? [1, 1, 1], (c) => (f.color = c)));
+      } else g.append(el('p', { class: 'note' }, 'Empty filter: pick one above (blur, sharpen, HSL, levels-style contrast, posterize…).'));
+      out.push(g);
+    } else if (f.kind === 'generator') {
+      const choices = this.genChoices();
+      const cur = f.gen ? this.genName(f.gen) : '';
+      const g = group('Generator', select<string>([{ value: '', label: 'Pick a generator…' }, ...choices.map(([label]) => ({ value: label, label }))], cur, (v) => {
+        pre('type'); const c = choices.find(([label]) => label === v); f.gen = c ? c[1]() : null; if (f.gen?.type === 'shape') this.placeShapeAtView(f.gen); relist();
+      }));
+      if (f.gen) {
+        g.append(...this.genControls(f.gen, pre, live, 'fxg', l), colour('Colour', () => f.color ?? [1, 1, 1], (c) => (f.color = c)),
+          el('p', { class: 'note' }, 'Gives a grey result (times the colour) mixed into the layer with the blend mode above: Multiply darkens where it\'s black, Screen lightens where it\'s white.'));
+        out.push(g);
+        if (f.gen.type !== 'pattern' && f.gen.type !== 'shape' && f.gen.type !== 'painter') out.push(group('Grunge breakup', ...this.noiseControls(f.gen, pre, live, 'fxg')));
+      } else { g.append(el('p', { class: 'note' }, 'Empty generator: pick one above (Dirt, Metal edge wear, Light, Position, Curvature…).')); out.push(g); }
+    } else if (f.kind === 'levels') {
+      const v = (f.lv ??= [0, 1, 1, 0, 1]);
+      const names = ['Input black', 'Input white', 'Gamma', 'Output black', 'Output white'];
+      out.push(group('Levels', ...names.map((n, k) => slider(n, { min: k === 2 ? 0.1 : 0, max: k === 2 ? 4 : 1, step: 0.01, value: v[k], fmt: (x) => x.toFixed(2), onInput: (x) => { pre('lv' + k); v[k] = x; live(); } }).el),
+        el('p', { class: 'note' }, 'Remaps the values: pull Input black up for darker darks, Output white down to cap the brightest value.')));
+    } else {
+      out.push(group('Fill', colour('Colour', () => f.color ?? [0.5, 0.5, 0.5], (c) => (f.color = c)),
+        slider('Value (grey channels)', { min: 0, max: 1, step: 0.01, value: f.value ?? 0.5, fmt: (x) => x.toFixed(2), onInput: (x) => { pre('val'); f.value = x; live(); } }).el,
+        el('p', { class: 'note' }, 'A flat colour (colour channels) or value (roughness, metal, height) laid over the content.')));
+    }
+    const i = (l.fx ?? []).indexOf(f);
+    out.push(el('div', { class: 'row' },
+      el('button', { disabled: i >= (l.fx ?? []).length - 1, onclick: () => this.moveFx(l, f, 1) }, 'Move up'),
+      el('button', { disabled: i <= 0, onclick: () => this.moveFx(l, f, -1) }, 'Move down'),
+      el('button', { class: 'grow', onclick: () => { this.fxSel = 0; this.refresh(); } }, 'Back to layer'),
+      el('button', { class: 'danger', onclick: () => this.removeFx(l, f) }, 'Remove')));
+    return out;
   }
 
   private settingsBody() {
@@ -5740,7 +6178,8 @@ class App {
   }
 
   private selectLayer(l: Layer, target: PaintTarget) {
-    const changed = this.ts.activeId !== l.id || this.paintTarget !== target;
+    const changed = this.ts.activeId !== l.id || this.paintTarget !== target || this.fxSel !== 0;
+    this.fxSel = 0;
     this.ts.activeId = l.id;
     this.paintTarget = target;
     if (changed) this.refresh();
@@ -5818,7 +6257,7 @@ class App {
     scrubNumber(op, 0, 100, applyOp);
     const row = el('div', {
       class: 'layer' + (isActive ? ' active' : '') + (!isActive && this.sel.has(l.id) ? ' selected' : '') + (l.kind === 'group' ? ' group' : ''),
-      title: 'Ctrl+click / Shift+click to select several · double-click to rename · right-click for masks and folders · drag to reorder',
+      title: 'Ctrl+click / Shift+click to select several · double-click to rename · right-click for masks, effects, copy / paste and more · drag to reorder',
       draggable: this.renaming !== l.id,
       onclick: (e: MouseEvent) => this.clickLayer(l, e),
       ondblclick: () => { this.renaming = l.id; this.refresh(); },
@@ -5829,6 +6268,9 @@ class App {
       },
     }, eye, caret, kind, chip, name, el('div', { class: 'layer-ctl' }, blend, op));
     row.style.paddingLeft = `${8 + depth * 18}px`;
+    if (l.tag && TAG_COLORS[l.tag]) row.style.boxShadow = `inset 3px 0 0 ${TAG_COLORS[l.tag]}`;
+    if (chip && l.mask?.off) { chip.classList.add('off'); chip.title = 'Mask turned off — right-click the layer > Turn mask on'; }
+    if (chip && l.mask?.inv) chip.classList.add('inv');
     // drag to reorder / into folders
     const zone = (e: DragEvent): 'above' | 'below' | 'inside' => {
       const r = row.getBoundingClientRect();
@@ -5903,7 +6345,12 @@ class App {
     const layer = this.ts.activeLayer;
     let title = 'Properties';
     const body = el('div', { class: 'dock-body' });
-    if (layer && this.paintTarget === 'mask' && layer.mask) {
+    const fxNow = layer && this.fxSel ? layer.fx?.find((f) => f.id === this.fxSel) : undefined;
+    if (layer && this.fxSel && !fxNow) this.fxSel = 0;
+    if (layer && fxNow) {
+      title = `Properties — ${FX_KIND_LABEL[fxNow.kind].toLowerCase()}`;
+      body.append(...this.fxProps(layer, fxNow));
+    } else if (layer && this.paintTarget === 'mask' && layer.mask) {
       title = 'Properties — mask';
       body.append(...this.maskProps(layer));
     } else if (layer?.kind === 'group') {

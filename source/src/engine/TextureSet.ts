@@ -6,6 +6,7 @@ import { MeshParts, idColor } from './MeshParts';
 import { bakeThickness, downsample, ThicknessSettings, DEFAULT_THICK } from './Thickness';
 import { RayBaker, SAMPLE_FLOATS } from './RayBaker';
 import { DEFAULT_NAME_RULES, keyIds, wantsIgnoreBf, type NameRules } from './meshNames';
+import { FRAG_LAYERFX, LayerFx, activeFx, fxOnChannel, filterIndex } from './LayerFx';
 import { FRAG_GEN, FRAG_MICRO, GenSettings, LayerMaskSpec, axisVec, genIndex, MaskFx, FX_BLENDS, SHAPE_KINDS, usesMicro } from './Masks';
 import { FRAG_PROC, ProcSource, patternIndex, procKey, PatternType } from './Procedural';
 import { SpKind, SpSettings, spShader, spPack, spGlobalBlur, spGrungeParams, parseGrungeRef, GRUNGE_FALLBACK, FRAG_SP_PACK, FRAG_SP_PACK2, FRAG_SP_BLUR, SP_MAXP } from './PainterGen';
@@ -144,10 +145,18 @@ export interface LayerMask extends LayerMaskSpec {
   /** The generator stack alone (heavy noise), re-rendered only when its settings or the mesh maps change. */
   genRT?: RT;
   genKey?: string;
+  /** Turned off (Substance's "Toggle mask"): the layer shows as if it had no mask. */
+  off?: boolean;
+  /** Inverted (black ↔ white) without changing what's painted. */
+  inv?: boolean;
 }
 
 interface LayerCommon {
   id: number; name: string; visible: boolean; opacity: number; blend: BlendMode; mask?: LayerMask;
+  /** Content effects (filters, generators, levels, fills) applied before the mask, bottom → top. */
+  fx?: LayerFx[];
+  /** Colour tag (index into the tag colours, 0 = none). */
+  tag?: number;
   /** Anchor point (Substance): generators can use the stack's height up to here as micro details. */
   anchor?: boolean;
 }
@@ -191,7 +200,7 @@ type HistEntry = StrokeEntry | StateEntry | MultiEntry;
 type UndoEntry = StrokeEntry;
 interface NodeSnap {
   layer: Layer; props: Record<string, unknown>; mask?: LayerMask;
-  maskProps?: { base: 'white' | 'black'; gen: GenSettings | null; painted: boolean };
+  maskProps?: { base: 'white' | 'black'; gen: GenSettings | null; painted: boolean; off?: boolean; inv?: boolean };
   children?: NodeSnap[];
 }
 interface Snap { tree: NodeSnap[]; active: number }
@@ -260,6 +269,8 @@ uniform sampler2D fillTex;
 uniform float tiling;
 uniform float opacity;
 uniform bool hasMask;
+uniform bool maskInv;
+uniform bool isolate;
 uniform sampler2D maskTex;
 uniform int blend;
 uniform bool isNormal;
@@ -403,8 +414,10 @@ void main() {
     if (useAlphaTex) l.a *= alphaSample();
     if (planar) l.a *= planarCover();
   } else l = texture2D(layerTex, vUv);
+  // Just the layer's own content (content effects and flattening work on it).
+  if (isolate) { gl_FragColor = vec4(l.rgb, clamp(l.a, 0.0, 1.0)); return; }
   float a = clamp(l.a * opacity, 0.0, 1.0);
-  if (hasMask) a *= texture2D(maskTex, vUv).r;
+  if (hasMask) { float mk = texture2D(maskTex, vUv).r; a *= maskInv ? 1.0 - mk : mk; }
   vec3 c = isNormal ? l.rgb : blendf(blend, p.rgb, l.rgb);
   gl_FragColor = vec4(clamp(mix(p.rgb, c, a), 0.0, 1.0), p.a);
 }`;
@@ -767,6 +780,7 @@ export class TextureSet {
     fillValue: { value: new THREE.Vector3() }, opacity: { value: 1 },
     useTex: { value: false }, texGray: { value: false }, texFlipG: { value: false }, fillTex: { value: null }, tiling: { value: 1 },
     hasMask: { value: false }, maskTex: { value: null }, blend: { value: 0 }, isNormal: { value: false },
+    maskInv: { value: false }, isolate: { value: false },
     posMap: { value: null }, nrmMap: { value: null }, tanMap: { value: null }, bitMap: { value: null },
     triplanar: { value: false }, triSharp: { value: 4 }, rotCS: { value: new THREE.Vector2(1, 0) }, uvOff: { value: new THREE.Vector2() },
     planar: { value: false }, pjC: { value: new THREE.Vector3() }, pjU: { value: new THREE.Vector3(1, 0, 0) }, pjV: { value: new THREE.Vector3(0, 1, 0) },
@@ -1541,7 +1555,8 @@ void main() {
 
   snapshot(): Snap {
     const node = (l: Layer): NodeSnap => {
-      const props: Record<string, unknown> = { name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, anchor: l.anchor };
+      const props: Record<string, unknown> = { name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, anchor: l.anchor,
+        fx: l.fx ? structuredClone(l.fx) : undefined, tag: l.tag };
       if (l.kind === 'fill') {
         props.values = structuredClone(l.values); props.enabled = { ...l.enabled }; props.tiling = l.tiling;
         props.images = l.images ? { ...l.images } : undefined;
@@ -1552,7 +1567,7 @@ void main() {
       }
       if (l.kind === 'group') props.open = l.open;
       const n: NodeSnap = { layer: l, props, mask: l.mask };
-      if (l.mask) n.maskProps = { base: l.mask.base, gen: l.mask.gen ? structuredClone(l.mask.gen) : null, painted: l.mask.painted };
+      if (l.mask) n.maskProps = { base: l.mask.base, gen: l.mask.gen ? structuredClone(l.mask.gen) : null, painted: l.mask.painted, off: l.mask.off, inv: l.mask.inv };
       if (l.kind === 'group') n.children = l.children.map(node);
       return n;
     };
@@ -1562,12 +1577,13 @@ void main() {
   private restore(s: Snap) {
     const build = (n: NodeSnap): Layer => {
       const l = n.layer as any;
-      for (const [k, v] of Object.entries(n.props)) l[k] = k === 'values' || k === 'adj' || k === 'procs' || k === 'sbs' ? (v === undefined ? v : structuredClone(v)) : k === 'enabled' || (k === 'xf' && v) ? { ...(v as object) } : v;
+      for (const [k, v] of Object.entries(n.props)) l[k] = k === 'values' || k === 'adj' || k === 'procs' || k === 'sbs' || k === 'fx' ? (v === undefined ? v : structuredClone(v)) : k === 'enabled' || (k === 'xf' && v) ? { ...(v as object) } : v;
       l.mask = n.mask;
       if (n.mask && n.maskProps) {
         n.mask.base = n.maskProps.base;
         n.mask.gen = n.maskProps.gen ? structuredClone(n.maskProps.gen) : null;
         n.mask.painted = n.maskProps.painted;
+        n.mask.off = n.maskProps.off; n.mask.inv = n.maskProps.inv;
         n.mask.dirty = true;
       }
       if (n.children) l.children = n.children.map(build);
@@ -2306,9 +2322,11 @@ void main() {
       u.texFlipG.value = false;
       u.blend.value = BLEND_INDEX[l.blend] ?? 0;
       u.isNormal.value = ch === 'normal';
-      u.hasMask.value = !!l.mask;
+      u.hasMask.value = !!l.mask && !l.mask.off;
+      u.maskInv.value = !!l.mask?.inv;
+      u.isolate.value = false;
       // Unbind unused samplers: a stale binding to a target we're drawing into is a feedback loop.
-      u.maskTex.value = l.mask ? l.mask.rt.texture : null;
+      u.maskTex.value = l.mask && !l.mask.off ? l.mask.rt.texture : null;
       u.layerTex.value = null;
       u.fillTex.value = null;
       u.triplanar.value = false;
@@ -2376,12 +2394,179 @@ void main() {
         } else u.fillValue.value.fromArray(chValue(l.values, ch));
       } else if (l.kind === 'paint') u.layerTex.value = l.rts[ch].texture;
       else u.layerTex.value = groupResult!.texture;
+      const fxs = l.kind !== 'group' ? activeFx(l.fx).filter((f) => fxOnChannel(f, ch)) : [];
+      if (this.alone && this.alone.id === l.id) { this.renderAloneHere(l, ch, fxs); break layer; }
+      if (fxs.length) {
+        const res = this.runContentFx(fxs, ch);
+        u.layerTex.value = res.texture;
+      }
       g.run(this.matLayer, dst);
+      u.layerTex.value = null;
       [src, dst] = [dst, src];
       }
-      if (ch === 'height' && l.anchor) this.snapAnchor(l, src);
+      if (ch === 'height' && l.anchor && !this.isolating) this.snapAnchor(l, src);
     }
     return src;
+  }
+
+  // ------------------------------------------------------------ content effects (filters, generators, levels, fills)
+
+  private fxRT: RT[] = [];
+  private fxGen = new Map<number, { rt: RT; key: string }>();
+  private matFx = quadShader(FRAG_LAYERFX, {
+    src: { value: null }, genTex: { value: null }, maskTex: { value: null }, hasMask: { value: false }, maskInv: { value: false },
+    op: { value: 0 }, p: { value: new THREE.Vector4() }, p2: { value: new THREE.Vector4() }, col: { value: new THREE.Vector3(1, 1, 1) },
+    val: { value: 0.5 }, blend: { value: 0 }, opacity: { value: 1 }, isColor: { value: false }, texel: { value: new THREE.Vector2() },
+  });
+  private ensureFxRT() {
+    if (this.fxRT.length === 2 && this.fxRT[0].width === this.size) return;
+    this.fxRT.forEach((r) => r.dispose());
+    this.fxRT = [makeRT(this.size, { type: THREE.HalfFloatType }), makeRT(this.size, { type: THREE.HalfFloatType })];
+  }
+  /** A content generator's grey output (cached until its settings or the mesh maps change). */
+  private fxGenTex(f: LayerFx): THREE.Texture | null {
+    const g = f.gen;
+    if (!g) return null;
+    const js = JSON.stringify(g);
+    const key = `${js}#${this.meshVersion}#${this.size}${usesMicro(g) ? '#a' + this.anchorVersion : ''}${js.includes('"sp"') ? '#g' + this.grungeVersion : ''}`;
+    let c = this.fxGen.get(f.id);
+    if (!c || c.rt.width !== this.size) { c?.rt.dispose(); c = { rt: makeRT(this.size), key: '' }; this.fxGen.set(f.id, c); }
+    if (c.key !== key) { this.renderGenStack({ base: 'black' } as LayerMask, g, c.rt); c.key = key; }
+    return c.rt.texture;
+  }
+  /**
+   * Runs with matLayer's uniforms already set for the layer: draws just its content, then each effect on top.
+   * Leaves matLayer ready to composite the result as a plain texture.
+   */
+  private runContentFx(fxs: LayerFx[], ch: Ch): RT {
+    this.ensureFxRT();
+    const u = this.matLayer.uniforms;
+    u.isolate.value = true;
+    this.gpu.run(this.matLayer, this.fxRT[0]);
+    u.isolate.value = false;
+    u.isFill.value = false;
+    let cur = 0;
+    const f = this.matFx.uniforms;
+    (f.texel.value as THREE.Vector2).set(1 / this.size, 1 / this.size);
+    f.isColor.value = ch === 'color' || ch === 'emit';
+    f.hasMask.value = false; f.maskTex.value = null;
+    for (const e of fxs) {
+      f.genTex.value = e.kind === 'generator' ? this.fxGenTex(e) : null;
+      const P = f.p.value as THREE.Vector4, P2 = f.p2.value as THREE.Vector4;
+      P.set(0, 0, 0, 0); P2.set(0, 0, 0, 0);
+      (f.col.value as THREE.Vector3).fromArray(e.color ?? [1, 1, 1]);
+      f.val.value = e.value ?? 0.5;
+      if (e.kind === 'filter' && e.filter) {
+        f.op.value = filterIndex(e.filter);
+        const q = e.p ?? [];
+        P.set(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, q[3] ?? 0);
+        if (e.filter === 'blur') P.x *= this.size / 1024;
+      } else if (e.kind === 'generator') f.op.value = 20;
+      else if (e.kind === 'levels') { const v = e.lv ?? [0, 1, 1, 0, 1]; f.op.value = 21; P.set(v[0], v[1], v[2], v[3]); P2.set(v[4], 0, 0, 0); }
+      else f.op.value = 22;
+      f.blend.value = Math.max(0, FX_BLENDS.indexOf(e.blend ?? 'normal'));
+      f.opacity.value = Math.max(0, Math.min(1, e.opacity));
+      f.src.value = this.fxRT[cur].texture;
+      this.gpu.run(this.matFx, this.fxRT[1 - cur]);
+      cur = 1 - cur;
+    }
+    f.src.value = null; f.genTex.value = null;
+    return this.fxRT[cur];
+  }
+
+  // ------------------------------------------------------------ one layer alone (flatten, export channels)
+
+  private alone: { id: number; out: RT } | null = null;
+  /** Rendering a layer on its own: anchors must not pick up these partial stacks. */
+  private isolating = false;
+  private renderAloneHere(l: Layer, ch: Ch, fxs: LayerFx[]) {
+    let res: RT;
+    if (fxs.length) res = this.runContentFx(fxs, ch);
+    else {
+      this.ensureFxRT();
+      const u = this.matLayer.uniforms;
+      u.isolate.value = true;
+      this.gpu.run(this.matLayer, this.fxRT[0]);
+      u.isolate.value = false;
+      res = this.fxRT[0];
+    }
+    this.finishAlone(l, res, this.alone!.out, 99);
+  }
+  /** op 99: content × opacity × mask; op 98: un-mix a folder rendered over black (src) and white (gen). */
+  private finishAlone(l: Layer, src: RT, out: RT, op: 98 | 99, white?: RT) {
+    const f = this.matFx.uniforms;
+    f.op.value = op;
+    f.src.value = src.texture;
+    f.genTex.value = white ? white.texture : null;
+    f.opacity.value = l.opacity;
+    const m = l.mask && !l.mask.off ? l.mask : null;
+    f.hasMask.value = !!m; f.maskTex.value = m ? m.rt.texture : null; f.maskInv.value = !!m?.inv;
+    this.gpu.run(this.matFx, out);
+    f.src.value = null; f.genTex.value = null; f.maskTex.value = null; f.hasMask.value = false;
+  }
+  /** Render what one layer (or folder) paints on a channel, as straight RGBA with its opacity and mask, into `out`. */
+  private renderAlone(l: Layer, ch: Ch, out: RT) {
+    this.compositeDirty();
+    this.isolating = true;
+    try { this.renderAloneInner(l, ch, out); } finally { this.isolating = false; }
+  }
+  private renderAloneInner(l: Layer, ch: Ch, out: RT) {
+    this.gpu.clear(out);
+    if (!l.visible) return;
+    const [a0] = this.pair(1);
+    const init = (v: number) => {
+      this.matInit.uniforms.posMap.value = this.posRT.texture;
+      this.matInit.uniforms.value.value.set(v, v, v);
+      this.gpu.run(this.matInit, a0);
+    };
+    if (l.kind !== 'group') {
+      init(0);
+      this.alone = { id: l.id, out };
+      try { this.compList([l], ch, a0, 1); } finally { this.alone = null; }
+      return;
+    }
+    if (!l.children.length) return;
+    // Children's effects use fxRT, so the over-black result is kept in its own target.
+    const keep = makeRT(this.size, { type: THREE.HalfFloatType });
+    try {
+      init(0);
+      const b = this.compList(l.children, ch, a0, 1);
+      this.matCopy.uniforms.src.value = b.texture;
+      this.gpu.run(this.matCopy, keep);
+      this.matCopy.uniforms.src.value = null;
+      init(1);
+      const w = this.compList(l.children, ch, a0, 1);
+      this.finishAlone(l, keep, out, 98, w);
+    } finally { keep.dispose(); }
+  }
+  /** RGBA8 pixels (rows bottom-up) of what a layer paints on one channel. */
+  layerChannelPixels(l: Layer, ch: Ch): Uint8Array {
+    const rt = makeRT(this.size);
+    try { this.renderAlone(l, ch, rt); return this.readRT(rt); } finally { rt.dispose(); }
+  }
+  /** The computed mask (generators + paint), RGBA8 rows bottom-up. */
+  maskPixels(l: Layer): Uint8Array | null {
+    if (!l.mask) return null;
+    this.compositeDirty();
+    if (l.mask.dirty) this.updateMask(l);
+    return this.readRT(l.mask.rt);
+  }
+  /**
+   * Substance's "Flatten layer": bake a layer (with its effects, mask and opacity) or a whole folder into one paint
+   * layer that looks the same. Returns the new layer.
+   */
+  flattenLayer(l: Layer): PaintLayer | null {
+    const w = this.where(l.id);
+    if (!w) return null;
+    this.activeId = l.id;
+    const pl = this.addPaintLayer(l.name, true, undefined);
+    pl.blend = l.kind === 'group' ? 'normal' : l.blend;
+    pl.anchor = l.anchor; pl.tag = l.tag;
+    for (const ch of CHANNELS) this.renderAlone(l, ch, pl.rts[ch]);
+    this.removeLayer(l.id);
+    this.activeId = pl.id;
+    this.markAll();
+    return pl;
   }
 
   // ------------------------------------------------------------ polygon fill
