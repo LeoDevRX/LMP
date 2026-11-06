@@ -67,6 +67,10 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.20', steps: [
+        'Projected pictures now get a real 3D manipulator in the viewport, like Substance\'s: arrows to move, rings to rotate, cubes to stretch on one axis. W / E / R switch between them.',
+        'Drag on the model to stick the projection to the surface, hold Shift to snap, and switch between Local and World axes or Reset from the top bar.',
+      ] },
       { h: 'New in v1.19', steps: [
         'Drop a picture onto the model and it\'s projected right there, like Substance\'s planar projection, with handles to move, turn and resize it on the model.',
         'Transparent PNGs keep their transparency: only the picture shows, on every channel of the layer.',
@@ -589,19 +593,26 @@ export const GUIDES: Guide[] = [
   },
   {
     id: 'project-image', title: 'Projecting an image onto the model (planar projection)', cat: 'Layers & materials',
-    sum: 'Drop a picture on the model and place it like a sticker, with handles to move, turn and resize it.',
-    tags: ['image', 'import'], words: 'project projection planar decal sticker logo label image picture photo png transparent transparency alpha background drag drop place move rotate turn resize scale gizmo handles box projector stencil',
+    sum: 'Drop a picture on the model and place it like a sticker, moving, rotating and stretching it right in the 3D view.',
+    tags: ['image', 'import'], words: 'manipulator transform arrows rings axis local world snap w e r project projection planar decal sticker logo label image picture photo png transparent transparency alpha background drag drop place move rotate turn resize scale gizmo handles box projector stencil',
     body: [
       { steps: [
         'Drag one picture (PNG, JPG…) from your computer straight onto the model in the 3D view.',
-        'It lands where you dropped it, facing you, on a new fill layer, with handles on top.',
-        'Drag the middle handle (or anywhere on the model) to move it, the round knob to turn it, and the square to resize it.',
-        'Press Esc (or Done moving) when it\'s where you want it. Select the layer and click "Move / turn / resize on the model" in Properties to change it later.',
+        'It lands where you dropped it, facing you, on a new fill layer, with a box and a manipulator on it.',
+        'Press Esc (or Done) when it\'s where you want it. To change it later, select the layer and click "Edit in the viewport" under Projection in Properties.',
+      ] },
+      { h: 'The manipulator', steps: [
+        'Move (W): drag an arrow to slide along that axis, or a coloured square to slide on that plane.',
+        'Rotate (E): drag a ring to turn around that axis. The blue ring spins the picture in place; red and green tilt it.',
+        'Scale (R): drag a cube to stretch along one axis (red = width, green = height), or the middle to scale it all.',
+        'Drag on the model itself (not on a handle) to stick the projection to the surface under the cursor, facing out from it.',
+        'Hold Shift while dragging to move, turn (15°) and scale in steps.',
+        'Local / World in the top bar choose whether the axes follow the projection or the scene. Reset puts it back facing you in the middle of the view.',
       ] },
       { h: 'Transparent pictures', p: 'PNGs with a transparent background stay transparent: only the picture shows, on every channel of the layer. Untick "Use the image\'s transparency" in Properties to use the whole rectangle.' },
       { h: 'Settings (Properties > Projection)', steps: [
         'Mode: UV (the model\'s UVs), Tri-planar, or Planar (projected like a sticker).',
-        'Size, Width / height and Turn change the box. Scale repeats the image inside it.',
+        'Size, Width / height and Turn change the box too, if you want exact numbers. Scale repeats the image inside it.',
         'Hide on back faces stops the picture showing through on the back of the model.',
         'Repeat outside the box tiles the image beyond the box.',
         'Turn on other channels (roughness, height, metal…) to make the sticker change those too, cut out by the picture.',
