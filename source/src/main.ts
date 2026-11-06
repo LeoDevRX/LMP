@@ -1957,7 +1957,11 @@ class App {
     container.addEventListener('drop', async (e) => {
       e.preventDefault(); depth = 0; container.classList.remove('dragging');
       if (this.dragItem) { const items = this.dragList(this.dragItem); this.dragItem = null; this.vp.setHighlight('', null); await this.dropAssets(items, e.clientX, e.clientY); return; }
-      await this.dropFiles([...(e.dataTransfer?.files ?? [])]);
+      const fl = [...(e.dataTransfer?.files ?? [])];
+      // One plain image dropped on the model: project it there (like Substance). Map sets still get the import dialog.
+      if (fl.length === 1 && /\.(png|jpe?g|webp|bmp|tga|tiff?)$/i.test(fl[0].name) && !splitMapName(fl[0].name.replace(/\.[^.]+$/, ''))
+        && this.mode === 'paint' && this.vp.pick(e.clientX, e.clientY)) { await this.projectImage(fl[0], e.clientX, e.clientY); return; }
+      await this.dropFiles(fl);
     });
     // Files dropped anywhere else (Assets, Layers, menus…) are handled too, instead of the
     // browser opening / downloading them.
@@ -4781,9 +4785,47 @@ class App {
   // ---------------------------------------------------------------- Shape generator: place and move
 
   /** The Shape generator being moved (dragging on the 3D view places it). */
-  shapeMove: { layer: Layer; g: GenSettings } | null = null;
+  shapeMove: { layer: Layer; g: GenSettings; fill?: boolean } | null = null;
+  /** Something the gizmo moves changed: a Shape mask, or a fill layer's planar projection. */
+  private shapeChanged(sm: { layer: Layer; fill?: boolean }) { if (sm.fill) this.ts.markDirty(); else this.ts.maskChanged(sm.layer); }
   private shapeDragging = false;
   private shapeQueued: { x: number; y: number } | null = null;
+  /** A planar projection facing the camera, at the middle of the 3D view (or at a point on the model). */
+  private placeProjectionAtView(fill: FillLayer, at?: THREE.Vector3) {
+    const r = this.vp.canvas.getBoundingClientRect(), v = this.vp.region;
+    const p = at ?? this.vp.pick(r.left + v.x + v.w / 2, r.top + v.y + v.h / 2)?.point;
+    const xf = (fill.xf ??= { ...DEFAULT_XF });
+    const cam = this.vp.camera.position.clone();
+    const target = p ?? this.vp.controls.target.clone();
+    xf.shapeAt = target.toArray() as [number, number, number];
+    xf.shapeNormal = cam.sub(target).normalize().toArray() as [number, number, number];
+    xf.shapeSize ??= 0.3; xf.shapeRot ??= 0;
+    const img = fill.images?.color?.tex.image as { width?: number; height?: number } | undefined;
+    xf.shapeAspect ??= img?.width && img?.height ? img.width / img.height : 1;
+  }
+
+  /** Substance-style: an image dropped on the model becomes a fill layer projected onto it where it was dropped. */
+  async projectImage(f: File, x: number, y: number) {
+    const hit = this.vp.pick(x, y);
+    const bytes = await f.arrayBuffer();
+    let tex: THREE.Texture;
+    try { tex = await imageTexture(bytes, f.name); } catch { toast(`Could not read the image ${f.name}`, true); return; }
+    const name = f.name.replace(/\.[^.]+$/, '');
+    const enabled: Partial<Record<Ch, boolean>> = { color: true };
+    let layer!: FillLayer;
+    await this.ts.batch(`Project ${f.name}`, () => {
+      layer = this.ts.addFillLayer(name, undefined, enabled, true, { color: { name: f.name, bytes, tex } }, 1);
+      layer.xf = { ...DEFAULT_XF, proj: 'planar', hideBack: true, useAlpha: true };
+      this.placeProjectionAtView(layer, hit?.point);
+    });
+    this.ts.markAll();
+    this.paintTarget = 'content';
+    this.modified = true;
+    this.refresh();
+    this.shapeMove = null;
+    this.toggleShapeMove(layer, layer.xf as unknown as GenSettings, true);
+  }
+
   /** Put a new shape where the middle of the 3D view hits the model. */
   private placeShapeAtView(g: GenSettings) {
     const r = this.vp.canvas.getBoundingClientRect(), v = this.vp.region;
@@ -4807,7 +4849,7 @@ class App {
         if (!sm) return;
         e.preventDefault(); e.stopPropagation();
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        this.ts.checkpoint(kind === 'move' ? 'Move shape' : kind === 'rot' ? 'Rotate shape' : 'Resize shape');
+        this.ts.checkpoint(sm.fill ? (kind === 'move' ? 'Move projection' : kind === 'rot' ? 'Rotate projection' : 'Resize projection') : kind === 'move' ? 'Move shape' : kind === 'rot' ? 'Rotate shape' : 'Resize shape');
         const st = this.gizmoState();
         if (!st) return;
         const a0 = Math.atan2(e.clientY - st.cy, e.clientX - st.cx), d0 = Math.hypot(e.clientX - st.cx, e.clientY - st.cy) || 1;
@@ -4819,8 +4861,8 @@ class App {
             let r = rot0 + ((a - a0) * 180) / Math.PI * st.flip;
             r = ((r + 540) % 360) - 180;
             sm.g.shapeRot = Math.round(r);
-          } else sm.g.shapeSize = Math.min(1.5, Math.max(0.01, size0 * (Math.hypot(mv.clientX - st.cx, mv.clientY - st.cy) / d0)));
-          this.ts.maskChanged(sm.layer); this.modified = true; this.poke();
+          } else sm.g.shapeSize = Math.min(sm.fill ? 4 : 1.5, Math.max(0.01, size0 * (Math.hypot(mv.clientX - st.cx, mv.clientY - st.cy) / d0)));
+          this.shapeChanged(sm); this.modified = true; this.poke();
         };
         const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); this.queueLayerThumbs(); this.buildProperties(); };
         window.addEventListener('pointermove', move);
@@ -4858,11 +4900,11 @@ class App {
     return { cx: c.x, cy: c.y, r: Math.max(Math.hypot(ux, uy), Math.hypot(vx, vy)), angle: Math.atan2(vy, vx) + Math.PI / 2, flip: ux * vy - uy * vx > 0 ? -1 : 1 };
   }
 
-  toggleShapeMove(layer: Layer, g: GenSettings) {
-    this.shapeMove = this.shapeMove?.g === g ? null : { layer, g };
+  toggleShapeMove(layer: Layer, g: GenSettings, fill = false) {
+    this.shapeMove = this.shapeMove?.g === g ? null : { layer, g, fill };
     document.body.classList.toggle('moving-shape', !!this.shapeMove);
     this.showGizmo(!!this.shapeMove);
-    if (this.shapeMove) toast('Drag on the model to move the shape. Esc when done.');
+    if (this.shapeMove) toast(fill ? 'Drag on the model (or the middle handle) to move the image, the knob to turn it, the square to resize it. Esc when done.' : 'Drag on the model to move the shape. Esc when done.');
     this.buildToolbar(); this.buildProperties();
   }
   private moveShapeTo(x: number, y: number) {
@@ -4875,7 +4917,7 @@ class App {
       if (!hit) return;
       sm.g.shapeAt = hit.point.toArray() as [number, number, number];
       sm.g.shapeNormal = hit.normal.clone().normalize().toArray() as [number, number, number];
-      this.ts.maskChanged(sm.layer);
+      this.shapeChanged(sm);
       this.modified = true;
       this.poke();
     });
@@ -5899,17 +5941,39 @@ class App {
     type NumKey = { [K in keyof FillAdjust]: FillAdjust[K] extends number ? K : never }[keyof FillAdjust];
     const sa = (label: string, key: NumKey, min: number, max: number, step: number, fmt?: (v: number) => string) =>
       slider(label, { min, max, step, value: a[key], fmt, onInput: (v) => { pre(key); adj()[key] = v; live(); } }).el;
-    const proj = (p: 'uv' | 'tri', label: string) => el('button', { class: x.proj === p ? 'on' : '', onclick: () => { if (x.proj === p) return; pre('proj'); xf().proj = p; live(); this.buildProperties(); } }, label);
+    const proj = (p: 'uv' | 'tri' | 'planar', label: string) => el('button', { class: x.proj === p ? 'on' : '', onclick: () => {
+      if (x.proj === p) return; pre('proj'); xf().proj = p;
+      if (p === 'planar' && !fill.xf!.shapeAt) this.placeProjectionAtView(fill);
+      live(); this.buildProperties();
+    } }, label);
+    const pck = (label: string, on: boolean, set: (v: boolean) => void, title = '') => {
+      const c = el('input', { type: 'checkbox', checked: on }) as HTMLInputElement;
+      c.addEventListener('change', () => { pre('pj'); set(c.checked); live(); });
+      return el('label', { class: 'check-row', title }, c, ' ' + label);
+    };
+    const moving = this.shapeMove?.g === (fill.xf as unknown as GenSettings);
+    const planarRows = x.proj === 'planar' ? [
+      el('div', { class: 'row' }, el('button', { class: 'grow' + (moving ? ' on' : ''), onclick: () => this.toggleShapeMove(fill, xf() as unknown as GenSettings, true) },
+        moving ? 'Done moving (Esc)' : 'Move / turn / resize on the model')),
+      slider('Size', { min: 0.02, max: 4, step: 0.01, value: x.shapeSize ?? 0.3, fmt: (v) => v.toFixed(2), onInput: (v) => { pre('pjsize'); xf().shapeSize = v; live(); } }).el,
+      slider('Width / height', { min: 0.1, max: 10, step: 0.01, value: x.shapeAspect ?? 1, fmt: (v) => v.toFixed(2), onInput: (v) => { pre('pjasp'); xf().shapeAspect = v; live(); } }).el,
+      slider('Turn', { min: -180, max: 180, step: 1, value: x.shapeRot ?? 0, fmt: (v) => `${v.toFixed(0)}°`, onInput: (v) => { pre('pjrot'); xf().shapeRot = v; live(); } }).el,
+      pck('Hide on back faces', x.hideBack !== false, (v) => (xf().hideBack = v), 'Don\'t project onto surface facing away from the image (the back of the model)'),
+      pck('Repeat outside the box', !!x.tile, (v) => (xf().tile = v)),
+    ] : [];
     const placement = group('Projection',
-      el('div', { class: 'row' }, el('label', {}, 'Mode'), el('div', { class: 'seg grow' }, proj('uv', 'UV'), proj('tri', 'Tri-planar'))),
+      el('div', { class: 'row' }, el('label', {}, 'Mode'), el('div', { class: 'seg grow' }, proj('uv', 'UV'), proj('tri', 'Tri-planar'), proj('planar', 'Planar'))),
+      ...planarRows,
+      imgs.color ? pck('Use the image\'s transparency', x.useAlpha !== false, (v) => (xf().useAlpha = v), 'Transparent parts of the base color image show the layers below, on every channel') : null,
       slider('Scale', { min: 0.25, max: 64, step: 0.25, value: fill.tiling, fmt: (v) => `${v}×`, onInput: (v) => { pre('tiling'); fill.tiling = v; live(); } }).el,
       sx('Rotation', 'rot', 0, 360, 1, (v) => `${v.toFixed(0)}°`),
-      x.proj === 'uv' ? sx('Offset U', 'offU', -1, 1, 0.005, (v) => v.toFixed(3)) : null,
-      x.proj === 'uv' ? sx('Offset V', 'offV', -1, 1, 0.005, (v) => v.toFixed(3)) : null,
+      x.proj !== 'tri' ? sx('Offset U', 'offU', -1, 1, 0.005, (v) => v.toFixed(3)) : null,
+      x.proj !== 'tri' ? sx('Offset V', 'offV', -1, 1, 0.005, (v) => v.toFixed(3)) : null,
       x.proj === 'tri' ? sx('Blend sharpness', 'sharp', 1, 24, 0.5, (v) => v.toFixed(1)) : null,
       el('p', { class: 'note' }, x.proj === 'tri'
         ? 'Tri-planar projects the material from 3 sides in 3D, so there are no visible UV seams and the scale is the same everywhere — like Substance\'s tri-planar fill.'
-        : 'Uses the model\'s UVs. Switch to Tri-planar if seams or stretching show.'),
+        : x.proj === 'planar' ? 'Planar projects the image flat onto the model, like a sticker or a projector (Substance\'s planar projection). Move, turn and resize it with the handles on the model. Scale repeats the image inside the box.'
+        : 'Uses the model\'s UVs. Switch to Tri-planar if seams or stretching show, or Planar to place an image like a sticker.'),
     );
     const tint = el('input', { type: 'color', value: rgbToHex(a.tint) }) as HTMLInputElement;
     tint.addEventListener('input', () => { pre('tint'); adj().tint = hexToRgb(tint.value); live(); });

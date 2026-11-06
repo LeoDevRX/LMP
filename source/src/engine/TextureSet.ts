@@ -92,12 +92,25 @@ export interface Brush {
 
 /** How a fill layer's images are laid on the model (Substance's UV transformations / projection). */
 export interface FillTransform {
-  proj: 'uv' | 'tri';
+  proj: 'uv' | 'tri' | 'planar';
   rot: number; // degrees
   offU: number;
   offV: number;
   /** Tri-planar blend sharpness. */
   sharp: number;
+  // Planar projection (like Substance's): the image is projected flat onto the model, placed with the gizmo.
+  // Same fields as the Shape generator, so the same frame and handles work.
+  shapeAt?: [number, number, number];
+  shapeNormal?: [number, number, number];
+  shapeSize?: number;
+  shapeAspect?: number;
+  shapeRot?: number;
+  /** Planar: repeat the image outside its box instead of leaving it empty. */
+  tile?: boolean;
+  /** Planar: don't project onto surface facing away from the projector (the back of the model). */
+  hideBack?: boolean;
+  /** Use the base colour image's transparency for the whole layer (default on). */
+  useAlpha?: boolean;
 }
 export const DEFAULT_XF: FillTransform = { proj: 'uv', rot: 0, offU: 0, offV: 0, sharp: 4 };
 /** Per-channel adjustments of a fill layer's images. */
@@ -258,6 +271,17 @@ uniform bool triplanar;
 uniform float triSharp;
 uniform vec2 rotCS;
 uniform vec2 uvOff;
+uniform bool planar;
+uniform vec3 pjC;
+uniform vec3 pjU;
+uniform vec3 pjV;
+uniform vec3 pjN;
+uniform vec2 pjH;
+uniform bool pjTile;
+uniform bool pjBack;
+uniform sampler2D alphaTex;
+uniform bool useAlphaTex;
+uniform bool texAlpha;
 uniform int adjMode;
 uniform vec4 adjA;
 uniform vec3 adjTint;
@@ -280,7 +304,47 @@ vec3 hsv2rgb(vec3 c) {
   vec3 p = abs(fract(c.xxx + vec3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
   return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
 }
+// Planar projection: this texel's place in the projector's box (0..1), and how much it's covered.
+vec2 planarUV() {
+  vec3 d = texture2D(posMap, vUv).xyz - pjC;
+  return vec2(dot(d, pjU) / (2.0 * pjH.x), dot(d, pjV) / (2.0 * pjH.y)) + 0.5;
+}
+float planarCover() {
+  vec2 q = planarUV();
+  float c = 1.0;
+  if (!pjTile) {
+    vec2 e = min(q, 1.0 - q);
+    c = step(0.0, min(e.x, e.y));
+  }
+  if (pjBack) c *= smoothstep(-0.02, 0.15, dot(normalize(texture2D(nrmMap, vUv).xyz + vec3(1e-6)), pjN));
+  return c;
+}
+vec4 sampleTexAt(sampler2D tx, vec2 uv) {
+  vec2 r = vec2(uv.x * rotCS.x - uv.y * rotCS.y, uv.x * rotCS.y + uv.y * rotCS.x) + uvOff;
+  return texture2D(tx, r);
+}
+/** The colour image's alpha, laid on the model the same way as the layer's images. */
+float alphaSample() {
+  if (planar) return sampleTexAt(alphaTex, (planarUV() - 0.5) * tiling + 0.5).a;
+  if (!triplanar) return sampleTexAt(alphaTex, vUv * tiling).a;
+  vec3 P = texture2D(posMap, vUv).xyz * tiling * 0.5;
+  vec3 N = normalize(texture2D(nrmMap, vUv).xyz + vec3(1e-6));
+  vec3 w = pow(abs(N), vec3(triSharp)); w /= (w.x + w.y + w.z);
+  return sampleTexAt(alphaTex, P.zy).a * w.x + sampleTexAt(alphaTex, P.xz).a * w.y + sampleTexAt(alphaTex, P.xy).a * w.z;
+}
 vec4 fillSample() {
+  if (planar) {
+    vec4 t = sampleFill((planarUV() - 0.5) * tiling + 0.5);
+    if (isNormal) {
+      // The image's normal is in the projector's frame: to world, then to the surface's tangent space.
+      vec3 pn = unrot(t.xyz * 2.0 - 1.0);
+      vec3 wn = normalize(pjU * pn.x + pjV * pn.y + pjN * pn.z);
+      vec3 N = normalize(texture2D(nrmMap, vUv).xyz + vec3(1e-6));
+      vec3 T = normalize(texture2D(tanMap, vUv).xyz + vec3(1e-6)), B = normalize(texture2D(bitMap, vUv).xyz + vec3(1e-6));
+      return vec4(normalize(vec3(dot(wn, T), dot(wn, B), max(dot(wn, N), 0.05))) * 0.5 + 0.5, 1.0);
+    }
+    return t;
+  }
   if (!triplanar) {
     vec4 t = sampleFill(vUv * tiling);
     if (isNormal) t.xyz = unrot(t.xyz * 2.0 - 1.0) * 0.5 + 0.5;
@@ -333,8 +397,11 @@ void main() {
   if (isFill) {
     if (useTex) {
       vec4 t = fillSample();
-      l = vec4(adjust(texGray ? vec3(t.r) : t.rgb), 1.0);
+      l = vec4(adjust(texGray ? vec3(t.r) : t.rgb), texAlpha ? t.a : 1.0);
     } else l = vec4(fillValue, 1.0);
+    // Transparent images: the colour image's alpha cuts out every channel of the layer.
+    if (useAlphaTex) l.a *= alphaSample();
+    if (planar) l.a *= planarCover();
   } else l = texture2D(layerTex, vUv);
   float a = clamp(l.a * opacity, 0.0, 1.0);
   if (hasMask) a *= texture2D(maskTex, vUv).r;
@@ -702,6 +769,9 @@ export class TextureSet {
     hasMask: { value: false }, maskTex: { value: null }, blend: { value: 0 }, isNormal: { value: false },
     posMap: { value: null }, nrmMap: { value: null }, tanMap: { value: null }, bitMap: { value: null },
     triplanar: { value: false }, triSharp: { value: 4 }, rotCS: { value: new THREE.Vector2(1, 0) }, uvOff: { value: new THREE.Vector2() },
+    planar: { value: false }, pjC: { value: new THREE.Vector3() }, pjU: { value: new THREE.Vector3(1, 0, 0) }, pjV: { value: new THREE.Vector3(0, 1, 0) },
+    pjN: { value: new THREE.Vector3(0, 0, 1) }, pjH: { value: new THREE.Vector2(1, 1) }, pjTile: { value: false }, pjBack: { value: true },
+    alphaTex: { value: null }, useAlphaTex: { value: false }, texAlpha: { value: false },
     adjMode: { value: 0 }, adjA: { value: new THREE.Vector4() }, adjTint: { value: new THREE.Vector3(1, 1, 1) },
   });
   private matEnc = quadShader(FRAG_ENC, {
@@ -2242,11 +2312,35 @@ void main() {
       u.layerTex.value = null;
       u.fillTex.value = null;
       u.triplanar.value = false;
+      u.planar.value = false;
+      u.useAlphaTex.value = false; u.alphaTex.value = null; u.texAlpha.value = false;
       u.adjMode.value = 0;
       u.rotCS.value.set(1, 0);
       u.uvOff.value.set(0, 0);
       if (l.kind === 'fill') {
         const img = l.images?.[ch];
+        // Projection and transparency apply to every channel of the layer, image or plain value.
+        const lxf = l.xf ? { ...DEFAULT_XF, ...l.xf } : DEFAULT_XF;
+        const cimg = l.images?.color;
+        if (cimg || img) {
+          const r0 = (lxf.rot * Math.PI) / 180;
+          u.rotCS.value.set(Math.cos(r0), Math.sin(r0));
+          u.uvOff.value.set(lxf.offU, lxf.offV);
+          u.tiling.value = l.tiling;
+          u.triplanar.value = lxf.proj === 'tri';
+          u.triSharp.value = lxf.sharp;
+          u.posMap.value = this.posRT.texture; u.nrmMap.value = this.nrmRT.texture;
+          u.tanMap.value = this.tanRT.texture; u.bitMap.value = this.bitRT.texture;
+        }
+        if (lxf.proj === 'planar' && (cimg || img)) {
+          const f = this.shapeFrame(lxf as unknown as GenSettings);
+          u.planar.value = true;
+          u.pjC.value.copy(f.at); u.pjU.value.copy(f.u); u.pjV.value.copy(f.v); u.pjN.value.copy(f.n);
+          u.pjH.value.set(f.hx, f.hy);
+          u.pjTile.value = !!lxf.tile; u.pjBack.value = lxf.hideBack !== false;
+        }
+        if (cimg && lxf.useAlpha !== false && ch !== 'color') { u.useAlphaTex.value = true; u.alphaTex.value = cimg.tex; }
+        if (ch === 'color' && img && lxf.useAlpha !== false) u.texAlpha.value = true;
         const pr = !img && ch !== 'normal' ? l.procs?.[ch] : undefined;
         if (pr) {
           u.useTex.value = true;

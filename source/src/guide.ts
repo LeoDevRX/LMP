@@ -67,6 +67,11 @@ export const GUIDES: Guide[] = [
     sum: 'What LocalPaint can do in this version.',
     tags: ['new', 'update', 'version', 'changelog'], words: 'changes release notes added features latest',
     body: [
+      { h: 'New in v1.19', steps: [
+        'Drop a picture onto the model and it\'s projected right there, like Substance\'s planar projection, with handles to move, turn and resize it on the model.',
+        'Transparent PNGs keep their transparency: only the picture shows, on every channel of the layer.',
+        'Fill layers have a new Planar projection mode, with size, width / height, turn, hide-on-back-faces and repeat settings.',
+      ] },
       { h: 'New in v1.18', steps: [
         'New tools: Smudge (U) drags wet paint along, Clone (C) copies one area onto another (hold V + click to set the source), Blur (R) softens what\'s painted.',
         'Brushes: 85+ presets in groups like Substance Painter\'s (Artistic, Dirt & dust, Leaks & stains, Damage, Rust & paint, Nature, Hard surface, FX…), with 18 new tips: watercolour, charcoal, crayon, oil bristles, fingerprints, coffee stains, dust specks, dirt, smoke, leak drips, scuffs, ink splats, rust flakes, fine spray, grass, moss, sand and wet edges.',
@@ -580,7 +585,30 @@ export const GUIDES: Guide[] = [
       ] },
     ],
     show: [{ label: 'Import', act: 'import' }],
-    related: ['materials'],
+    related: ['project-image', 'materials'],
+  },
+  {
+    id: 'project-image', title: 'Projecting an image onto the model (planar projection)', cat: 'Layers & materials',
+    sum: 'Drop a picture on the model and place it like a sticker, with handles to move, turn and resize it.',
+    tags: ['image', 'import'], words: 'project projection planar decal sticker logo label image picture photo png transparent transparency alpha background drag drop place move rotate turn resize scale gizmo handles box projector stencil',
+    body: [
+      { steps: [
+        'Drag one picture (PNG, JPG…) from your computer straight onto the model in the 3D view.',
+        'It lands where you dropped it, facing you, on a new fill layer, with handles on top.',
+        'Drag the middle handle (or anywhere on the model) to move it, the round knob to turn it, and the square to resize it.',
+        'Press Esc (or Done moving) when it\'s where you want it. Select the layer and click "Move / turn / resize on the model" in Properties to change it later.',
+      ] },
+      { h: 'Transparent pictures', p: 'PNGs with a transparent background stay transparent: only the picture shows, on every channel of the layer. Untick "Use the image\'s transparency" in Properties to use the whole rectangle.' },
+      { h: 'Settings (Properties > Projection)', steps: [
+        'Mode: UV (the model\'s UVs), Tri-planar, or Planar (projected like a sticker).',
+        'Size, Width / height and Turn change the box. Scale repeats the image inside it.',
+        'Hide on back faces stops the picture showing through on the back of the model.',
+        'Repeat outside the box tiles the image beyond the box.',
+        'Turn on other channels (roughness, height, metal…) to make the sticker change those too, cut out by the picture.',
+      ] },
+      { tips: ['Dropping a set of maps (_BaseColor, _Normal…) or several pictures still opens the import window.', 'Like any fill layer, you can add a mask to the projected picture or paint on its mask.'] },
+    ],
+    related: ['import-images', 'materials', 'masks'],
   },
   {
     id: 'drop-on-mesh', title: 'Putting a material on one part', cat: 'Layers & materials',
