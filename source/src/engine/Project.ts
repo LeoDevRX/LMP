@@ -246,16 +246,32 @@ export async function makeSmartMaterial(ts: TextureSet, name: string): Promise<{
 }
 
 /** Insert a smart material as a folder above the active layer (like Substance). */
+/**
+ * Like Substance Painter: a material dropped on top covers the glow (emission) of the layers below it. Its bottom
+ * fill layer paints emission black when it doesn't use emission itself, so a glowing material underneath doesn't
+ * shine through.
+ */
+function coverEmission(l: Layer | undefined) {
+  const f = l as any;
+  if (!f || f.kind !== 'fill' || !f.enabled || f.enabled.emit || f.images?.emit) return;
+  f.enabled.emit = true;
+  f.values.emit = [0, 0, 0];
+}
+
 export async function applySmartMaterial(ts: TextureSet, sm: SmartMaterial, parent?: GroupLayer): Promise<Layer> {
   // A one-layer material is just that layer (like TextureCraft's simple materials).
   if (sm.layers.length === 1 && sm.layers[0].kind !== 'group') {
     const l = await restoreLayer(ts, sm.layers[0], ts.size, !parent, parent);
+    coverEmission(l);
     ts.activeId = l.id;
     ts.layerChanged();
     return l;
   }
   const g = ts.addGroup(sm.name, !parent, parent);
   for (const l of sm.layers) await restoreLayer(ts, l, ts.size, false, g);
+  // The lowest fill layer of the material (inside folders too).
+  const lowest = (x: Layer): Layer | undefined => (x as any).kind === 'group' ? ((x as any).children ?? []).map(lowest).find(Boolean) : x;
+  coverEmission(lowest(g));
   ts.activeId = g.id;
   ts.layerChanged();
   return g;

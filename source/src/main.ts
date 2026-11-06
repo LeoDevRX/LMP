@@ -121,8 +121,9 @@ class App {
   brush: Brush = {
     radius: 0.06, hardness: 0.5, flow: 1, spacing: 0.12, erase: false,
     tip: 'round', angle: 0, angleJitter: 0, followStroke: false, sizeJitter: 0, scatter: 0,
-    channels: { color: true, rough: true, metal: true, height: false, emit: false, normal: false },
-    values: { color: [0.61, 0.36, 1], rough: 0.4, metal: 0, height: 0.75, emit: [0.2, 0.9, 1] },
+    // Emission is on and black by default (like Painter): painting covers the glow of the layers below.
+    channels: { color: true, rough: true, metal: true, height: false, emit: true, normal: false },
+    values: { color: [0.61, 0.36, 1], rough: 0.4, metal: 0, height: 0.75, emit: [0, 0, 0] },
   };
   shelf = new PresetShelf();
   thumbs = new ThumbRenderer();
@@ -1241,7 +1242,7 @@ class App {
         this.registerTip(this.brush.tip, cv, s.brushTipPng);
       }
       this.brush.channels = { ...this.brush.channels, normal: false };
-      if (!this.brush.values.emit) this.brush.values.emit = [0.2, 0.9, 1];
+      if (!this.brush.values.emit) this.brush.values.emit = [0, 0, 0];
     }
     if (s.exportPreset) this.exportPreset = s.exportPreset;
     this.normalFormat = s.normalFormat === 'dx' ? 'dx' : 'gl';
